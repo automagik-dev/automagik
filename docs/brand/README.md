@@ -43,6 +43,7 @@ It is documentation. No build, app or release reads this folder.
 | A browser tab | `favicon/favicon.ico` and `favicon/favicon.svg` |
 | A phone's home screen, a web manifest | `favicon/apple-touch-icon.png`, `favicon/icon-192.png`, `favicon/icon-512.png` |
 | The name without the mark | `logo/wordmark/automagik-wordmark-ink.svg` or `-cream.svg` |
+| Omni, Genie or Mykes as a word, in the family's menu drawer | `logo/wordmark/omni-wordmark-ink.svg`, `genie-`, `mykes-`, or `-cream.svg` |
 | Colour cannot be used | the files with `-ink` or `-cream` and no `three-colours` in the name |
 
 - "ink" means ink letters, for light grounds. "cream" means cream letters, for dark grounds.

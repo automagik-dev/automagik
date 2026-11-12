@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { htmlPage, supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss, titleFace, brandFonts, statusNames } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest, family, familyArt, familyButton, familyHost, familyLinks } from './scripts/build-pages.mjs'
 import { BOX, GEOMETRY, LOGO, TONES, logoInner, tagInner } from './scripts/build-lockup.mjs'
 
 // The width of each name's lockup in the kit's own units; all are 264 high.
@@ -36,7 +36,9 @@ const local = path => {
   assert.ok(existsSync(full), path)
 }
 
-test('approved umbrella map, one h1 per page, generated sources current, no client scripting', () => {
+// The one script a page carries: the family drawer's own, a file of this site, deferred.
+const familyScript = '<script src="/assets/family/family.js" defer></script>'
+test('approved umbrella map, one h1 per page, generated sources current, one script: the family drawer\'s', () => {
   assert.deepEqual(routes, ['/', ...productOrder])
   for (const route of routes) {
     const html = htmlAt(route)
@@ -47,7 +49,10 @@ test('approved umbrella map, one h1 per page, generated sources current, no clie
     assert.doesNotMatch(html, /<meta[^>]*name="robots"|noindex|nofollow/i, route)
     assert.match(html, /href="\/theme.css"/)
     // The docs site is the one automagik.dev address the pages name, and only as a link.
-    assert.doesNotMatch(html.replaceAll(`href="${docs}"`, ''), /<(?:script|iframe)\b|\bon\w+\s*=|javascript:|automagik\.dev|automagik-dev|\.pages\.dev/i)
+    // No inline script, no handler attribute, no frame: the one script is the drawer's file.
+    assert.equal(html.split(familyScript).length, 2, route)
+    assert.ok(html.endsWith(`${familyScript}</body></html>\n`), route)
+    assert.doesNotMatch(html.replace(familyScript, '').replaceAll(`href="${docs}"`, ''), /<(?:script|iframe)\b|\bon\w+\s*=|javascript:|automagik\.dev|automagik-dev|\.pages\.dev/i)
     const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1])
     assert.equal(new Set(ids).size, ids.length)
     assert.match(html, /class="skip" href="#main"/)
@@ -68,7 +73,7 @@ test('the download hook: live platforms open a sheet with the exact file, soon o
     const chips = row.split('</li>').slice(0, -1)
     assert.equal((html.match(/class="get-row"/g) ?? []).length, 1, route)
     assert.deepEqual(chips.map(chip => chip.match(/class="get-name">([^<]+)</)[1]), ids.map(id => platforms[id].name), route)
-    const sheets = new Map([...html.matchAll(/<div class="sheet" id="get-([a-z]+)" popover role="dialog" aria-labelledby="get-\1-title">([\s\S]*?)(?=<div class="sheet" id=|<\/body>)/g)].map(match => [match[1], match[2]]))
+    const sheets = new Map([...html.matchAll(/<div class="sheet" id="get-([a-z]+)" popover role="dialog" aria-labelledby="get-\1-title">([\s\S]*?)(?=<div class="sheet" id=|<div class="fam-scrim"|<\/body>)/g)].map(match => [match[1], match[2]]))
     assert.deepEqual([...sheets.keys()], ids.filter(id => !platforms[id].soon), route)
     ids.forEach((id, index) => {
       const chip = chips[index], platform = platforms[id]
@@ -154,15 +159,18 @@ test('images are reviewed brand assets, unchanged captures or recorded crops of 
   // Arca's two icon files are its kit's, under the kit's own names.
   const brand = new Set(['/assets/brand/automagik-lockup-three-colours-ink-header.svg', '/assets/brand/automagik-lockup-three-colours-cream-header.svg', '/assets/brand/genie-lockup-three-colours-ink.svg', '/assets/brand/genie-lockup-three-colours-cream.svg', '/assets/brand/genie-lockup-three-colours-cream-header.svg', '/assets/brand/omni-lockup-three-colours-ink.svg', '/assets/brand/omni-lockup-three-colours-cream.svg', '/assets/brand/omni-lockup-three-colours-ink-header.svg', '/assets/brand/omni-lockup-three-colours-cream-header.svg', '/assets/brand/triskle-three-colours.svg', '/assets/brand/triskle-three-colours-32.svg', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
   for (const { mark: [light, dark] } of used) for (const file of [light, dark]) if (file) brand.add(`/assets/brand/used/${file}`)
+  // The family drawer's art: byte copies from its package (the drawer's own test pins them).
+  for (const file of Object.values(familyArt)) brand.add(`/assets/family/${file}`)
   for (const html of generated.values()) {
-    for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
+    for (const [, value] of html.replace(familyScript, '').matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
       for (const source of value.split(',').map(candidate => candidate.trim().split(/\s+/)[0])) {
         local(source)
         const derived = source.startsWith('/assets/art/') && Object.hasOwn(art.files, source.slice('/assets/art/'.length))
         assert.ok(brand.has(source) || derived || Object.hasOwn(manifest.images, source.replace(/^\/assets\/screens\//, '')), source)
       }
     }
-    for (const [image] of html.matchAll(/<img\b[^>]*>/g)) {
+    // The drawer's pictures are the family piece's own markup, held to it by the drawer's test.
+    for (const [image] of html.slice(0, html.indexOf('<div class="fam-scrim"')).matchAll(/<img\b[^>]*>/g)) {
       // Plain-words alt text, or an explicitly decorative image hidden from assistive technology.
       assert.match(image, /alt="[^"]{20,}"|alt="(?:Automagik|Genie|Omni)"|alt="" aria-hidden="true"/)
       assert.match(image, /\bwidth="\d+" height="\d+"/, image)
@@ -264,16 +272,16 @@ test('the logo and the icons: the logo kit\'s own files, unchanged, in the heade
     // The logo once in the header and once in the footer; the icons once in the head.
     assert.equal(html.split(logo).length, 3, route)
     assert.equal(html.split('class="brand"').length, 3, route)
-    assert.ok(html.slice(0, html.indexOf('<main')).includes(`<div class="wrap top-inner">${logo}`), route)
+    assert.ok(html.slice(0, html.indexOf('<main')).includes(`<div class="wrap top-inner topbar-in">${logo}`), route)
     assert.ok(html.slice(html.indexOf('<footer')).includes(`<div class="footer-brand">${logo}`), route)
     assert.equal(html.slice(0, html.indexOf('</head>')).split(tabs).length, 2, route)
     assert.deepEqual([...html.matchAll(/<link rel="(?:icon|apple-touch-icon|manifest|shortcut icon)"[^>]*>/g)].map(match => match[0]).join(''), tabs, route)
     // The retired logo (gradient capitals, the old clay triskle without its seam line) is in no page.
     assert.doesNotMatch(html, /(?:lockup|wordmark|triskle)\.webp|automagik-wordmark-|\/assets\/art\/mark/, route)
     // The mark alone is the kit's triskle in three colours, the drawing made for the size
-    // shown: the 32 px drawing in the two menus, the large one in a hero.
+    // shown: the 32 px drawing in the Products menu, the large one in a hero.
     const marks = [...html.matchAll(/<img[^>]*\/triskle-[^>]*>/g)].map(match => match[0])
-    assert.equal(marks.length, route === '/cloud/' || route === '/mykes/' ? 3 : 2, route)
+    assert.equal(marks.length, route === '/cloud/' || route === '/mykes/' ? 2 : 1, route)
     for (const image of marks) assert.match(image, /^<img class="(?:menu-art" src="\/assets\/brand\/triskle-three-colours-32\.svg" width="32" height="32" alt="" aria-hidden="true" loading="lazy"|(?:hero|coming)-mark" src="\/assets\/brand\/triskle-three-colours\.svg" width="300" height="300" alt="[^"]*"(?: aria-hidden="true")? fetchpriority="high") decoding="async">$/, image)
   }
   // The Cloud form's answer pages carry the same logo.
@@ -430,7 +438,7 @@ test('the title face is the brand\'s: Fredoka from docs/brand, at its three weig
   assert.deepEqual(theme.match(/--bt-head-font:[^;]+;/g), ['--bt-head-font:Fredoka,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;'])
   assert.ok(css.includes('--head:var(--bt-head-font);'))
   // Nothing set in the title face carries a weight of its own: a heavier Fredoka is heavier than the logo.
-  assert.equal(css.match(/font:[^;}]*var\(--head\)/g).length, 39)
+  assert.equal(css.match(/font:[^;}]*var\(--head\)/g).length, 38)
   assert.deepEqual(css.match(/font:[^;}]*var\(--head\)/g).filter(rule => !/^font:var\(--weight-(?:title|strong|label)\) /.test(rule)), [])
   assert.ok(css.includes('\nh1{font-weight:var(--weight-title);font-size:clamp(2.6rem,1.4rem + 4.2vw,4.6rem);line-height:1.02;letter-spacing:-.02em}\n'))
   assert.ok(css.includes('\nh2{font-weight:var(--weight-title);font-size:clamp(1.85rem,1.15rem + 2.3vw,3.05rem);line-height:1.08;letter-spacing:-.016em}\n'))
@@ -512,11 +520,11 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.match(page, /<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)
   assert.equal(page.match(/<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)[1], arca.line)
   // The owner's own line, exactly, wherever Arca is described: the page, the home block,
-  // the Products menu and the phone sheet on every page.
+  // and the Products menu on every page.
   assert.equal(arca.line, 'Be your own cloud. Infrastructure for AI agents.')
   for (const [route, html] of generated) {
     const said = [...html.matchAll(/<strong>Arca<\/strong><span>([^<]*)<\/span>/g)].map(match => match[1])
-    assert.deepEqual(said, [arca.line, arca.line], `${route}: the menu and the sheet say Arca's line`)
+    assert.deepEqual(said, [arca.line], `${route}: the menu says Arca's line`)
   }
   // Get Arca opens this page, where the install command is text to copy. The installer's
   // address answers with a shell script, so no link anywhere points at it.
@@ -531,7 +539,7 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   // The card says only Arca's name and the owner's line: no tag of guessed wording.
   assert.doesNotMatch(card, /tile-tag/)
   // Arca's own logo stands wherever Arca does, never another product's mark: its kit's icon,
-  // ink in light and ivory in dark. The two menus, the home card and the page's heading
+  // ink in light and ivory in dark. The Products menu, the home card and the page's heading
   // each carry one; nothing else does, and it never stands with the Open Intelligence tag.
   const slot = /<span class="arca-mark at-(\w+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="\/assets\/brand\/arca\/svg\/arca-icon-ivory\.svg"><img src="\/assets\/brand\/arca\/svg\/arca-icon-ink\.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"><\/picture><\/span>/g
   // The kit's files, never redrawn here: one colour each, Arca's ink and Arca's ivory.
@@ -543,10 +551,10 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.deepEqual(readdirSync(resolve(root, 'assets/brand/arca/svg')).sort(), ['arca-icon-ink.svg', 'arca-icon-ivory.svg'])
   for (const [route, html] of generated) {
     const places = [...html.matchAll(slot)].map(match => match[1])
-    assert.deepEqual(places, ['menu', 'menu', ...(route === '/' ? ['card'] : route === '/arca/' ? ['hero'] : [])], route)
+    assert.deepEqual(places, ['menu', ...(route === '/' ? ['card'] : route === '/arca/' ? ['hero'] : [])], route)
     assert.equal((html.match(/arca-mark/g) ?? []).length, places.length, route)
     for (const [item] of html.matchAll(/<a class="menu-item" href="\/arca\/"[\s\S]*?<\/a>/g)) assert.doesNotMatch(item, /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/, route)
-    assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-end">')), /arca-mark|<img/, route)
+    assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-end">'), html.indexOf('</footer>')), /arca-mark|<img/, route)
   }
   assert.doesNotMatch(page.match(/<main[\s\S]*<\/main>/)[0].split('class="more ')[0], /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/)
   for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
@@ -636,44 +644,208 @@ test('Open Intelligence is applied as on Arca\'s site: the horizontal tag in the
   assert.deepEqual(walk(root).filter(name => /arca-lockup/i.test(name)), [])
 })
 
-test('navigation: menus, phone menu, footer sitemap, breadcrumb and previous/next on every page', () => {
+// THE FAMILY DRAWER: the menu the product family shares, from Arca's drawer package, issue
+// 11, as the owner approved it on 2026-11-12: Automagik's lockup; omni, genie and mykes as
+// words in the lettering with no mark; "Coming soon." under Mykes; no pet, no Genie head, and
+// the triskle beside nothing but Automagik. The package's own checksums, for the files taken:
+const familyFiles = {
+  'family.html': '7b0c8e6e8185adad7dfe7bfb8384899e72bc631f7b92c8994966df4398b0c896',
+  'header-button.html': '3d502e338a526ce541f3cef809cd0f33d233f660897294bab9c670260ae9eefe',
+  'family.css': '9286240cf0d9ca19c3d71c3404c4d40e63cea2a4853c88b0aa02572a94428248',
+  'family.js': '0cb848a240aba32650c0b95813415f2238ca5a2ab4bd2dfd654f00c2c2bc980d',
+  'automagik-lockup-three-colours-cream-48.png': '5518af46313bc1678c77f382b85476638fe15dd99e4dbf275e6e21403bc36b37',
+  'automagik-lockup-three-colours-cream-64.png': 'f4a31554d492a201bd123ad149930b24a3a2f4ccb5ba514d522a652d048d26ef',
+  'automagik-lockup-three-colours-cream-128.png': 'f1113affc7f486217330d7ebc4fbce0c9538d63f84ddea88c40680ec79a87e9a',
+  'automagik-lockup-three-colours-ink-48.png': 'b7f32743404095a1b50e56539dd08be79564db5ace2342a0e2f9375e8162ceaa',
+  'automagik-lockup-three-colours-ink-64.png': '4a4313b88432dc3187c86cb6b64fe00ebd565a172b243b83fd5fa3a4bf337b19',
+  'automagik-lockup-three-colours-ink-128.png': '89a274a63cf3812a4ff2ecf832204e33236444118c06ece93d5766b58d595380',
+  'omni-wordmark-cream.svg': 'e930250e3797750d6ad118b8a5f7639e2604db3a78d68645666177f69191b5d2',
+  'omni-wordmark-ink.svg': 'e8c21842b9c280fddacfbf20e8ce998a1ea4be5069b47a43002ebf7db40e8e37',
+  'genie-wordmark-cream.svg': '4bf79674edd489de7172b76b48d64982cbd973e56679a9575d560044b9b8a317',
+  'genie-wordmark-ink.svg': '481008dcd0b1281308e22474cebef71a20f78b247e51095896bebec9561d647d',
+  'mykes-wordmark-cream.svg': '9099d9566ebee75e3cc683987f5b69bfc8c1c41873871f5415654a1efbc12752',
+  'mykes-wordmark-ink.svg': '28c80ac26bea923146094869fafe032a9397d85c4fd0ad6432a885ceb24219dc',
+}
+const digest = path => createHash('sha256').update(readFileSync(resolve(root, path))).digest('hex')
+const uncommented = html => html.replace(/<!--[\s\S]*?-->\n?/g, '').trim()
+
+test('the family drawer: the piece and its art are byte copies of the package, and the words are the brand folder\'s', () => {
+  // The folder holds the taken files and their note, and nothing else.
+  assert.deepEqual(readdirSync(resolve(root, 'assets/family')).sort(), [...Object.keys(familyFiles), 'SOURCE.md'].sort())
+  for (const [file, sum] of Object.entries(familyFiles)) assert.equal(digest(`assets/family/${file}`), sum, `${file} is not the package's file`)
+  // The note names the issue, the package's own checksum list and every file's digest.
+  const note = read('assets/family/SOURCE.md')
+  assert.match(note, /issue 11/)
+  assert.ok(note.includes('`6dcfbe6f8e6d0737019320ddb883cb85986abe738a68c726b2104f816844bad8`'))
+  const listed = Object.fromEntries([...note.matchAll(/^\| `([^`]+)` \| `(?:piece|art)\/[^`]+` \| `([0-9a-f]{64})` \|$/gm)].map(([, file, sum]) => [file, sum]))
+  assert.deepEqual(listed, familyFiles)
+  // The three words are the brand folder's files: Omni's and Genie's were there, and the
+  // Mykes word, which came from we unfold through the package, is carried there too.
+  for (const name of ['omni', 'genie', 'mykes']) for (const tone of ['ink', 'cream']) {
+    const file = `${name}-wordmark-${tone}.svg`
+    assert.ok(readFileSync(resolve(root, 'assets/family', file)).equals(readFileSync(resolve(root, '../../docs/brand/logo/wordmark', file))), `${file} equals the brand folder's`)
+    // A word is letters and a sparkle, nothing that could load or run.
+    assert.doesNotMatch(read(`assets/family/${file}`), /<script|<foreignObject|<image|<text|href=|url\(/i, file)
+    assert.match(read(`assets/family/${file}`), new RegExp(`color="${tone === 'ink' ? '#3c3049' : '#f3e9dd'}"`), `${file} has ${tone} letters`)
+  }
+  // Every picture in the folder is one the drawer shows, and the drawer shows no other.
+  assert.deepEqual(Object.values(familyArt).sort(), Object.keys(familyFiles).filter(file => /\.(?:png|svg)$/.test(file)).sort())
+})
+
+test('the family drawer on every page: the piece\'s markup with Automagik in the top block, three words and no mark beside them', () => {
+  const piece = uncommented(read('assets/family/family.html')), pieceButton = uncommented(read('assets/family/header-button.html')).split('\n')[0]
+  const slots = Object.fromEntries(Object.entries(familyArt).map(([slot, file]) => [`/assets/family/${file}`, slot]))
+  // The button is the piece's own; only its script-off address is this site's.
+  assert.equal(familyButton.replace('href="#sitemap"', 'href="https://automagik.si/"'), pieceButton)
+  assert.equal(pieceButton, '<a class="fam-btn" href="https://automagik.si/" data-family-open aria-label="Menu"><span class="fam-lines" aria-hidden="true"><span></span><span></span><span></span></span></a>')
+  for (const [route, html] of generated) {
+    const drawer = family(route)
+    // Where it stands: the page is wrapped whole, header and footer included; the drawer and
+    // its layers come after the wrapper; the script is the last thing in the body.
+    assert.ok(html.includes('<body><div class="page" data-family-page><a class="skip" href="#main">Skip to content</a><header class="top topbar">'), route)
+    assert.ok(html.includes(`<header class="top topbar">${familyButton}<div class="wrap top-inner topbar-in">`), `${route}: the button is the header's first child, outside the column`)
+    assert.equal(html.split('data-family-open').length, 2, route)
+    assert.ok(html.includes('</footer></div>') && html.indexOf('</footer></div>') < html.indexOf(drawer), route)
+    assert.ok(html.endsWith(`\n${drawer}\n${familyScript}</body></html>\n`), route)
+    assert.equal(html.split('data-family-drawer').length, 2, route)
+    // The piece's stylesheet loads before the site's, which holds the host's side.
+    assert.ok(html.includes('<link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/assets/family/family.css"><link rel="stylesheet" href="/styles.css"></head>'), route)
+    // With script off the button leads to the footer's sitemap, which every page has.
+    assert.ok(html.includes('<div id="sitemap" class="wrap footer-grid">'), route)
+    // The site sets no theme attribute: the visitor's system picks, in the drawer too.
+    assert.doesNotMatch(html, /data-theme=|data-family-stay/, route)
+
+    // AS GIVEN: undo this site's own parts, one by one, and what is left is the piece's file.
+    let back = drawer
+    const undo = (from, to, times = 1) => { assert.equal(back.split(from).length - 1, times, `${route}: ${from}`); back = back.replaceAll(from, to) }
+    // 1. The mark on the page being read.
+    if (!['/', '/cloud/', '/arca/'].includes(route)) undo(`href="${route}" aria-current="page" data-family-product=`, `href="${route}" data-family-product=`)
+    // 2. The list under the top block: this site's pages, where the piece has Arca's sections.
+    const links = familyLinks.map(([href, name]) => { const [path, place] = href.split('#'); return `<li><a href="${place && path === route ? `#${place}` : href}"${href === route ? ' aria-current="page"' : ''}>${name}</a></li>` }).join('')
+    undo(`<ul class="fam-links" data-family-links aria-label="Sections">${links}</ul>`, piece.match(/<ul class="fam-links" data-family-links aria-label="Sections">.*?<\/ul>/)[0])
+    // 3. The pictures: each address back to its slot.
+    for (const [file, slot] of Object.entries(slots)) back = back.replaceAll(file, slot)
+    // 4. The top block: Automagik, its lockup (the piece's own lockup markup, named) and its line.
+    const lockup = piece.match(/<span class="fam-lockup"><picture class="fam-lock-cream">.*?<\/picture><picture class="fam-lock-ink">.*?<\/picture><\/span>/)[0]
+    undo(`<span class="fam-logo">${lockup.replaceAll('alt=""', 'alt="Automagik"')}</span>`, '<span class="fam-logo">__FAM_ARCA__</span>')
+    undo(`<a class="fam-item is-here" href="/" data-family-product="Automagik" data-family-line="${familyHost.line}" aria-current="${route === '/' ? 'page' : 'true'}">`, `<a class="fam-item is-here" href="https://automagik.si/arca/" data-family-product="Arca" data-family-line="${arca.line}" aria-current="page">`)
+    undo(`</span><span>${familyHost.line}</span></span><span class="fam-here">`, `</span><span>${arca.line}</span></span><span class="fam-here">`)
+    // 5. Addresses: this site's own pages are written from its root.
+    undo('href="/', 'href="https://automagik.si/', 6)
+    assert.equal(back, piece, `${route}: the drawer is the piece's markup`)
+
+    // WHAT IT SHOWS, said outright so a later issue of the piece cannot change it unseen.
+    const rows = [...drawer.matchAll(/data-family-product="([^"]+)" data-family-line="([^"]*)"/g)].map(([, name, line]) => [name, line])
+    assert.deepEqual(rows, [['Automagik', 'Open building blocks of superintelligence.'], ['Desktop', 'Your agent team, in your chats.'], ['Mobile', 'Your agents on your Android phone.'], ['Omni', 'Your chat apps, connected.'], ['Genie', 'A wish, a branch, a report.'], ['Mykes', 'Coming soon.']], route)
+    // Each product's line is the one the site's own menu gives it.
+    for (const [name, line] of rows.slice(1)) assert.ok(html.includes(`<strong>${name}</strong><span>${line}</span>`), `${route} ${name}`)
+    assert.ok(html.slice(html.indexOf('<footer')).includes(`<p>${familyHost.line}</p>`), route)
+    // Omni, Genie and Mykes: the word alone, cream and ink, then the line. "Coming soon." under Mykes.
+    const list = drawer.match(/<ul class="fam-list">([\s\S]*?)<\/ul>/)[1].trim().split('\n').map(row => row.trim())
+    assert.deepEqual(list, [['omni', 'Omni', 'Your chat apps, connected.', ''], ['genie', 'Genie', 'A wish, a branch, a report.', ''], ['mykes', 'Mykes', 'Coming soon.', ' is-mykes']].map(([file, name, line, own]) =>
+      `<li><a class="fam-item is-word" href="/${file}/"${route === `/${file}/` ? ' aria-current="page"' : ''} data-family-product="${name}" data-family-line="${line}"><span class="fam-words"><span class="fam-lockup fam-word${own}"><img class="fam-lock-cream" src="/assets/family/${file}-wordmark-cream.svg" alt="${name}" loading="lazy" decoding="async"><img class="fam-lock-ink" src="/assets/family/${file}-wordmark-ink.svg" alt="${name}" loading="lazy" decoding="async"></span><span>${line}</span></span></a></li>`), route)
+    // No pet, no Genie head, no mark beside a product: the only pictures are Automagik's
+    // lockup and the three words, and nothing comes from the site's art or logo folders.
+    const pictures = [...drawer.matchAll(/(?:src|srcset)="([^"]+)"/g)].map(match => match[1])
+    assert.ok(pictures.length === 16 && pictures.every(file => /^\/assets\/family\/(?:automagik-lockup-three-colours-(?:cream|ink)-(?:48|64|128)\.png|(?:omni|genie|mykes)-wordmark-(?:cream|ink)\.svg)$/.test(file)), `${route} ${pictures}`)
+    assert.doesNotMatch(drawer, /assets\/(?:art|brand)\/|triskle|(?:genie|omni|mykes)-lockup|\.webp/, route)
+    // The drawer reaches every page of the site, the docs, the app and the privacy note. A
+    // place on the page being read is a bare #name, so the piece shuts the drawer first.
+    const reach = [...drawer.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(match => match[1])
+    for (const page of routes) assert.ok(reach.includes(page), `${route}: the drawer reaches ${page}`)
+    assert.ok(reach.includes(docs) && reach.includes(route === '/desktop/' ? '#install' : '/desktop/#install') && reach.includes(route === '/cloud/' ? '#privacy' : '/cloud/#privacy'), route)
+    for (const place of reach.filter(href => href.startsWith('#'))) assert.ok(html.includes(`id="${place.slice(1)}"`), `${route} ${place}`)
+    assert.ok(reach.every(href => href === docs || href.startsWith('/') || href.startsWith('#')), `${route}: every other address is this site's own`)
+  }
+})
+
+test('the family drawer wears this site: every name the piece reads is given, and the light page takes the piece\'s own day values', () => {
+  const piece = read('assets/family/family.css')
+  // The piece is written against names its host supplies. Every one it reads, and does not
+  // set itself (or leave to its script, the four --fam- places), is set by this site's stylesheets.
+  const set = new Set([...piece.matchAll(/(--[a-z0-9-]+)\s*:/g)].map(match => match[1]))
+  const needed = [...new Set([...piece.matchAll(/var\((--[a-z0-9-]+)/g)].map(match => match[1]))].filter(name => !set.has(name) && !/^--fam-[bxy]/.test(name)).sort()
+  assert.deepEqual(needed, ['--card-active', '--duration-base', '--duration-fast', '--duration-move', '--duration-page', '--ease', '--ease-move', '--font-display', '--font-mono', '--ground', '--line', '--max-width', '--radius-pill', '--space-13', '--space-21', '--space-8', '--tap-target', '--text', '--text-faint', '--text-label', '--text-lead', '--text-muted', '--text-title'])
+  // --max-width is the one not given: the piece reads it only to keep the logo clear of the
+  // button, and that rule is said again here with this site's own column.
+  for (const name of needed.filter(name => name !== '--max-width')) assert.match(css, new RegExp(`[{;\\s]${name}:`), `${name} is given`)
+  assert.ok(piece.includes('.topbar-in { padding-left: max(var(--space-21), calc(var(--fam-clear) - max(0px, (100% - var(--max-width)) / 2))); }'))
+  assert.ok(css.includes('\n.top-inner.topbar-in{padding-left:max(var(--gutter),calc(var(--fam-clear) - max(0px,(100% - (var(--max) + 2 * var(--gutter))) / 2)))}\n'))
+  // Colours come from this site's tokens, type from its two families at its three weights.
+  const given = css.match(/\n:root\{--ground:[^}]+\}/)[0]
+  for (const pair of ['--ground:var(--bg)', '--text-muted:var(--muted)', '--text-faint:var(--muted)', '--card-active:var(--bt-active)', '--font-mono:var(--head)', '--font-display:var(--head)']) assert.ok(given.includes(pair), pair)
+  assert.doesNotMatch(given, /#[0-9a-f]{3,8}\b|rgb/i)
+  assert.ok(css.includes('\n.fam-chip,.fam-here,.fam-links a,.fam-item::after{font-weight:var(--weight-label)}\n') && css.includes('\n.fam-world-in b{font-weight:var(--weight-title);letter-spacing:-.02em}\n'))
+  // The drawer's close and the page's slide end before the script's own timers do.
+  const seconds = name => Number(given.match(new RegExp(`${name}:([.\\d]+)s`))[1])
+  assert.ok(seconds('--duration-move') <= 0.48 && seconds('--duration-page') <= 0.7 && seconds('--duration-fast') < seconds('--duration-base'))
+  assert.match(read('assets/family/family.js'), /calm \? 0 : 480\)/); assert.match(read('assets/family/family.js'), /calm \? 0 : 700\)/)
+  // The piece marks its day theme with an attribute; this site follows the visitor's system
+  // and sets none. So the piece's day values are said again for a light page, word for word.
+  const squeeze = text => text.replace(/\s+/g, '').replace(/;\}/g, '}')
+  const day = squeeze(piece.match(/\[data-theme="day"\] \.fam-btn \{[^}]+\}/)[0]).replace('[data-theme="day"]', '')
+  assert.equal(day, '.fam-btn{--fam-violet:#9062be;--fam-pink:#d03f7c;--fam-cyan:#0781a4}')
+  assert.ok(squeeze(piece).includes('[data-theme="day"].fam-lockup.fam-lock-ink{display:block}[data-theme="day"].fam-lockup.fam-lock-cream{display:none}'))
+  assert.ok(css.includes(`\n@media (prefers-color-scheme:light){\n  ${day}\n  .fam-lockup .fam-lock-ink{display:block}\n  .fam-lockup .fam-lock-cream{display:none}\n}\n`))
+  // The ground the piece gives another product's world is this site's own page colour and
+  // ink in both themes, so the site names them by token.
+  assert.ok(squeeze(piece).includes('background:#1e1923;color:#f3e9dd;') && squeeze(piece).includes('[data-theme="day"].fam-world,[data-theme="day"].fam-world{background:#f6eee2;color:#3c3049}'))
+  assert.ok(theme.includes('--bt-main:#f6eee2;') && theme.includes('--bt-ink:#3c3049;') && theme.includes('--bt-main:#1e1923;') && theme.includes('--bt-ink:#f3e9dd;'))
+  assert.ok(css.includes('\n.fam-world{background:var(--bg);color:var(--text)}\n'))
+  // The button stands in the middle of this header, and the site's pages fold into the
+  // drawer at the width where the header's menus fold away.
+  assert.ok(css.includes('\n.top .fam-btn{top:calc((var(--top-h) - 48px) / 2)}\n'))
+  assert.match(css, /@media \(max-width:860px\)\{[^@]*\n  \.main-nav\{display:none\}[^@]*\n  \.fam-links\{display:grid\}/)
+  // The site's own focus ring would square the round button and the pills.
+  assert.ok(css.includes('\n.fam-btn:focus-visible{border-radius:50%}\n.fam-chip:focus-visible{border-radius:var(--radius-pill)}\n'))
+  // The family's rule for the move between pages, inside the reduced-motion guard.
+  assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{[\s\S]*\n  \.fam-btn\{view-transition-name:fb-bar\}\n  ::view-transition-group\(fb-bar\)\{animation:none\}\n/)
+  // The phone sheet's styles went with the sheet.
+  assert.doesNotMatch(css, /\.menu-open|\.menu-fallback|\.drawer\b|\.menu-glyph/)
+  // The Cloud form's answer pages keep their own small header and their no-script policy.
+  assert.ok(read('waitlist/lib/ui.js').includes(`'Content-Security-Policy': "default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"`))
+  assert.doesNotMatch(read('waitlist/lib/ui.js'), /family|<script/)
+})
+
+test('navigation: menus, footer sitemap, breadcrumb and previous/next on every page', () => {
   const hrefs = html => [...html.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(match => match[1])
   for (const [route, html] of generated) {
     // Three header menus: a button that opens a popover panel, no scripting.
     const buttons = [...html.matchAll(/<button class="menu-button" type="button" popovertarget="(menu-[a-z]+)"/g)].map(match => match[1])
     assert.deepEqual(buttons, ['menu-products', 'menu-resources', 'menu-company'], route)
-    for (const id of [...buttons, 'site-menu']) assert.match(html, new RegExp(`id="${id}" popover`), `${route} ${id}`)
-    assert.match(html, /<button class="menu-open" type="button" popovertarget="site-menu">/, route)
-    // The browser owns the expanded state of a popover's button; a written one would go stale.
+    for (const id of buttons) assert.match(html, new RegExp(`id="${id}" popover`), `${route} ${id}`)
+    // One menu button: the family drawer's. The phone sheet and its Menu button are gone.
+    assert.doesNotMatch(html, /class="menu-open"|id="site-menu"|class="menu-fallback"|class="drawer/, route)
+    // The browser owns the expanded state of a popover's button, and the drawer's script sets
+    // its own button's: a written one would go stale.
     assert.doesNotMatch(html, /aria-expanded=/, route)
     const panel = id => html.match(new RegExp(`id="menu-${id}" popover>([\\s\\S]*?)</div></div></li>`))[1]
-    const sheet = html.match(/<nav class="drawer"[\s\S]*?<\/nav>/)[0], footer = html.slice(html.indexOf('<footer'))
+    const drawer = family(route), footer = html.slice(html.indexOf('<footer'), html.indexOf('</footer>'))
     const group = (source, label, end) => source.slice(source.indexOf(`>${label}</`), end ? source.indexOf(`>${end}</`) : undefined)
-    // Products: the seven, in one order, in the menu, the phone menu and the footer.
+    // Products: the seven, in one order, in the menu and the footer.
     assert.deepEqual(hrefs(panel('products')).slice(0, 7), productOrder, route)
-    assert.deepEqual(hrefs(group(sheet, 'Products', 'Resources')), productOrder, route)
     assert.deepEqual(hrefs(group(footer, 'Products', 'Resources')), productOrder, route)
-    // Resources and Company: the same links in the menu, the phone menu and the footer.
+    // Resources and Company: the same links in the menu and the footer.
     const resources = hrefs(panel('resources')), company = hrefs(panel('company')).slice(0, 3)
     assert.deepEqual(resources, [docs, '/desktop/#install', '/mobile/#install'], route)
     assert.deepEqual(company, [weUnfold.url, docs, '/cloud/#privacy'], route)
-    assert.deepEqual(hrefs(group(sheet, 'Resources', 'Company')), resources, route)
-    assert.deepEqual(hrefs(group(sheet, 'Company')).slice(0, 3), company, route)
     assert.deepEqual(hrefs(group(footer, 'Resources', 'Company')), resources, route)
     assert.deepEqual(hrefs(group(footer, 'Company')).slice(0, 3), company, route)
     // Every menu entry has a one-line description and its character, mark or glyph.
-    for (const source of [panel('products'), panel('resources'), panel('company'), sheet]) {
+    for (const source of [panel('products'), panel('resources'), panel('company')]) {
       for (const [item] of source.matchAll(/<a class="menu-item"[\s\S]*?<\/a>/g)) assert.match(item, /<span class="menu-icon">(?:<img|<svg|<span class="arca-mark)[\s\S]*<strong>[^<]+[\s\S]*<\/strong><span>[^<]{8,}<\/span>/, `${route} ${item.slice(0, 80)}`)
     }
-    // The active page: marked in the header button, the menu, the phone menu and the footer.
+    // The active page: marked in the header button, the menu, the drawer and the footer.
+    // On the home page the one mark is the drawer's top block, the site itself.
     const current = (html.match(/aria-current="page"/g) ?? []).length
     if (route === '/') {
-      assert.equal(current, 0); assert.doesNotMatch(html, /class="crumbs|class="pager/)
+      assert.equal(current, 1); assert.ok(drawer.includes('<a class="fam-item is-here" href="/" data-family-product="Automagik"') && drawer.includes(' aria-current="page"><span class="fam-words"><span class="fam-logo">'))
+      assert.doesNotMatch(html, /class="crumbs|class="pager/)
       continue
     }
     const name = html.match(/<span aria-current="page">([^<]+)<\/span>/)[1]
     assert.ok(html.includes(`data-here>Products<span class="menu-here"><span class="sr">, current page: </span>${name}</span>`), route)
-    for (const source of [panel('products'), sheet, footer]) assert.ok(source.includes(`href="${route}" aria-current="page"`), route)
+    for (const source of [panel('products'), drawer, footer]) assert.ok(source.includes(`href="${route}" aria-current="page"`), route)
     assert.equal(current, 4, route)
     // The way back, and the neighbours in the product order.
     assert.ok(html.includes(`<nav class="crumbs wrap" aria-label="Breadcrumb"><ol><li><a href="/#blocks">All products</a></li><li><span aria-current="page">${name}</span></li></ol></nav>`), route)

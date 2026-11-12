@@ -23,6 +23,13 @@ used. No customer marks or new drawings are included.
   two large ones. Never recolour, stretch or redraw these files; a newer kit replaces them
   at the same paths, with new digests here.
 
+- The family drawer's files are in `assets/family/`, byte copies from the drawer's package;
+  `assets/family/SOURCE.md` lists each one's source and SHA-256. Automagik's lockup (PNG at
+  three sizes, ink and cream letters) and the Omni and Genie wordmarks are Automagik's own
+  logo kit, Apache-2.0 as the files above. The word "mykes" is we unfold's file for its
+  product; like the Open Intelligence tag it is not under this site's Apache-2.0 grant, and
+  nothing here calls it open-licensed.
+
 | File | In the kit | SHA-256 |
 | --- | --- | --- |
 | `assets/brand/automagik-lockup-three-colours-ink-header.svg` | `lockups/svg/automagik-lockup-three-colours-ink-header.svg` | `4d0f87696e31e5f889e2e60d98c7814d515a85f2f60918f4bd999f298338af2f` |

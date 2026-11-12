@@ -157,7 +157,6 @@ const icon = {
   download: '<path d="M12 4v11"/><path d="M7.5 11l4.5 4.5 4.5-4.5"/><path d="M5 19.5h14"/>',
   globe: '<circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/><path d="M12 3.4c2.7 2.5 2.7 14.7 0 17.2"/><path d="M12 3.4c-2.7 2.5-2.7 14.7 0 17.2"/>',
   chat: '<path d="M4.5 6.5A2.5 2.5 0 0 1 7 4h10a2.5 2.5 0 0 1 2.5 2.5v6.5a2.5 2.5 0 0 1-2.5 2.5h-5.2L7.5 19.5v-4H7a2.5 2.5 0 0 1-2.5-2.5z"/>',
-  menu: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>',
   close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
   chevron: '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
   terminal: '<rect x="3.5" y="5" width="17" height="14" rx="2.6"/><path d="M7.5 10l3 2.4-3 2.4"/><path d="M13 15h3.5"/>',
@@ -248,10 +247,70 @@ const entry = route => ({ href, name, line, image, mark, glyph: sign, external }
 // bigger than the logo it sits with. The official lockup (the logo with the tag under it) is
 // built by scripts/build-lockup.mjs into assets/brand/automagik/.
 export const oiTag = readFileSync(new URL('../assets/brand/open-intelligence/open-intelligence-tag.svg', import.meta.url), 'utf8').trim()
-// Menus without client scripting: each button opens its panel through the browser's own
-// popover. The browser keeps the button's expanded state, closes the panel on Escape or a
-// click outside, and returns focus to the button. Hover opens the same panel in CSS. On a
-// phone the Menu button opens one sheet under the header with the same three groups.
+// THE FAMILY DRAWER: the menu the whole product family shares (Arca's drawer package, issue
+// 11, approved by the owner on 2026-11-12). assets/family/ holds the piece as it was given:
+// family.html, header-button.html, family.css and family.js, and the art, all byte copies
+// (assets/family/SOURCE.md lists each one's sha256). Nothing of it is written here: the
+// markup below is the piece's own file with its comments left out, its slots filled, and
+// this site's own parts put in the places the piece gives a host:
+// - the top block is Automagik, the product whose site this is, with its lockup and line;
+// - the list under it is this site's pages that have no row in the drawer; it shows where
+//   the header has no room for its menus. A place on the page being read is written as a
+//   bare #name, so the piece closes the drawer before going there;
+// - addresses on automagik.si are written from this site's root, as every other link here;
+// - the row or link of the page being read carries aria-current="page".
+// The rows are the approved ones: Automagik's lockup with Desktop and Mobile, then omni,
+// genie and mykes, each as its word in the lettering with no mark, "Coming soon." under
+// Mykes. No pet, no Genie head, and the triskle beside nothing but Automagik.
+const familyFile = name => readFileSync(new URL(`../assets/family/${name}`, import.meta.url), 'utf8')
+const once = (text, from, to, times = 1) => {
+  assert.equal(text.split(from).length - 1, times, `the family piece holds ${from} ${times} time(s)`)
+  return text.replaceAll(from, to)
+}
+export const familyArt = {
+  __FAM_LOCKUP_CREAM_64__: 'automagik-lockup-three-colours-cream-64.png', __FAM_LOCKUP_CREAM_48__: 'automagik-lockup-three-colours-cream-48.png',
+  __FAM_LOCKUP_INK_64__: 'automagik-lockup-three-colours-ink-64.png', __FAM_LOCKUP_INK_48__: 'automagik-lockup-three-colours-ink-48.png',
+  __FAM_LOCKUP_CREAM_128__: 'automagik-lockup-three-colours-cream-128.png', __FAM_LOCKUP_INK_128__: 'automagik-lockup-three-colours-ink-128.png',
+  __FAM_WORD_OMNI_CREAM__: 'omni-wordmark-cream.svg', __FAM_WORD_OMNI_INK__: 'omni-wordmark-ink.svg',
+  __FAM_WORD_GENIE_CREAM__: 'genie-wordmark-cream.svg', __FAM_WORD_GENIE_INK__: 'genie-wordmark-ink.svg',
+  __FAM_WORD_MYKES_CREAM__: 'mykes-wordmark-cream.svg', __FAM_WORD_MYKES_INK__: 'mykes-wordmark-ink.svg',
+}
+// The host's own parts. The line is the site's own, as in the footer.
+export const familyHost = { name: 'Automagik', line: 'Open building blocks of superintelligence.', arcaLine: 'Be your own cloud. Infrastructure for AI agents.' }
+// This site's pages with no row in the drawer, for a window whose header has no room for
+// the menus. Docs is the drawer's own Support link; the phone app is on Mobile's page.
+export const familyLinks = [['/cloud/', 'Cloud'], ['/arca/', 'Arca'], ['/desktop/#install', 'Get the app'], ['/cloud/#privacy', 'Privacy']]
+const withoutComments = html => html.replace(/<!--[\s\S]*?-->\n?/g, '').trim()
+// The button: the piece's own markup. With script off it is a plain link, and on this site
+// that link goes to the page's own sitemap, the footer, where every page is listed.
+export const familyButton = once(withoutComments(familyFile('header-button.html')).split('\n')[0], 'href="https://automagik.si/"', 'href="#sitemap"')
+export function family(route) {
+  let html = withoutComments(familyFile('family.html'))
+  // The piece's own lockup markup, as it stands in the Automagik row, for the top block too:
+  // there the link has no name of its own, so the picture carries it.
+  const lockup = html.match(/<span class="fam-lockup"><picture class="fam-lock-cream">.*?<\/picture><picture class="fam-lock-ink">.*?<\/picture><\/span>/)[0]
+  html = once(html, '__FAM_ARCA__', once(lockup, 'alt=""', `alt="${familyHost.name}"`, 2))
+  html = once(html, 'href="https://automagik.si/arca/" data-family-product="Arca"', `href="/" data-family-product="${familyHost.name}"`)
+  html = once(html, familyHost.arcaLine, familyHost.line, 2)
+  // "You are here" is the site. On the home page that is also the page being read.
+  html = once(html, ' aria-current="page"><span class="fam-words"><span class="fam-logo">', ` aria-current="${route === '/' ? 'page' : 'true'}"><span class="fam-words"><span class="fam-logo">`)
+  const links = familyLinks.map(([href, name]) => {
+    const [path, place] = href.split('#')
+    return `<li><a href="${place && path === route ? `#${place}` : href}"${href === route ? ' aria-current="page"' : ''}>${name}</a></li>`
+  }).join('')
+  const list = html.match(/(<ul class="fam-links" data-family-links aria-label="Sections">)(.*?)(<\/ul>)/)
+  html = once(html, list[0], list[1] + links + list[3])
+  for (const [slot, name] of Object.entries(familyArt)) html = html.replaceAll(slot, `/assets/family/${name}`)
+  html = once(html, 'href="https://automagik.si/', 'href="/', 6)
+  assert.doesNotMatch(html, /__FAM_|automagik\.si|data-family-product="Arca"/, 'every slot is filled, every address is this site\'s own, and the top block is Automagik')
+  if (route !== '/' && html.includes(`href="${route}" data-family-product=`)) html = once(html, `href="${route}" data-family-product=`, `href="${route}" aria-current="page" data-family-product=`)
+  return html
+}
+// The header: the family's menu button first, at the window's left edge, then the logo, the
+// three menus and one button. The menus need no script: each button opens its panel through
+// the browser's own popover. The browser keeps the button's expanded state, closes the panel
+// on Escape or a click outside, and returns focus to the button. Hover opens the same panel
+// in CSS. Where the header has no room for the menus, the drawer carries the site's pages.
 function header(route) {
   const here = products.find(({ href }) => href === route)
   const groups = [
@@ -263,9 +322,7 @@ function header(route) {
     const current = id === 'products' && here
     return `<li class="menu"><button class="menu-button" type="button" popovertarget="menu-${id}"${current ? ' data-here' : ''}>${label}${current ? `<span class="menu-here"><span class="sr">, current page: </span>${here.name}</span>` : ''}${glyph('chevron', 'chev')}</button><div class="menu-panel" id="menu-${id}" popover><div class="menu-card"><ul class="menu-list">${items.map(entry(route)).join('')}</ul><p class="menu-foot">${foot}</p></div></div></li>`
   }).join('')
-  const sheet = groups.map(([id, label, items]) => `<section class="drawer-group" aria-labelledby="drawer-${id}"><h2 id="drawer-${id}" class="drawer-label">${label}</h2><ul class="menu-list">${items.map(entry(route)).join('')}</ul></section>`).join('')
-  return `<header class="top"><div class="wrap top-inner">${brand}<nav class="main-nav" aria-label="Main navigation"><ul class="menus">${menus}</ul></nav><a class="button primary small top-cta" href="/desktop/#install">Get the app</a><button class="menu-open" type="button" popovertarget="site-menu">${glyph('menu', 'menu-glyph bars')}${glyph('close', 'menu-glyph cross')}Menu</button><a class="menu-fallback" href="#sitemap">Menu</a></div>
-<nav class="drawer" id="site-menu" popover aria-label="All pages">${sheet}<div class="drawer-foot"><a class="button primary" href="/desktop/#install">Get the app ${arrow}</a><p class="fine">${partOf()}</p></div></nav></header>`
+  return `<header class="top topbar">${familyButton}<div class="wrap top-inner topbar-in">${brand}<nav class="main-nav" aria-label="Main navigation"><ul class="menus">${menus}</ul></nav><a class="button primary small top-cta" href="/desktop/#install">Get the app</a></div></header>`
 }
 function footer(route) {
   const column = (label, items) => `<nav aria-label="${label}"><p class="footer-head">${label}</p>${items.map(({ href, name, external }) => `<a href="${href}"${href === route ? ' aria-current="page"' : ''}>${name}${external ? ` ${out}` : ''}</a>`).join('')}</nav>`
@@ -279,10 +336,12 @@ function crumbs(route) {
 }
 function frame(route, title, body) {
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${title} · Automagik</title><meta name="description" content="Automagik: open building blocks of superintelligence. Desktop, Mobile, Omni, Genie, Cloud, Arca and Mykes."><meta name="theme-color" content="#f6eee2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1e1923" media="(prefers-color-scheme: dark)"><link rel="canonical" href="https://automagik.si${route}">${icons}<link rel="preload" href="/assets/brand/fredoka-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/brand/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/styles.css"></head>
-<body><a class="skip" href="#main">Skip to content</a>${header(route)}
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${title} · Automagik</title><meta name="description" content="Automagik: open building blocks of superintelligence. Desktop, Mobile, Omni, Genie, Cloud, Arca and Mykes."><meta name="theme-color" content="#f6eee2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1e1923" media="(prefers-color-scheme: dark)"><link rel="canonical" href="https://automagik.si${route}">${icons}<link rel="preload" href="/assets/brand/fredoka-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/brand/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/assets/family/family.css"><link rel="stylesheet" href="/styles.css"></head>
+<body><div class="page" data-family-page><a class="skip" href="#main">Skip to content</a>${header(route)}
 <main id="main">${route === '/' ? '' : crumbs(route)}${body}</main>
-${footer(route)}${getSheets(route) ? `\n${getSheets(route)}` : ''}</body></html>\n`
+${footer(route)}</div>${getSheets(route) ? `\n${getSheets(route)}` : ''}
+${family(route)}
+<script src="/assets/family/family.js" defer></script></body></html>\n`
 }
 // The other blocks, each with its own art: the way on from every page.
 function more(route) {

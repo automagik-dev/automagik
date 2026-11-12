@@ -13,7 +13,7 @@ import { onRequest as emailLink } from './functions/api/waitlist/email-confirm.j
 
 const root = dirname(fileURLToPath(import.meta.url))
 const evidence = resolve(process.env.LANDING_EVIDENCE ?? join(root, '../../.cache/landing-evidence'))
-const types = { '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' }
+const types = { '.js': 'text/javascript', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' }
 const isolated = fixture()
 let bindingMode = 'missing', origin
 const server = createServer(async (req, res) => {
@@ -38,7 +38,7 @@ const rowDark = used.flatMap(({ mark: [, dark] }) => dark ? [`/assets/brand/used
 let browser
 const reports = []
 // Layout shift, as the browser itself scores it (shifts right after a click or key do not
-// count). The observer is the test's; the pages carry no script.
+// count). The observer is the test's; the pages' one script is the family drawer's.
 const watchShift = context => context.addInitScript(() => {
   window.__shift = 0
   new PerformanceObserver(list => { for (const entry of list.getEntries()) if (!entry.hadRecentInput) window.__shift += entry.value }).observe({ type: 'layout-shift', buffered: true })
@@ -112,7 +112,8 @@ try {
         const area = image => { const box = image.getBoundingClientRect(); return box.width * box.height }
         const shown = [...document.images].filter(image => image.getClientRects().length && getComputedStyle(image).visibility !== 'hidden')
         const film = document.querySelector('[data-film] img')
-        const unsized = [...document.images].filter(image => !image.getAttribute('width') || !image.getAttribute('height')).map(image => image.src)
+        // The drawer's pictures are the family piece's own markup: its stylesheet sets their height, and the drawer is out of the page's flow.
+        const unsized = [...document.images].filter(image => !image.closest('[data-family-drawer]') && (!image.getAttribute('width') || !image.getAttribute('height'))).map(image => image.src)
         const themed = [...document.querySelectorAll('picture')].filter(picture => picture.querySelector('source[media*="prefers-color-scheme: dark"]')).map(picture => picture.querySelector('img').currentSrc.replace(location.origin, ''))
         const box = selector => { const node = document.querySelector(selector); return node ? node.getBoundingClientRect().toJSON() : null }
         // The Open Intelligence tag in the footer: its size, its colour, where it sits in the
@@ -196,8 +197,8 @@ try {
       console.log(`PASS ${label}: no overflow; images and fonts loaded; local requests`)
     } finally { await context.close() }
   }
-  // The menus, with real clicks and keys. No script runs on the page: the browser's popover
-  // opens and closes each panel, keeps the button's expanded state and returns the focus.
+  // The menus, with real clicks and keys. They need no script: the browser's popover opens
+  // and closes each panel, keeps the button's expanded state and returns the focus.
   const panelState = (page, id) => page.evaluate(id => {
     const panel = document.getElementById(id), box = panel.getBoundingClientRect(), active = document.activeElement
     return {
@@ -213,8 +214,8 @@ try {
     return button?.properties?.find(property => property.name === 'expanded')?.value.value
   }
   const linkCheck = async page => {
-    const links = await page.evaluate(() => [...document.querySelectorAll('.menu-panel a, .drawer a, .site-footer a, .crumbs a, .pager a')].map(link => link.getAttribute('href')))
-    assert.ok(links.length >= 40, 'menus, phone menu and footer carry their links')
+    const links = await page.evaluate(() => [...document.querySelectorAll('.menu-panel a, .fam a, .site-footer a, .crumbs a, .pager a')].map(link => link.getAttribute('href')))
+    assert.ok(links.length >= 40, 'menus, drawer and footer carry their links')
     for (const href of new Set(links)) {
       const url = new URL(href, origin)
       if (url.origin !== origin) { assert.equal(url.protocol, 'https:', href); continue }
@@ -289,49 +290,160 @@ try {
       assert.equal(await page.locator('.menu-button[data-here] .menu-here').evaluate(node => node.lastChild.textContent), 'Omni')
       assert.deepEqual(outside, [], `No external request from the menus: ${label}`)
     } finally { await desk.close() }
-    // The phone menu: one sheet under the header with the same groups.
-    for (const width of [390, 320]) {
-      const phone = await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    // The family drawer, with real clicks and keys, in a wide window and on a phone. It is
+    // the one script on the page (assets/family/family.js, the piece's own) and the one menu
+    // a phone has: the header keeps no second menu button.
+    for (const width of [1440, 390, 320]) {
+      const height = width > 860 ? 900 : 844, about = `${label} ${width}px`
+      const view = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
       try {
-        const page = await phone.newPage(), cdp = await phone.newCDPSession(page)
+        const outside = await guard(view), page = await view.newPage(), cdp = await view.newCDPSession(page), errors = [], art = []
+        page.on('pageerror', error => errors.push(error.message))
+        page.on('request', request => { if (request.url().includes('/assets/family/') && /\.(?:png|svg)$/.test(request.url())) art.push(request.url().split('/').pop()) })
         await page.goto(origin + route, { waitUntil: 'load' })
-        const menu = page.locator('.menu-open')
-        assert.ok(await menu.isVisible() && !(await page.locator('.main-nav').isVisible()), `The phone header shows one Menu button: ${label} ${width}px`)
-        assert.equal(await expanded(cdp, 'Menu'), false)
-        await menu.click()
-        let state = await panelState(page, 'site-menu')
-        const header = await page.locator('.top').boundingBox()
-        const behind = () => page.evaluate(() => ({ main: getComputedStyle(document.querySelector('main')).visibility, footer: getComputedStyle(document.querySelector('.site-footer')).visibility, scroll: getComputedStyle(document.documentElement).overflowY }))
-        assert.ok(state.open && state.shown && state.overflow === 0, `Menu opens the sheet: ${label} ${width}px`)
-        assert.equal(await expanded(cdp, 'Menu'), true, `Menu is announced expanded: ${label} ${width}px`)
-        assert.ok(state.box.left === 0 && state.box.width === width && Math.abs(state.box.top - (header.y + header.height)) <= 1 && Math.abs(state.box.bottom - 844) <= 1, `The sheet fills the screen under the header: ${label} ${width}px ${JSON.stringify(state.box)}`)
-        assert.deepEqual(await behind(), { main: 'hidden', footer: 'hidden', scroll: 'hidden' }, `The page behind the sheet is out of reach: ${label} ${width}px`)
-        assert.deepEqual(await page.locator('#site-menu .drawer-label').allInnerTexts().then(labels => labels.map(text => text.toLowerCase())), ['products', 'resources', 'company'])
-        assert.equal(await page.locator('#site-menu .menu-item').count(), 13)
-        if (route !== '/') assert.equal(await page.locator('#site-menu [aria-current="page"]').getAttribute('href'), route, `The sheet marks the active page: ${label}`)
-        if (width === 390) await page.screenshot({ path: join(evidence, `menu-phone-${slug}-${colorScheme}.png`) })
-        // The keyboard stays in the header and the sheet, and reaches every link of the sheet.
-        const stops = new Set()
-        for (let press = 0; press < 40; press++) {
-          await page.keyboard.press('Tab')
-          stops.add(await page.evaluate(() => { const active = document.activeElement; return active === document.body ? 'page' : active.closest('#site-menu') ? `sheet:${active.getAttribute('href')}` : active.closest('.top') ? 'header' : `behind:${active.outerHTML.slice(0, 60)}` }))
+        const menu = page.locator('[data-family-open]')
+        const state = () => page.evaluate(() => {
+          const root = document.documentElement, drawer = document.querySelector('[data-family-drawer]'), wrap = document.querySelector('[data-family-page]'), button = document.querySelector('[data-family-open]')
+          const box = drawer.getBoundingClientRect()
+          return {
+            open: root.classList.contains('is-family-open'), hidden: drawer.hidden, drawer: { left: box.left, top: box.top, width: box.width, bottom: box.bottom }, page: wrap.getBoundingClientRect().left,
+            inert: wrap.inert, ariaHidden: wrap.getAttribute('aria-hidden'), expanded: button.getAttribute('aria-expanded'),
+            focus: document.activeElement === button ? 'button' : drawer.contains(document.activeElement) ? 'drawer' : 'page',
+            overflow: root.scrollWidth - innerWidth, scroll: getComputedStyle(root).overflowY,
+          }
+        })
+        const shut = { open: false, page: 0, inert: false, ariaHidden: null, expanded: 'false', focus: 'button', overflow: 0, scroll: 'visible' }
+        const closed = async why => {
+          await page.waitForFunction(() => document.querySelector('[data-family-drawer]').hidden && document.querySelector('[data-family-scrim]').hidden)
+          const { hidden, drawer, ...now } = await state()
+          assert.deepEqual(now, shut, `${why}: ${about}`)
         }
-        assert.deepEqual([...stops].filter(stop => stop.startsWith('behind:')), [], `Tab never lands behind the sheet: ${label} ${width}px`)
-        assert.equal([...stops].filter(stop => stop.startsWith('sheet:')).length, 12, `Tab reaches every link of the sheet: ${label} ${width}px`)
+        // At rest: the button is the header's first thing, at the window's left edge, in the
+        // middle of the header's height; its three lines wear the family's colours for this
+        // ground; the logo stands clear of it and keeps the page column where there is room.
+        const rest = await page.evaluate(() => {
+          const header = document.querySelector('.top'), button = header.querySelector('[data-family-open]'), column = document.querySelector('.site-footer .wrap')
+          const box = node => node.getBoundingClientRect().toJSON()
+          return {
+            first: header.firstElementChild === button, role: button.getAttribute('role'), href: button.getAttribute('href'), name: button.getAttribute('aria-label'),
+            button: box(button), row: box(header.querySelector('.top-inner')), logo: box(header.querySelector('.brand img')),
+            lines: [...button.querySelectorAll('.fam-lines > span')].map(line => getComputedStyle(line).backgroundColor),
+            column: column.getBoundingClientRect().left + parseFloat(getComputedStyle(column).paddingLeft),
+            menus: getComputedStyle(header.querySelector('.main-nav')).display !== 'none', others: header.querySelectorAll('.menu-open, .menu-fallback, [popovertarget="site-menu"]').length,
+            drawer: getComputedStyle(document.querySelector('[data-family-drawer]')).display, outsidePage: !document.querySelector('[data-family-page]').contains(document.querySelector('[data-family-drawer]')),
+          }
+        })
+        assert.ok(rest.first && rest.role === 'button' && rest.href === null && rest.name === 'Menu' && rest.drawer === 'none' && rest.outsidePage, `The menu button is the header's first thing, a button: ${about} ${JSON.stringify(rest)}`)
+        assert.equal(await expanded(cdp, 'Menu'), false, `Menu starts collapsed: ${about}`)
+        assert.ok(rest.button.left === 7 && rest.button.width === 48 && rest.button.height === 48 && Math.abs(rest.button.top + 24 - (rest.row.top + rest.row.height / 2)) <= 0.5, `The button is at the window's edge, in the middle of the header: ${about} ${JSON.stringify(rest.button)}`)
+        assert.deepEqual(rest.lines, colorScheme === 'dark' ? ['rgb(181, 134, 231)', 'rgb(238, 84, 150)', 'rgb(21, 189, 224)'] : ['rgb(144, 98, 190)', 'rgb(208, 63, 124)', 'rgb(7, 129, 164)'], `Three lines: violet, pink, cyan for this ground: ${about}`)
+        const clear = width > 480 ? 68 : width > 360 ? 62 : 56
+        assert.ok(rest.logo.left >= clear - 0.5, `The logo stands clear of the button: ${about} ${rest.logo.left}`)
+        if (width === 1440) assert.ok(Math.abs(rest.logo.left - rest.column) <= 0.5, `The logo keeps the page column: ${about} ${rest.logo.left} ${rest.column}`)
+        assert.equal(rest.menus, width > 860, `The header's menus show only where there is room: ${about}`)
+        assert.equal(rest.others, 0, `The header has one menu button: ${about}`)
+        // A click opens it from the left edge and pushes the page aside; the page is out of reach.
+        await menu.click()
+        let now = await state()
+        const wide = Math.min(420, width - 34)
+        assert.ok(now.open && !now.hidden && now.drawer.left === 0 && now.drawer.top === 0 && now.drawer.width === wide && now.drawer.bottom === height, `A click opens the drawer at the left edge: ${about} ${JSON.stringify(now)}`)
+        assert.equal(now.page, wide, `The drawer pushes the page aside: ${about}`)
+        assert.equal(now.overflow, 0, `The pushed page does not widen the window: ${about}`)
+        assert.ok(now.inert && now.ariaHidden === 'true' && now.expanded === 'true' && now.scroll === 'hidden' && now.focus === 'drawer', `The page behind is out of reach and the focus is in the drawer: ${about} ${JSON.stringify(now)}`)
+        // What assistive technology is offered: the drawer's own things and nothing of the page.
+        const phone = width <= 860
+        const names = ['Automagik', ...(phone ? ['Cloud', 'Arca', 'Get the app', 'Privacy'] : []), 'Automagik', 'Desktop', 'Mobile', 'Omni', 'Genie', 'Mykes', 'Support', 'Close']
+        const offered = (await cdp.send('Accessibility.getFullAXTree')).nodes.filter(node => !node.ignored && ['link', 'button'].includes(node.role?.value)).map(node => node.name?.value ?? '')
+        assert.ok(offered.length === names.length && offered.every((name, at) => name.startsWith(names[at])), `Only the drawer is offered while it is open: ${about} ${JSON.stringify(offered)}`)
+        // The art: Automagik's lockup for this ground, then omni, genie and mykes as words,
+        // at one letter size; no pet, no head, no mark beside a product; "Coming soon." under Mykes.
+        await page.waitForFunction(() => [...document.querySelectorAll('[data-family-drawer] img')].filter(image => image.getClientRects().length).every(image => image.complete && image.naturalWidth > 0))
+        const seen = await page.evaluate(() => {
+          const drawer = document.querySelector('[data-family-drawer]'), shown = [...drawer.querySelectorAll('img')].filter(image => image.getClientRects().length)
+          return {
+            lock: parseFloat(getComputedStyle(drawer).getPropertyValue('--lock')), files: shown.map(image => image.currentSrc.split('/').pop()), heights: shown.map(image => image.getBoundingClientRect().height), alts: shown.map(image => image.alt),
+            every: [...drawer.querySelectorAll('img, source')].map(node => node.getAttribute('src') ?? node.getAttribute('srcset')),
+            rows: [...drawer.querySelectorAll('.fam-list > li')].map(row => row.innerText.trim()), here: drawer.querySelector('[data-family-here] .fam-item').textContent.trim(), hereCurrent: drawer.querySelector('[data-family-here] .fam-item').getAttribute('aria-current'),
+            links: [...drawer.querySelectorAll('[data-family-links] a')].filter(link => link.getClientRects().length).map(link => link.getAttribute('href')),
+            current: [...drawer.querySelectorAll('[aria-current="page"]')].filter(node => !node.closest('[data-family-here]')).map(node => node.getAttribute('href')),
+            inside: drawer.scrollWidth - drawer.clientWidth,
+          }
+        })
+        const tone = colorScheme === 'dark' ? 'cream' : 'ink', lockup = `automagik-lockup-three-colours-${tone}-${width <= 480 ? 48 : 64}.png`
+        assert.equal(seen.lock, width <= 480 ? 24 : 30)
+        assert.deepEqual(seen.files, [lockup, lockup, `omni-wordmark-${tone}.svg`, `genie-wordmark-${tone}.svg`, `mykes-wordmark-${tone}.svg`], `The drawer shows the lockup and the three words for this ground: ${about}`)
+        assert.deepEqual(seen.alts, ['Automagik', '', 'Omni', 'Genie', 'Mykes'], `Each picture has its name: ${about}`)
+        assert.ok(Math.abs(seen.heights[0] - seen.lock) <= 0.5 && seen.heights[1] <= seen.lock + 0.5 && seen.heights[1] >= seen.lock * 0.6, `The lockup is drawn at its row's height: ${about} ${seen.heights}`)
+        assert.ok(Math.abs(seen.heights[2] - seen.lock) <= 0.5 && Math.abs(seen.heights[3] - seen.lock) <= 0.5 && Math.abs(seen.heights[4] - seen.lock * 257 / 264) <= 0.5, `The three words are one letter size: ${about} ${seen.heights}`)
+        assert.ok(seen.every.every(file => /^\/assets\/family\/(?:automagik-lockup-three-colours-(?:cream|ink)-(?:48|64)\.png|(?:omni|genie|mykes)-wordmark-(?:cream|ink)\.svg)$/.test(file)), `No pet, no head and no mark beside a product: ${about} ${seen.every}`)
+        assert.deepEqual(seen.rows, ['Your chat apps, connected.', 'A wish, a branch, a report.', 'Coming soon.'], `Each product's line, "Coming soon." under Mykes: ${about}`)
+        assert.equal(seen.here, 'Open building blocks of superintelligence.You are here', `The top block is Automagik: ${about}`)
+        assert.equal(seen.hereCurrent, route === '/' ? 'page' : 'true')
+        assert.deepEqual(seen.links, phone ? ['/cloud/', '/arca/', '/desktop/#install', '/cloud/#privacy'] : [], `The site's other pages show in the drawer only where the header has no room: ${about}`)
+        assert.deepEqual(seen.current, route === '/' ? [] : [route], `The drawer marks the page being read: ${about}`)
+        assert.equal(seen.inside, 0, `Nothing in the drawer is wider than it: ${about}`)
+        assert.deepEqual(art.filter(file => !file.includes(tone)), [], `Only the art for this ground is fetched: ${about}`)
+        if (width !== 320) await page.screenshot({ path: join(evidence, `drawer-${slug}-${width}-${colorScheme}.png`) })
+        // The keyboard stays in the drawer and reaches every one of its things.
+        const stops = new Set()
+        for (let press = 0; press < 30; press++) {
+          await page.keyboard.press('Tab')
+          stops.add(await page.evaluate(() => { const active = document.activeElement; return active.closest('[data-family-drawer]') ? `drawer:${active.getAttribute('href') ?? active.textContent}:${active.className}` : `behind:${active.outerHTML.slice(0, 60)}` }))
+        }
+        assert.deepEqual([...stops].filter(stop => stop.startsWith('behind:')), [], `Tab never lands behind the drawer: ${about}`)
+        assert.equal(stops.size, names.length, `Tab reaches everything in the drawer: ${about} ${[...stops]}`)
+        // Escape closes it and the focus is back on the button; Enter and Space open it.
         await page.keyboard.press('Escape')
-        state = await panelState(page, 'site-menu')
-        assert.ok(!state.open && state.focusButton === 'site-menu', `Escape closes the sheet and returns focus to Menu: ${label} ${width}px`)
-        assert.deepEqual(await behind(), { main: 'visible', footer: 'visible', scroll: 'visible' })
-        // Menu toggles the sheet, and a link in it goes to its page.
-        await menu.click(); await menu.click()
-        assert.ok(!(await panelState(page, 'site-menu')).open, `Menu closes the sheet again: ${label} ${width}px`)
-        await menu.click(); await page.locator('#site-menu .menu-item[href="/mobile/"]').click()
-        await page.waitForURL(origin + '/mobile/')
-        assert.ok(!(await panelState(page, 'site-menu')).open)
-        assert.equal(await page.locator('.crumbs [aria-current="page"]').innerText(), 'Mobile')
-      } finally { await phone.close() }
+        await closed('Escape closes the drawer and returns the focus to the button')
+        assert.equal(await expanded(cdp, 'Menu'), false)
+        for (const key of ['Enter', 'Space']) {
+          await page.keyboard.press(key)
+          now = await state()
+          assert.ok(now.open && now.focus === 'drawer' && now.inert && now.page === wide, `${key} opens the drawer: ${about} ${JSON.stringify(now)}`)
+          await page.keyboard.press('Escape')
+          await closed(`Escape closes the drawer opened with ${key}`)
+        }
+        // Close, a press beside the drawer and a second press on the button close it too.
+        await menu.click(); await page.locator('[data-family-close]').click()
+        await closed('Close closes the drawer')
+        await menu.click(); await page.mouse.click(wide + (width - wide) / 2, height - 60)
+        await closed('A press beside the drawer closes it')
+        if (width === 1440) {
+          await menu.click(); await page.mouse.click(rest.button.left + 24 + wide, rest.button.top + 24)
+          await closed('A press on the button beside the open drawer closes it')
+        }
+        // A product in the drawer goes to its page; the drawer is shut there.
+        await menu.click(); await page.locator('[data-family-drawer] .fam-item[href="/omni/"]').click()
+        await page.waitForURL(origin + '/omni/')
+        assert.equal(await page.locator('.crumbs [aria-current="page"]').innerText(), 'Omni')
+        assert.ok(!(await state()).open, `The drawer is shut on the page it led to: ${about}`)
+        if (phone && route === '/') {
+          // One of the site's other pages, from the list under the top block; then a place on
+          // the page being read: the drawer steps aside first, and the page goes there.
+          await page.locator('[data-family-open]').click(); await page.locator('[data-family-links] a[href="/cloud/"]').click()
+          await page.waitForURL(origin + '/cloud/')
+          await page.locator('[data-family-open]').click(); await page.locator('[data-family-links] a[href="#privacy"]').click()
+          await page.waitForFunction(() => location.hash === '#privacy')
+          const landed = await page.evaluate(() => ({ open: document.documentElement.classList.contains('is-family-open'), inert: document.querySelector('[data-family-page]').inert, hidden: document.querySelector('[data-family-drawer]').hidden, focus: document.activeElement.id }))
+          assert.deepEqual(landed, { open: false, inert: false, hidden: true, focus: 'privacy' }, `A place on this page closes the drawer and lands there: ${about}`)
+        }
+        assert.deepEqual(outside, [], `No external request from the drawer: ${about}`); assert.deepEqual(errors, [], about)
+      } finally { await view.close() }
     }
-    console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links, phone sheet`)
+    // With script off the button is a plain link to the page's own sitemap, the footer, and
+    // the drawer stays shut.
+    if (route === '/') {
+      const plain = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce', javaScriptEnabled: false })
+      try {
+        const page = await plain.newPage()
+        await page.goto(origin + route, { waitUntil: 'load' })
+        const link = page.locator('[data-family-open]')
+        assert.equal(await link.getAttribute('href'), '#sitemap'); assert.equal(await link.getAttribute('role'), null)
+        await link.click()
+        assert.ok(page.url().endsWith('/#sitemap') && !(await page.locator('[data-family-drawer]').isVisible()) && await page.locator('#sitemap').isVisible(), `With script off the button leads to the sitemap: ${label}`)
+      } finally { await plain.close() }
+    }
+    console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links; the family drawer by click, Enter, Space and Escape, the page pushed and out of reach, its art, script off`)
   }
   // The logo in the header and the footer: the kit's lockup for small sizes, the triskle in
   // colour with ink letters on the light page and cream ones on the dark page (read from the
@@ -762,20 +874,21 @@ try {
       let arrived = ''
       for (let attempt = 0; attempt < 3 && arrived !== 'finished'; attempt++) {
         await page.goto(origin + '/', { waitUntil: 'load' })
-        assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on the home: ${width}px`)
+        assert.deepEqual(await names(), { root: 1, 'site-top': 1, 'fb-bar': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on the home: ${width}px`)
         if (width > 860) { await page.locator('[popovertarget="menu-products"]').click(); await page.locator('#menu-products .menu-item[href="/genie/"]').click() }
-        else { await page.locator('.menu-open').click(); await page.locator('#site-menu .menu-item[href="/genie/"]').click() }
+        else { await page.locator('[data-family-open]').click(); await page.locator('[data-family-drawer] .fam-item[href="/genie/"]').click() }
         await page.waitForURL(origin + '/genie/')
         await page.waitForFunction(() => window.__arrived === 'finished' || window.__arrived === 'skipped' || window.__arrived === 'plain')
         arrived = await page.evaluate(() => window.__arrived)
       }
       assert.equal(arrived, 'finished', `The page-to-page transition runs: ${width}px`)
-      assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on a product page: ${width}px`)
+      assert.deepEqual(await names(), { root: 1, 'site-top': 1, 'fb-bar': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on a product page: ${width}px`)
       // The menu eases in and settles fully shown, in place.
-      const opener = width > 860 ? '[popovertarget="menu-products"]' : '.menu-open', eased = width > 860 ? '#menu-products .menu-card' : '#site-menu'
+      // On a phone the menu is the family drawer: it slides in from the left edge.
+      const opener = width > 860 ? '[popovertarget="menu-products"]' : '[data-family-open]', eased = width > 860 ? '#menu-products .menu-card' : '[data-family-drawer]'
       await page.locator(opener).click()
       assert.notEqual(await page.locator(eased).evaluate(node => getComputedStyle(node).transitionDuration), '0s', `The menu has an entrance: ${width}px`)
-      await page.waitForFunction(selector => { const style = getComputedStyle(document.querySelector(selector)); return style.opacity === '1' && style.translate === 'none' }, eased)
+      await page.waitForFunction(selector => { const style = getComputedStyle(document.querySelector(selector)); return style.opacity === '1' && style.translate === 'none' && style.transform === 'none' }, eased)
       assert.deepEqual(outside, []); assert.deepEqual(errors, [])
       console.log(`PASS motion ${width}px: every page scrolled; scroll-driven and timed motion run; layout shift 0; nothing left dim; page transition and menu entrance`)
     } finally { await context.close() }
