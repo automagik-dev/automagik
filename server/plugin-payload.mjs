@@ -1,7 +1,7 @@
 // Materialize local install inputs from the image's scanned, unpacked plugin files.
 // Archives stay in the writable profile for later installs, never in the image being scanned.
 import { createHash } from 'node:crypto'
-import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { parse, stringify } from 'yaml'
@@ -43,6 +43,20 @@ export function packPlugin(dir) {
   }
   visit(dir)
   return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]))
+}
+
+/**
+ * After an update, remove earlier images' archives of the three plugins (about 10 MB a
+ * release); the backup keeps the old profile's. Any archive the manifest names is kept, and
+ * nothing in vendor/ that is not one of the image's plugin archives is touched.
+ */
+export function pruneImageArchives(profile) {
+  const named = new Set(Object.values(JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')).dependencies ?? {})
+    .filter(spec => typeof spec === 'string' && spec.startsWith('file:vendor/')).map(spec => spec.slice('file:vendor/'.length)))
+  const ours = new RegExp(`^automagik-(?:${PLUGINS.map(name => name.split('/')[1]).join('|')})-\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?\\.tgz$`)
+  for (const file of readdirSync(join(profile, 'vendor'))) {
+    if (ours.test(file) && !named.has(file)) rmSync(join(profile, 'vendor', file))
+  }
 }
 
 export function materializePlugins({ source, target, lock = parse(readFileSync(join(source, 'pnpm-lock.yaml'), 'utf8')) }) {

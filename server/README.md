@@ -208,9 +208,11 @@ successful update.
 
 Fresh seeds also materialize those three tarballs on the data volume. Both seeds and upgrades
 retain them in the profile's `vendor/`, with matching lockfile integrity: any later
-`dsh plugin install` re-resolves the profile's direct dependencies. A matching image repairs an
-older image-managed seed whose tarballs are missing, in the workspace's own lock (a lock it cannot
-read is replaced by the image's). Owner-managed profiles are left alone.
+`dsh plugin install` re-resolves the profile's direct dependencies. Once an update's install has
+verified, the previous image's three archives leave `vendor/` (the backup keeps them); any other
+file there stays. A matching image repairs an older image-managed seed whose tarballs are
+missing, in the workspace's own lock (a lock it cannot read is replaced by the image's).
+Owner-managed profiles are left alone.
 The image itself stays archive-free and carries no Omni installation. Omni's plugin downloads
 and verifies its own Bun runtime using Node; its sandbox installer uses the image's `tar`,
 `gzip` and `find` to unpack its verified Postgres and NATS downloads.

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { pinStore, profileDirOf, PROFILE, seedProfile } from './lib.mjs'
 import { FOLLOW_STATUS, installedPlugins, markSeed, ownership, packageHash, profileState, compareRelease, validBuild, writeJson, readJson } from './profile-state.mjs'
-import { materializePlugins, PLUGINS } from './plugin-payload.mjs'
+import { materializePlugins, PLUGINS, pruneImageArchives } from './plugin-payload.mjs'
 import { mergeImageProfile, readLock } from './profile-lock.mjs'
 import { withVolumeLock } from './volume-lock.mjs'
 
@@ -146,7 +146,9 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
     if (!PLUGINS.every(name => installedPlugins(profile)[name] === build.plugins[name])) throw new Error('Image plugin install did not converge')
     if (!extras.every(name => readJson(join(profile, 'node_modules', name, 'package.json'))?.version === addedVersions[name])) throw new Error('Added plugin did not survive image update')
     if (packageHash(target) !== own.packageSha256) return done('owner-managed')
-    // Keep the materialized inputs on the data volume for subsequent plugin installs.
+    // Keep the materialized inputs on the data volume for subsequent plugin installs; the
+    // previous image's are only in the backup.
+    pruneImageArchives(profile)
     markSeed(profile, build.automagik, undefined, readJson(join(source, 'package.json')))
     renameSync(target, previous)
     try { renameSync(profile, target) }

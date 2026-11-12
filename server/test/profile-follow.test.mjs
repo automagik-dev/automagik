@@ -172,6 +172,7 @@ test('fresh seed records its package hash; a newer image installs in staging aft
   const marker = JSON.parse(readFileSync(join(f.target, SEED_MARKER), 'utf8'))
   assert.equal(marker.packageSha256, packageHash(f.target)); assert.equal(marker.release, '3.90.1')
   write(join(f.target, 'cordis.patch.yml'), 'owner settings\n')
+  write(join(f.target, 'vendor', 'owner-plugin.tgz'), 'owner archive\n')
   let backupPresent = false, calls = 0
   const beforePackage = readFileSync(join(f.target, 'package.json'), 'utf8'), beforeLock = readFileSync(join(f.target, 'pnpm-lock.yaml'), 'utf8')
   const upgraded = await prepare(f, f.next, async args => {
@@ -192,6 +193,11 @@ test('fresh seed records its package hash; a newer image installs in staging aft
   assert.equal(readFileSync(join(f.target, 'cordis.patch.yml'), 'utf8'), 'owner settings\n')
   assert.equal(JSON.parse(readFileSync(join(f.target, SEED_MARKER), 'utf8')).packageSha256, packageHash(f.target))
   assertInstallInputs(f.target)
+  // VENDOR_ACCUMULATES: every update would leave the previous release's archives (~10 MB).
+  const archives = PLUGINS.map(name => `automagik-${name.split('/')[1]}-3.93.0.tgz`)
+  assert.deepEqual(readdirSync(join(f.target, 'vendor')).sort(), [...archives, 'owner-plugin.tgz'].sort())
+  const backupVendor = join(f.dshHome, 'backups', readdirSync(join(f.dshHome, 'backups'))[0], 'automagik-web', 'vendor')
+  assert.ok(readdirSync(backupVendor).includes('automagik-bots-dsh-3.90.1.tgz'), 'the backup keeps the old archives')
 })
 
 function assertInstallInputs(profile) {
