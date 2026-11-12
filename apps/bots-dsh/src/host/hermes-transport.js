@@ -93,6 +93,16 @@ export function remoteAddress(input, { allowLoopback = false } = {}) {
   return url.origin + url.pathname.replace(/\/+$/, '')
 }
 
+// A socket address carries its credential in the query (token, ticket, internal): whatever
+// follows one of those names is never kept, whoever's token it is.
+const SOCKET_QUERY = /([?&](?:token|ticket|internal)=)[^&#\s"'<>\\]+/gi
+/** Text with the credential of any socket address in it removed. */
+export const redactSocketQuery = text => String(text ?? '').replace(SOCKET_QUERY, '$1[redacted]')
+
+// The requests that are about the connection, not a profile: Hermes refuses a field its
+// contract does not name, so these never carry one.
+const UNSCOPED = new Set(['client.capabilities'])
+
 // Errors are fixed sentences. Never forward a fetch/socket/RPC error, headers or response body
 // to the caller: those surfaces can echo credentials, tickets and private remote configuration.
 // Known transient values are also removed from model names, rows, and approval descriptions.
@@ -108,6 +118,11 @@ export class HermesTransport {
     this.pending = new Map()
     this.listeners = new Set()
     this.authHeaders = authHeaders ?? { Authorization: `Bearer ${credential}` }
+    // A session token (the one-time token of an SSH connection, a saved session token)
+    // opens the chat socket itself, as Hermes Desktop does: Hermes mints a socket ticket
+    // only for a signed-in session (a password sign-in's cookies, a bearer).
+    const sessionToken = Object.entries(this.authHeaders).find(([name]) => /^x-hermes-session-token$/i.test(name))?.[1]
+    this.socketToken = typeof sessionToken === 'string' && sessionToken ? sessionToken : undefined
     this.secrets = new Set([credential, ...redactionSecrets].filter(value => typeof value === 'string' && value))
     for (const [name, value] of Object.entries(this.authHeaders)) {
       if (typeof value !== 'string' || !value) continue
@@ -134,6 +149,7 @@ export class HermesTransport {
       }
       return text.replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
         .replace(/hermes-gateway-ticket\.[A-Za-z0-9._~-]+/g, 'hermes-gateway-ticket.[redacted]')
+        .replace(SOCKET_QUERY, '$1[redacted]')
     }
     if (typeof value === 'string') return clean(value)
     if (Array.isArray(value)) return value.map(item => this.redact(item))
@@ -169,15 +185,27 @@ export class HermesTransport {
       await this.bounded(this.open(), this.deadlines.start, 'Remote Hermes did not start within 60 seconds.')
       return this
     } catch (error) {
+      const unopened = this.unopened === true
       this.close()
+      if (unopened) throw await this.refusal()
       if (localFailures.has(error)) throw error
       throw failure('Remote Hermes could not connect. Check the saved credential and address.', 'bot/hermes-connection')
     }
   }
 
-  async open() {
-    const controller = new AbortController()
-    this.openAbort = controller
+  // A socket that never opened does not say why. One request with the same token tells a
+  // token Hermes refuses from a Hermes that is not answering.
+  async refusal() {
+    const refused = () => failure('Remote Hermes authentication expired or was refused. Replace the saved credential.', 'bot/hermes-auth')
+    try {
+      const response = await this.bounded(this.fetcher(`${this.address}/api/profiles`, { headers: this.authHeaders, redirect: 'error' }), Math.min(this.deadlines.control, 5000), 'Remote Hermes did not answer.')
+      if (response?.status === 401 || response?.status === 403) return refused()
+    } catch (error) { if (error?.code === 'bot/hermes-auth') return refused() }
+    return failure('Remote Hermes did not open the chat connection. Check that Hermes is running, then test again.', 'bot/hermes-connection')
+  }
+
+  // The single-use ticket a signed-in session (cookies, a bearer) opens its socket with.
+  async ticket(controller) {
     let response
     try {
       response = await this.fetcher(`${this.address}/api/auth/ws-ticket`, {
@@ -196,14 +224,31 @@ export class HermesTransport {
     try { ticket = (await response.json()).ticket } catch { throw failure('Remote Hermes returned an invalid authentication ticket.', 'bot/hermes-protocol') }
     if (typeof ticket !== 'string' || !/^[A-Za-z0-9._~-]+$/.test(ticket)) throw failure('Remote Hermes returned an invalid authentication ticket.', 'bot/hermes-protocol')
     this.secrets.add(ticket)
+    return ticket
+  }
+
+  async open() {
+    const controller = new AbortController()
+    this.openAbort = controller
+    const ticket = this.socketToken ? undefined : await this.ticket(controller)
     if (this.closed || controller.signal.aborted) throw failure('Remote Hermes startup was cancelled.')
     let readyResolve, readyReject
     const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject })
+    // A socket that cannot even be made ends this open before anything waits on `ready`.
+    ready.catch(() => {})
     this.readyReject = readyReject
     const url = new URL(`${this.address}/api/ws`)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-    this.ws = this.socket(url.href, ['hermes-gateway-v1', `hermes-gateway-ticket.${ticket}`])
+    // The address that holds the token goes to the socket and nowhere else: it is never
+    // kept, logged or put in an error. Hermes takes no subprotocol beside a token.
+    if (this.socketToken) url.searchParams.set('token', this.socketToken)
+    this.ws = this.socket(url.href, this.socketToken ? [] : ['hermes-gateway-v1', `hermes-gateway-ticket.${ticket}`])
+    // With a token on the address, a socket Hermes turns away closes before it says anything.
+    let answered = false
+    const dropped = () => { if (this.socketToken && !answered && !this.closed) this.unopened = true; this.lost() }
+    this.ws.addEventListener('open', () => { answered = true })
     this.ws.addEventListener('message', event => {
+      answered = true
       if (this.closed || this.lostNotified) return
       try {
         if (!string(event.data) || Buffer.byteLength(event.data, 'utf8') > FRAME_BYTES) throw failure(INVALID_FRAME, 'bot/hermes-protocol')
@@ -216,8 +261,8 @@ export class HermesTransport {
         } else this.receive(frame)
       } catch { this.lost(INVALID_FRAME); this.close() }
     })
-    this.ws.addEventListener('close', () => this.lost())
-    this.ws.addEventListener('error', () => this.lost())
+    this.ws.addEventListener('close', dropped)
+    this.ws.addEventListener('error', dropped)
     await ready
     if (this.closed || controller.signal.aborted) throw failure('Remote Hermes startup was cancelled.')
     this.readyReject = undefined
@@ -255,7 +300,7 @@ export class HermesTransport {
         reject(failure(method === 'prompt.submit' ? LOST : 'Remote Hermes did not answer a control request within 15 seconds.', method === 'prompt.submit' ? 'bot/hermes' : 'bot/hermes-timeout'))
       }, ms)
       this.pending.set(id, { resolve, reject, timer, method })
-      try { this.ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, ...(this.profile ? { profile: this.profile } : {}) } })) }
+      try { this.ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, ...(this.profile && !UNSCOPED.has(method) ? { profile: this.profile } : {}) } })) }
       catch { this.lost() }
     })
   }

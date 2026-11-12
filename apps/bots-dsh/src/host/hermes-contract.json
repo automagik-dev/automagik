@@ -1,5 +1,6 @@
 {
   "upstreamCommit": "3bcd071226d3d605a2bb3b4f3933e7d583e189d6",
+  "minimumRelease": "0.21.5",
   "desktopContract": 8,
   "dialect": "standalone",
   "source": "apps/shared/src/gateway-contract.openrpc.json",

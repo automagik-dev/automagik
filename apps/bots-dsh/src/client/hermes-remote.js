@@ -77,6 +77,20 @@ function SshHostPicker({ host, onPick }) {
 // shaped again here: a value the page cannot show safely is dropped, never rendered.
 const shortText = (value, max = 255) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value) ? value : ''
 const lineRows = value => (Array.isArray(value) ? value : []).map(line => shortText(line, 240)).filter(Boolean).slice(-8)
+const release = value => /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(value ?? '') ? value : ''
+// How Hermes is updated where it runs, by the install kind its own "--version" names
+// (Hermes's own table: a source install updates itself, an image or a package does not).
+function updateStep(install, host) {
+  if (['nix', 'nixos', 'home-manager'].includes(install)) return { hint: t('On {host}, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then test again.', { host }) }
+  if (install === 'docker') return { command: 'docker pull nousresearch/hermes-agent:latest', hint: t('On {host}, run “{command}” and restart the Hermes container, then test again.', { host, command: 'docker pull nousresearch/hermes-agent:latest' }) }
+  const command = install === 'apt' ? 'pkg upgrade hermes-agent' : 'hermes update'
+  return { command, hint: t('On {host}, run “{command}”, then test again.', { host, command }) }
+}
+// The rows of an update screen: what runs there, what is needed, and the command to run.
+function updateRows(facts, step) {
+  return [facts.version ? { label: t('Hermes there'), value: `v${facts.version}` } : null, facts.minimum ? { label: t('Needed'), value: t('v{version} or newer', { version: facts.minimum }) } : null,
+    step.command ? { label: t('Update command'), value: step.command, mono: true } : null].filter(Boolean)
+}
 function failureFacts(value) {
   if (!value || typeof value !== 'object') value = {}
   const count = key => Number.isSafeInteger(value[key]) ? value[key] : undefined
@@ -86,6 +100,7 @@ function failureFacts(value) {
     identities: (Array.isArray(value.identities) ? value.identities : []).filter(name => /^[\w.@+-]{1,64}$/.test(name ?? '')).slice(0, 6),
     agentKeys: count('agentKeys') ?? 0, port: count('port'), exit: count('exit'), errno: count('errno'), line: count('line'),
     ssh: lineRows(value.ssh), hermes: lineRows(value.hermes), unsaved: value.unsaved === true, mismatch: value.mismatch === true,
+    version: release(value.version), minimum: release(value.minimum), install: /^[a-z0-9-]{1,32}$/.test(value.install ?? '') ? value.install : '',
   }
 }
 const STAGES = {
@@ -113,7 +128,18 @@ function screenFor(code, draft, facts) {
   const host = shortText(draft?.ssh?.host?.trim?.() ?? '') || t('the other computer')
   if (code === 'bot/hermes-busy') return { heading: t('Remote Hermes'), title: t('A chat is still running on this connection; stop it or wait.'), text: t('Your connection settings were not changed.'), hint: t('Stop the chat or wait') }
   if (code === 'bot/hermes-ssh-cleanup') return { heading: t('Connection cleanup is unconfirmed'), title: t('Check {host} before reconnecting', { host }), text: t('Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue.'), hint: t('Check the remote Hermes process before testing or connecting again.'), ssh: true }
-  if (code === 'bot/hermes-ssh-update') return { heading: t('Hermes needs an update'), title: t('Update Hermes on {host}', { host }), text: t('This Hermes installation lacks the server ownership options needed for an SSH connection.'), hint: t('Update Hermes, then test the SSH connection again.'), ssh: true }
+  if (code === 'bot/hermes-ssh-update') {
+    const step = updateStep(facts.install, host)
+    return { heading: t('Hermes needs an update'), title: facts.minimum ? t('Update Hermes on {host} to v{version} or newer', { host, version: facts.minimum }) : t('Update Hermes on {host}', { host }),
+      text: facts.version && facts.minimum ? t('{host} runs Hermes v{found}. This connection needs v{version} or newer.', { host, found: facts.version, version: facts.minimum }) : t('This Hermes installation lacks the server ownership options needed for an SSH connection.'),
+      hint: step.hint, rows: updateRows(facts, step), ssh: true }
+  }
+  if (code === 'bot/hermes-ssh-version') {
+    const step = updateStep(facts.install, host)
+    return { heading: t('Hermes did not report its version'), title: t('Automagik could not read the Hermes version on {host}', { host }),
+      text: facts.minimum ? t('“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough. This connection needs v{version} or newer.', { host, version: facts.minimum }) : t('“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough.', { host }),
+      hint: step.hint, rows: updateRows(facts, step), ssh: true }
+  }
   if (code === 'bot/hermes-ssh-platform') return { heading: t('This computer cannot run the SSH connection yet'), title: t('Check the remote system and Python'), text: t('The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation.'), hint: t('Check Python and the supported system on the other computer, then test again.'), ssh: true }
   if (code === 'bot/hermes-ssh-exited') return { heading: t('Hermes stopped while starting'), title: t('Hermes on {host} stopped before it was ready', { host }), text: facts.exit !== undefined ? t('SSH signed in and started Hermes, but Hermes exited with code {code}.', { code: facts.exit }) : t('SSH signed in and started Hermes, but Hermes stopped right away.'), hint: t('Run “hermes serve” on {host} to see the full error, fix it there, then test again.', { host }), ssh: true }
   if (code === 'bot/hermes-ssh-not-ready') return { heading: t('Hermes took too long to start'), title: t('Hermes on {host} was not ready in time', { host }), text: t('SSH signed in and started Hermes, but Hermes did not say it was ready before the deadline.'), hint: t('Check that Hermes starts normally on {host}, then test again.', { host }), ssh: true }

@@ -827,7 +827,11 @@ test('every SSH failure kind has its own screen, naming the host and the next st
     ['bot/hermes-ssh-details', { kind: 'invalid-details', stage: 'details' },
       'Check the SSH details', 'These SSH details can’t be used', 'The host, user, port, key path or Hermes path has characters SSH does not accept.', 'Edit the SSH details, then test again.'],
     ['bot/hermes-ssh-update', { kind: 'update-required', stage: 'remote-start' },
-      'Hermes needs an update', 'Update Hermes on sample-box', 'This Hermes installation lacks the server ownership options needed for an SSH connection.', 'Update Hermes, then test the SSH connection again.'],
+      'Hermes needs an update', 'Update Hermes on sample-box', 'This Hermes installation lacks the server ownership options needed for an SSH connection.', 'On sample-box, run “hermes update”, then test again.'],
+    ['bot/hermes-ssh-update', { kind: 'update-required', stage: 'remote-start', version: '0.21.4', minimum: '0.21.5', install: 'git', exit: 'git' },
+      'Hermes needs an update', 'Update Hermes on sample-box to v0.21.5 or newer', 'sample-box runs Hermes v0.21.4. This connection needs v0.21.5 or newer.', 'On sample-box, run “hermes update”, then test again.'],
+    ['bot/hermes-ssh-version', { kind: 'version-unknown', stage: 'remote-start', minimum: '0.21.5', install: 'git', hermes: ['Hermes Agent vgit.0a1b2c3 (2026.9.24)'] },
+      'Hermes did not report its version', 'Automagik could not read the Hermes version on sample-box', '“hermes --version” on sample-box named no release, so Automagik cannot tell whether it is new enough. This connection needs v0.21.5 or newer.', 'On sample-box, run “hermes update”, then test again.'],
     ['bot/hermes-ssh-cleanup', { kind: 'cleanup', stage: 'hermes-start' },
       'Connection cleanup is unconfirmed', 'Check sample-box before reconnecting', 'Automagik could not confirm that the owned Hermes process group stopped.', 'Check the remote Hermes process before testing or connecting again.'],
     ['bot/hermes-ssh-host-key', { kind: 'host-key-changed', stage: 'ssh-sign-in' },
@@ -849,6 +853,32 @@ test('every SSH failure kind has its own screen, naming the host and the next st
     assert.equal(render.rows['SSH host'], 'sample-box', 'the host the person picked is named')
     assert.doesNotMatch(render.document.body.textContent, /Fake refusal/)
   })
+})
+
+test('the update screen names the release there, the one needed and the update command for that install kind', async t => {
+  const older = { kind: 'update-required', stage: 'remote-start', version: '0.21.4', minimum: '0.21.5' }
+  const source = await failedSshTest(t, 'bot/hermes-ssh-update', { ...older, install: 'git' })
+  assert.deepEqual(source.rows, { 'SSH host': 'sample-box', 'Hermes there': 'v0.21.4', Needed: 'v0.21.5 or newer', 'Update command': 'hermes update', 'Stopped while': 'Finding Hermes' })
+  // Hermes's own table of install kinds: an image and a package are not updated by Hermes itself.
+  for (const [install, command, hint] of [
+    ['docker', 'docker pull nousresearch/hermes-agent:latest', 'On sample-box, run “docker pull nousresearch/hermes-agent:latest” and restart the Hermes container, then test again.'],
+    ['apt', 'pkg upgrade hermes-agent', 'On sample-box, run “pkg upgrade hermes-agent”, then test again.'],
+    ['nix', undefined, 'On sample-box, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then test again.'],
+    ['home-manager', undefined, 'On sample-box, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then test again.'],
+    ['some-new-kind', 'hermes update', 'On sample-box, run “hermes update”, then test again.'],
+  ]) {
+    const render = await failedSshTest(t, 'bot/hermes-ssh-update', { ...older, install })
+    assert.equal(render.text('.bt-hw-error-note'), hint, install)
+    assert.equal(render.rows['Update command'], command, install)
+  }
+  // A release that is not three numbers, or an install kind of the wrong shape, is dropped.
+  const shaped = await failedSshTest(t, 'bot/hermes-ssh-update', { kind: 'update-required', stage: 'remote-start', version: '0.21.4 <b>', minimum: 'v0.21', install: 'docker pull; rm' })
+  assert.deepEqual(shaped.rows, { 'SSH host': 'sample-box', 'Update command': 'hermes update', 'Stopped while': 'Finding Hermes' })
+  assert.equal(shaped.text('.bt-hw-failed h3'), 'Update Hermes on sample-box')
+  // What Hermes printed instead of a release is on the unknown-version screen.
+  const unknown = await failedSshTest(t, 'bot/hermes-ssh-version', { kind: 'version-unknown', stage: 'remote-start', minimum: '0.21.5', install: 'docker', hermes: ['Hermes Agent vgit.0a1b2c3 (2026.9.24)'] })
+  assert.deepEqual(unknown.rows, { 'SSH host': 'sample-box', Needed: 'v0.21.5 or newer', 'Update command': 'docker pull nousresearch/hermes-agent:latest', 'Stopped while': 'Finding Hermes' })
+  assert.equal(unknown.document.querySelector('.bt-hw-lines pre').textContent, 'Hermes Agent vgit.0a1b2c3 (2026.9.24)')
 })
 
 test('a failure screen shows the stage, the exit code and the last lines the host kept', async t => {

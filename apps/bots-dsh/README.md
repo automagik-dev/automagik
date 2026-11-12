@@ -481,6 +481,10 @@ The wizard follows **Connection → Details → Test → Profile → Ready**:
   naming the host and the step that stopped: sign-in, host key, the start script, Hermes
   exiting early (its exit code and last lines), Hermes not ready in time, no port, the one-time
   token, the tunnel, a busy forward from the SSH config, an old Hermes, or unconfirmed cleanup.
+  Before it starts anything, the start script reads `hermes --version`. A release older than
+  the minimum (below) gets **Update Hermes on `<host>` to v… or newer**, with the release found
+  there and the update command for that install kind (`hermes update`, the Docker image, the
+  Termux package, or Nix). A build that names no release is reported as that, never guessed.
   A failed test also leaves one line in the diagnostics log (Settings → Feedback): the step,
   the kind, the time it took and the last SSH and Hermes lines. The line names no one: the
   host as typed, the remote user, the host name and every IP address are replaced by
@@ -503,12 +507,21 @@ and a credential reference. Tokens and authenticated session credentials live on
 existing mode-0600 Bot secret store, with no Bot scope; saved values are never echoed. An SSH
 identity path is a reference to the user's file, not a copy of its contents. Passwords and key
 bytes are never persisted. Test credentials stay in a bounded transient draft until save/cancel.
-The transport mints a one-use ticket at `POST /api/auth/ws-ticket`, then offers
-`hermes-gateway-ticket.<ticket>` beside the stable `hermes-gateway-v1` WebSocket subprotocol.
-Standing credentials and tickets never enter URLs, command arguments, prompts or diagnostics.
+The chat socket opens the way Hermes itself accepts each sign-in. A session token (a saved
+token, or the one-time token of an SSH connection) opens `/api/ws?token=…` with no subprotocol,
+as Hermes Desktop does: Hermes mints no ticket for a session token. A password sign-in keeps
+its cookies out of every address: the transport mints a one-use ticket at
+`POST /api/auth/ws-ticket`, then offers `hermes-gateway-ticket.<ticket>` beside the stable
+`hermes-gateway-v1` WebSocket subprotocol. The address that holds a token goes to the socket
+and nowhere else: it is never kept, and a `token=`, `ticket=` or `internal=` query is removed
+from every row, error and diagnostics line. No credential enters command arguments or prompts.
 The SSH-generated session credential travels over the encrypted channel, not SSH's argv. On
 the remote computer it is written once, mode 0600, to the folder `hermes serve` reads it from
 (`~/.hermes/desktop-ssh/<random>/`, mode 0700), and Hermes removes it after reading.
+
+The oldest Hermes release that works is **v0.21.5** (`minimumRelease` in
+`src/host/hermes-contract.json`, the one place that names it): the first release with Desktop
+contract 8. v0.21.4 speaks contract 7 and is refused.
 
 Only **standalone Desktop contract 8 with server-request approvals** is accepted. Canonical
 authority is refused. The remote profile must already use manual approvals: DSH never changes
@@ -549,7 +562,13 @@ node scripts/hermes-contract.mjs <downloaded-generated-contract>
 Any change exits nonzero and names the changed surfaces. Do not update the pin solely to make
 the check pass: rerun the disposable fixtures against the reviewed shapes and keep the runtime
 version/dialect gate closed to every untested contract. The checker is offline and never
-contacts a Hermes instance. No live-server validation was used for this delivery.
+contacts a Hermes instance.
+
+The minimum release and the socket rule above were proven against real Hermes installs in
+throwaway homes (v0.21.4, v0.21.5, v0.22.7, v0.23.0, v0.23.1 and the pinned commit), with the
+start script run on the same machine and a stand-in model on loopback: no SSH, no other
+computer, no provider key. Repeat that for a new minimum; the fixtures alone cannot show what
+a real Hermes accepts.
 
 ## Agent access (MCP)
 

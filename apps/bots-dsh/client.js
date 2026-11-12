@@ -133,10 +133,22 @@ var ZH = {
   "Check {host} before reconnecting": "重新连接前请检查 {host}",
   "Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue.": "Automagik 无法确认其管理的 Hermes 进程组已停止。远程任务可能仍在继续。",
   "Check the remote Hermes process before testing or connecting again.": "再次测试或连接前，请检查远程 Hermes 进程。",
+  "On {host}, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then test again.": "在 {host} 上，通过安装 Hermes 的 Nix 来源进行更新（nix profile upgrade，或更新 flake 输入并重新构建），然后重新测试。",
+  "On {host}, run “{command}” and restart the Hermes container, then test again.": "在 {host} 上运行“{command}”并重启 Hermes 容器，然后重新测试。",
+  "On {host}, run “{command}”, then test again.": "在 {host} 上运行“{command}”，然后重新测试。",
+  "Hermes there": "那里的 Hermes",
+  "Needed": "需要",
+  "v{version} or newer": "v{version} 或更新版本",
+  "Update command": "更新命令",
+  "Update Hermes on {host} to v{version} or newer": "将 {host} 上的 Hermes 更新到 v{version} 或更新版本",
+  "{host} runs Hermes v{found}. This connection needs v{version} or newer.": "{host} 运行的是 Hermes v{found}。此连接需要 v{version} 或更新版本。",
+  "Hermes did not report its version": "Hermes 没有报告其版本",
+  "Automagik could not read the Hermes version on {host}": "Automagik 无法读取 {host} 上的 Hermes 版本",
+  "“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough. This connection needs v{version} or newer.": "{host} 上的“hermes --version”没有给出发行版本，因此 Automagik 无法判断它是否足够新。此连接需要 v{version} 或更新版本。",
+  "“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough.": "{host} 上的“hermes --version”没有给出发行版本，因此 Automagik 无法判断它是否足够新。",
   "Hermes needs an update": "Hermes 需要更新",
   "Update Hermes on {host}": "更新 {host} 上的 Hermes",
   "This Hermes installation lacks the server ownership options needed for an SSH connection.": "此 Hermes 安装缺少通过 SSH 连接所需的服务器进程归属选项。",
-  "Update Hermes, then test the SSH connection again.": "更新 Hermes 后，请重新测试 SSH 连接。",
   "This computer cannot run the SSH connection yet": "这台电脑暂时无法运行此 SSH 连接",
   "Check the remote system and Python": "检查远程系统和 Python",
   "The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation.": "远程电脑需要 Linux 或 macOS、Python 3，以及受支持的 Hermes 安装。",
@@ -4217,16 +4229,16 @@ function useLinger(value, ms) {
 // src/client/card-hold.js
 var import_react8 = require("react");
 function useDockHold(sessionId, kind, requestId, actions, inline) {
-  const release = (0, import_react8.useRef)(null);
+  const release2 = (0, import_react8.useRef)(null);
   const note = actions.noteHeldCard;
   (0, import_react8.useLayoutEffect)(() => () => {
-    const stop3 = release.current;
-    release.current = null;
+    const stop3 = release2.current;
+    release2.current = null;
     stop3?.();
   }, [sessionId, kind, requestId, note, inline]);
   return () => {
-    if (inline || release.current || !note) return;
-    release.current = () => note(sessionId, kind, requestId, -1);
+    if (inline || release2.current || !note) return;
+    release2.current = () => note(sessionId, kind, requestId, -1);
     note(sessionId, kind, requestId, 1);
   };
 }
@@ -5094,6 +5106,20 @@ function SshHostPicker({ host, onPick }) {
 }
 var shortText = (value, max = 255) => typeof value === "string" && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value) ? value : "";
 var lineRows = (value) => (Array.isArray(value) ? value : []).map((line) => shortText(line, 240)).filter(Boolean).slice(-8);
+var release = (value) => /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(value ?? "") ? value : "";
+function updateStep(install, host) {
+  if (["nix", "nixos", "home-manager"].includes(install)) return { hint: t("On {host}, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then test again.", { host }) };
+  if (install === "docker") return { command: "docker pull nousresearch/hermes-agent:latest", hint: t("On {host}, run “{command}” and restart the Hermes container, then test again.", { host, command: "docker pull nousresearch/hermes-agent:latest" }) };
+  const command = install === "apt" ? "pkg upgrade hermes-agent" : "hermes update";
+  return { command, hint: t("On {host}, run “{command}”, then test again.", { host, command }) };
+}
+function updateRows(facts, step2) {
+  return [
+    facts.version ? { label: t("Hermes there"), value: `v${facts.version}` } : null,
+    facts.minimum ? { label: t("Needed"), value: t("v{version} or newer", { version: facts.minimum }) } : null,
+    step2.command ? { label: t("Update command"), value: step2.command, mono: true } : null
+  ].filter(Boolean);
+}
 function failureFacts(value) {
   if (!value || typeof value !== "object") value = {};
   const count = (key) => Number.isSafeInteger(value[key]) ? value[key] : void 0;
@@ -5112,7 +5138,10 @@ function failureFacts(value) {
     ssh: lineRows(value.ssh),
     hermes: lineRows(value.hermes),
     unsaved: value.unsaved === true,
-    mismatch: value.mismatch === true
+    mismatch: value.mismatch === true,
+    version: release(value.version),
+    minimum: release(value.minimum),
+    install: /^[a-z0-9-]{1,32}$/.test(value.install ?? "") ? value.install : ""
   };
 }
 var STAGES = {
@@ -5142,7 +5171,28 @@ function screenFor(code, draft, facts) {
   const host = shortText(draft?.ssh?.host?.trim?.() ?? "") || t("the other computer");
   if (code === "bot/hermes-busy") return { heading: t("Remote Hermes"), title: t("A chat is still running on this connection; stop it or wait."), text: t("Your connection settings were not changed."), hint: t("Stop the chat or wait") };
   if (code === "bot/hermes-ssh-cleanup") return { heading: t("Connection cleanup is unconfirmed"), title: t("Check {host} before reconnecting", { host }), text: t("Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue."), hint: t("Check the remote Hermes process before testing or connecting again."), ssh: true };
-  if (code === "bot/hermes-ssh-update") return { heading: t("Hermes needs an update"), title: t("Update Hermes on {host}", { host }), text: t("This Hermes installation lacks the server ownership options needed for an SSH connection."), hint: t("Update Hermes, then test the SSH connection again."), ssh: true };
+  if (code === "bot/hermes-ssh-update") {
+    const step2 = updateStep(facts.install, host);
+    return {
+      heading: t("Hermes needs an update"),
+      title: facts.minimum ? t("Update Hermes on {host} to v{version} or newer", { host, version: facts.minimum }) : t("Update Hermes on {host}", { host }),
+      text: facts.version && facts.minimum ? t("{host} runs Hermes v{found}. This connection needs v{version} or newer.", { host, found: facts.version, version: facts.minimum }) : t("This Hermes installation lacks the server ownership options needed for an SSH connection."),
+      hint: step2.hint,
+      rows: updateRows(facts, step2),
+      ssh: true
+    };
+  }
+  if (code === "bot/hermes-ssh-version") {
+    const step2 = updateStep(facts.install, host);
+    return {
+      heading: t("Hermes did not report its version"),
+      title: t("Automagik could not read the Hermes version on {host}", { host }),
+      text: facts.minimum ? t("“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough. This connection needs v{version} or newer.", { host, version: facts.minimum }) : t("“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough.", { host }),
+      hint: step2.hint,
+      rows: updateRows(facts, step2),
+      ssh: true
+    };
+  }
   if (code === "bot/hermes-ssh-platform") return { heading: t("This computer cannot run the SSH connection yet"), title: t("Check the remote system and Python"), text: t("The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation."), hint: t("Check Python and the supported system on the other computer, then test again."), ssh: true };
   if (code === "bot/hermes-ssh-exited") return { heading: t("Hermes stopped while starting"), title: t("Hermes on {host} stopped before it was ready", { host }), text: facts.exit !== void 0 ? t("SSH signed in and started Hermes, but Hermes exited with code {code}.", { code: facts.exit }) : t("SSH signed in and started Hermes, but Hermes stopped right away."), hint: t("Run “hermes serve” on {host} to see the full error, fix it there, then test again.", { host }), ssh: true };
   if (code === "bot/hermes-ssh-not-ready") return { heading: t("Hermes took too long to start"), title: t("Hermes on {host} was not ready in time", { host }), text: t("SSH signed in and started Hermes, but Hermes did not say it was ready before the deadline."), hint: t("Check that Hermes starts normally on {host}, then test again.", { host }), ssh: true };
@@ -11962,14 +12012,14 @@ function advancedBot(roster, sessionId) {
   return bot?.advanced === true ? bot : null;
 }
 function installSimpleControls({ roster, sources = [], sessionId, install }) {
-  let release;
+  let release2;
   const sync = () => {
     const id = sessionId();
     const simple = id !== void 0 && advancedBot(roster.getSnapshot(), id) === null;
-    if (simple && !release) release = install();
-    else if (!simple && release) {
-      const off = release;
-      release = void 0;
+    if (simple && !release2) release2 = install();
+    else if (!simple && release2) {
+      const off = release2;
+      release2 = void 0;
       off();
     }
   };
@@ -11982,8 +12032,8 @@ function installSimpleControls({ roster, sources = [], sessionId, install }) {
   }
   return () => {
     for (const off of offs) off();
-    release?.();
-    release = void 0;
+    release2?.();
+    release2 = void 0;
   };
 }
 function installLiveTab({ tabs, slots, sidebar, face, Body }) {
@@ -15335,7 +15385,7 @@ function NewMessagePills({ sessionId, useSessions, useUi, useTurnClock }) {
   });
   const view = useTranscriptView();
   const unpinned = view?.unpinned === true;
-  const [release, setRelease] = (0, import_react34.useState)({ base: null, dismissed: false });
+  const [release2, setRelease] = (0, import_react34.useState)({ base: null, dismissed: false });
   const [above, setAbove] = (0, import_react34.useState)({ seen: false, dismissed: false });
   (0, import_react34.useEffect)(() => {
     setRelease({ base: unpinned ? replies : null, dismissed: false });
@@ -15343,8 +15393,8 @@ function NewMessagePills({ sessionId, useSessions, useUi, useTurnClock }) {
   (0, import_react34.useEffect)(() => {
     if (view?.divider === "in-view") setAbove((state) => state.seen ? state : { ...state, seen: true });
   }, [view?.divider]);
-  const fresh = release.base === null ? 0 : replies - release.base;
-  const showDown = unpinned && fresh > 0 && !release.dismissed;
+  const fresh = release2.base === null ? 0 : replies - release2.base;
+  const showDown = unpinned && fresh > 0 && !release2.dismissed;
   const showUp = view?.divider === "above" && !above.seen && !above.dismissed;
   (0, import_react34.useEffect)(() => {
     const scroller = document.querySelector("[data-conversation-scroll]");
@@ -27152,7 +27202,7 @@ function createBotBrowsers({ bridge, createSource: createSource2, storage = glob
     }, { signal });
     element.addEventListener("render-process-gone", () => {
       if (views.get(tabId) === void 0) return;
-      void release(tabId);
+      void release2(tabId);
       publish3(tabId, { loading: false, error: "The page crashed." });
     }, { signal });
     views.set(tabId, entry);
@@ -27186,9 +27236,9 @@ function createBotBrowsers({ bridge, createSource: createSource2, storage = glob
   }
   function trim() {
     const idle = [...views.values()].filter((entry) => !entry.appView && !entry.botAttached && entry.tabId !== shown).sort((a, b) => a.usedAt - b.usedAt);
-    while ([...views.values()].filter((entry) => !entry.appView).length > MAX_LIVE && idle.length > 0) void release(idle.shift().tabId);
+    while ([...views.values()].filter((entry) => !entry.appView).length > MAX_LIVE && idle.length > 0) void release2(idle.shift().tabId);
   }
-  async function release(tabId) {
+  async function release2(tabId) {
     const entry = views.get(tabId);
     if (entry === void 0) return;
     if (entry.appView) {
@@ -27225,7 +27275,7 @@ function createBotBrowsers({ bridge, createSource: createSource2, storage = glob
       await bridge.views.close(botId, tabId);
       views.get(tabId)?.stop();
       views.delete(tabId);
-    } else await release(tabId);
+    } else await release2(tabId);
     tabs.set((snapshot) => {
       const current = snapshot[botId];
       if (current === void 0 || !current.ids.includes(tabId)) return snapshot;
@@ -27299,7 +27349,7 @@ function createBotBrowsers({ bridge, createSource: createSource2, storage = glob
         await bridge.views.close(botId, tabId);
         views.get(tabId)?.stop();
         views.delete(tabId);
-      } else await release(tabId);
+      } else await release2(tabId);
       owner.delete(tabId);
       pages.set((snapshot) => {
         if (snapshot[tabId] === void 0) return snapshot;
@@ -27373,7 +27423,7 @@ function createBotBrowsers({ bridge, createSource: createSource2, storage = glob
       const tabId = activeTab(botId);
       if (tabId) publish3(tabId, { readAt: Date.now() });
     },
-    release,
+    release: release2,
     forget,
     /** Forget every Bot outside `botIds`, as when Bots were deleted from another window. */
     retain(botIds) {
@@ -27388,7 +27438,7 @@ function createBotBrowsers({ bridge, createSource: createSource2, storage = glob
       clearTimeout(resizeLater);
       for (const entry of views.values()) {
         if (entry.appView) void bridge.views.place(entry.tabId, rect ?? { left: 0, top: 0, width: 800, height: 600 }, false);
-        else void release(entry.tabId);
+        else void release2(entry.tabId);
       }
       appViewEvents?.();
       layer?.remove();
@@ -28985,9 +29035,9 @@ function apply(ctx) {
       if (next === key) return;
       key = next;
       style.textContent = themeCss(themes[id], accent);
-      const release = releaseTokens;
+      const release2 = releaseTokens;
       releaseTokens = ctx.theme.overrideTokens("omni-ui", shellTokens(themes[id], accent));
-      if (typeof release === "function") release();
+      if (typeof release2 === "function") release2();
       if (snapshot.ready) {
         try {
           localStorage.setItem(PREFS_KEY, JSON.stringify({ theme: prefs.theme, accent: prefs.accent, motion: prefs.motion, layout: prefs.layout, width: prefs.width, flatWidth: prefs.flatWidth, thinking: prefs.thinking }));

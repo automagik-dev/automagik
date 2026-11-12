@@ -1,4 +1,5 @@
 import { spawn as spawnChild } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { createHash, randomBytes as cryptoRandomBytes } from 'node:crypto'
 import { appendFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import net from 'node:net'
@@ -8,6 +9,10 @@ import { HERMES_DEADLINES } from './hermes-transport.js'
 import { redactText } from './redact.js'
 import { sshNames } from './hermes-ssh-names.js'
 
+// The oldest Hermes release this adapter speaks to, proven by real runs and kept in one
+// place: the contract file. The start script refuses an older one before it starts serve.
+export const HERMES_MINIMUM = JSON.parse(readFileSync(new URL('./hermes-contract.json', import.meta.url), 'utf8')).minimumRelease
+
 // One kind per stage that can stop an SSH connection. A kind names what the person can
 // do next; `unknown` is only what none of them explains.
 const messages = Object.freeze({
@@ -16,7 +21,8 @@ const messages = Object.freeze({
   'auth-failed': 'SSH key authentication failed. Check the SSH alias or identity file and load your key into your SSH agent.',
   'interactive-auth': 'SSH requires an interactive check. Complete it once in a terminal, then try this connection again.',
   'hermes-not-found': 'Hermes was not found on the remote computer. Install it there or check the Hermes executable path.',
-  'update-required': 'Update Hermes on the remote computer. SSH connections require the isolated server ownership and token-file options.',
+  'update-required': `Update Hermes on the remote computer to v${HERMES_MINIMUM} or newer. This connection cannot use an older Hermes.`,
+  'version-unknown': `Hermes on the remote computer did not report a release number. This connection needs v${HERMES_MINIMUM} or newer.`,
   'unsupported-platform': 'This SSH connection requires a Linux or macOS remote with Python 3 and an existing Hermes installation.',
   'hermes-exited': 'Hermes stopped on the remote computer before it was ready.',
   'not-ready': 'Hermes started on the remote computer but was not ready within the connection deadline.',
@@ -32,7 +38,7 @@ const messages = Object.freeze({
 })
 const publicCodes = {
   'host-key-unknown': 'bot/hermes-ssh-host-key-unknown', 'host-key-changed': 'bot/hermes-ssh-host-key', 'auth-failed': 'bot/hermes-ssh-auth',
-  'hermes-not-found': 'bot/hermes-ssh-missing', 'interactive-auth': 'bot/hermes-ssh-interactive', 'update-required': 'bot/hermes-ssh-update',
+  'hermes-not-found': 'bot/hermes-ssh-missing', 'interactive-auth': 'bot/hermes-ssh-interactive', 'update-required': 'bot/hermes-ssh-update', 'version-unknown': 'bot/hermes-ssh-version',
   'unsupported-platform': 'bot/hermes-ssh-platform', 'hermes-exited': 'bot/hermes-ssh-exited', 'not-ready': 'bot/hermes-ssh-not-ready',
   'port-missing': 'bot/hermes-ssh-port', handshake: 'bot/hermes-ssh-handshake', tunnel: 'bot/hermes-ssh-tunnel',
   'forward-conflict': 'bot/hermes-ssh-forward', 'remote-script': 'bot/hermes-ssh-script', 'invalid-details': 'bot/hermes-ssh-details',
@@ -42,12 +48,13 @@ const publicCodes = {
 export const HERMES_SSH_CODES = Object.freeze(['bot/hermes-ssh', ...Object.values(publicCodes)])
 // The kinds the remote start script may report. Sign-in and host-key verdicts are this
 // computer's own: a remote can never claim one.
-const REMOTE_KINDS = new Set(['hermes-not-found', 'update-required', 'unsupported-platform', 'hermes-exited', 'not-ready', 'port-missing', 'handshake', 'remote-script', 'timeout', 'unknown'])
+const REMOTE_KINDS = new Set(['hermes-not-found', 'update-required', 'version-unknown', 'unsupported-platform', 'hermes-exited', 'not-ready', 'port-missing', 'handshake', 'remote-script', 'timeout', 'unknown'])
 const REMOTE_STAGES = new Set(['remote-start', 'hermes-start'])
 const cleanupMessage = 'Remote Hermes cleanup could not be confirmed. Check the remote computer before connecting again; background remote work may continue.'
 const failure = (kind, text = messages[kind] ?? messages.unknown, detail) => Object.assign(new Error(text), { code: publicCodes[kind] ?? 'bot/hermes-ssh', sshError: kind, ...(detail ? { sshDetail: detail } : {}) })
 
 const LINE_MAX = 240
+const RELEASE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/
 // What may be kept of SSH's or Hermes's own words: no token or nonce of this connection,
 // no credential shape, no key material, and no path that names a home folder (its user)
 // or a file in the SSH folder (a key's name).
@@ -57,6 +64,8 @@ export function redactSshText(text, secrets = []) {
   out = redactText(out)
     .replace(/-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|$)/g, '[key]')
     .replace(/\b(?:ssh-(?:ed25519|rsa|dss)|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9-]+@openssh\.com)\s+AAAA[A-Za-z0-9+/=]+/g, '[key]')
+    // A socket address names its credential in the query; `token=` is already gone above.
+    .replace(/([?&](?:ticket|internal)=)[^&#\s"'<>]+/gi, '$1[hidden]')
     .replace(/\b(SHA256|MD5):[A-Za-z0-9+/:=_-]{16,}/g, '$1:[hidden]')
     .replace(/\b[0-9a-fA-F]{32,}\b/g, '[hidden]')
     .replace(/[A-Za-z0-9+/_=-]{40,}/g, '[hidden]')
@@ -213,6 +222,9 @@ try:
     grace = max(0.01, float(options["cancelMs"]) / 1000 * 0.4)
     cancel = max(0.05, float(options["cancelMs"]) / 1000 * 0.7)
     until = time.monotonic() + float(options["startMs"]) / 1000
+    wanted = options.get("minVersion")
+    if not isinstance(wanted, str) or not re.fullmatch(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}", wanted): raise Fault("handshake")
+    minimum = tuple(int(part) for part in wanted.split("."))
     if sys.platform not in ("linux", "darwin"): raise Fault("unsupported-platform")
     explicit = options.get("hermesPath", "")
     if explicit:
@@ -222,8 +234,18 @@ try:
         candidates = ([located.splitlines()[-1]] if located else []) + [os.path.expanduser("~/.local/bin/hermes"), "/usr/local/bin/hermes", os.path.expanduser("~/.hermes/hermes-agent/venv/bin/hermes")]
     hermes = next((p for p in candidates if os.path.isfile(p) and os.access(p, os.X_OK)), None)
     if not hermes: raise Fault("hermes-not-found")
+    # The release Hermes itself reports, before anything is started: "hermes --version"
+    # prints "Hermes Agent v<major>.<minor>.<patch>...". A build that names no release (a
+    # checkout without tags) is reported as it is, never taken for a new or an old one.
+    shown = probe([hermes, "--version"])
+    method = re.search(r"^Install method: ([a-z0-9-]{1,32})[ \t]*$", shown, re.M)
+    facts = dict(minimum=wanted, method=method.group(1) if method else "")
+    release = re.search(r"^Hermes Agent v([0-9]{1,4})\.([0-9]{1,4})\.([0-9]{1,4})(?![0-9.])", shown, re.M)
+    if not release: raise Fault("version-unknown", tail=tail(shown.split("\n", 1)[0].encode("utf-8", "replace")), **facts)
+    facts["version"] = ".".join(str(int(part)) for part in release.groups())
+    if tuple(int(part) for part in release.groups()) < minimum: raise Fault("update-required", **facts)
     help_text = probe([hermes, "serve", "--help"])
-    if "--ssh-session-token-file" not in help_text or "--ssh-owner-nonce" not in help_text: raise Fault("update-required")
+    if "--ssh-session-token-file" not in help_text or "--ssh-owner-nonce" not in help_text: raise Fault("update-required", **facts)
     check_input()
     # Hermes reads its one-shot token only from its own runtime folder, and refuses any
     # other path: ~/.hermes/desktop-ssh/<32 hex>/<16 hex>.token, the folder this user's
@@ -367,7 +389,7 @@ async function allocateLoopbackPort() {
 /** A trusted factory: callers may allow its numeric-loopback HTTP address only. */
 export async function startHermesSsh(ssh, {
   signal, deadlines = HERMES_DEADLINES, spawn = spawnChild, allocatePort = allocateLoopbackPort,
-  sshCommand = 'ssh', env = process.env, randomBytes = cryptoRandomBytes,
+  sshCommand = 'ssh', env = process.env, randomBytes = cryptoRandomBytes, minimum = HERMES_MINIMUM,
 } = {}) {
   let config
   try { config = destination(ssh) } catch (error) { throw Object.assign(error, { sshStage: 'details' }) }
@@ -486,6 +508,9 @@ export async function startHermesSsh(ssh, {
           if (typeof frame.name === 'string' && /^[A-Za-z_]\w{0,40}$/.test(frame.name)) detail.fault = frame.name
           if (Number.isSafeInteger(frame.errno) && frame.errno >= 0 && frame.errno < 4096) detail.errno = frame.errno
           if (Number.isSafeInteger(frame.line) && frame.line > 0 && frame.line < 10000) detail.line = frame.line
+          // The release Hermes reported, the one this adapter needs, and how it was installed.
+          for (const key of ['version', 'minimum']) if (typeof frame[key] === 'string' && RELEASE.test(frame[key])) detail[key] = frame[key]
+          if (typeof frame.method === 'string' && /^[a-z0-9-]{1,32}$/.test(frame.method)) detail.install = frame.method
           fail(failure(frame.code, undefined, detail))
         }
         else { fail(failure('handshake')); return }
@@ -495,7 +520,7 @@ export async function startHermesSsh(ssh, {
     // Hermes's own deadline ends a little before this computer's, so a slow start is
     // reported by the start script, with Hermes's last lines, not by a bare timeout here.
     const startMs = Math.max(1, Math.floor(limits.start - Math.min(limits.control / 2, limits.start * 0.15)))
-    remote.stdin.write(`${JSON.stringify({ nonce, credential, hermesPath: config.hermesPath, startMs, controlMs: limits.control, cancelMs: limits.cancel })}\n`)
+    remote.stdin.write(`${JSON.stringify({ nonce, credential, hermesPath: config.hermesPath, minVersion: minimum, startMs, controlMs: limits.control, cancelMs: limits.cancel })}\n`)
     heartbeat = setInterval(() => { if (!stopping) { try { remote.stdin.write('ping\n') } catch { fail(failure('unknown')) } } }, Math.max(10, Math.floor(limits.control / 3)))
     const remotePort = await bounded(ready.promise, until - Date.now())
     const localPort = await bounded(Promise.resolve(allocatePort()), Math.min(limits.control, until - Date.now()))

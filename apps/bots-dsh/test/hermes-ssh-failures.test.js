@@ -10,7 +10,8 @@ import { delimiter, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { install as installDiagnostics } from '../src/host/diagnostics.js'
 import { install } from '../src/host/hermes-remote.js'
-import { startHermesSsh, trustHermesSshHostKey } from '../src/host/hermes-ssh.js'
+import { HERMES_MINIMUM, startHermesSsh, trustHermesSshHostKey } from '../src/host/hermes-ssh.js'
+import { HermesTransport } from '../src/host/hermes-transport.js'
 import { redactSshNames, sshNames } from '../src/host/hermes-ssh-names.js'
 import { fakeContext } from './fake-ctx.js'
 
@@ -297,6 +298,72 @@ test('a start that hits the deadline is stored as the timeout the wizard shows, 
   for (const [where, text] of Object.entries(await leaving(h, 1))) {
     assert.match(text, /stage=hermes-start kind=timeout /, where)
     assert.ok(!text.includes('kind=unknown'), where)
+  }
+})
+
+test('an older Hermes is stored with its own kind, both releases and the install kind, and names no one', async t => {
+  const alias = `sample-alias-${randomUUID().slice(0, 8)}`
+  const [major, minor, patch] = HERMES_MINIMUM.split('.').map(Number)
+  const older = patch ? `${major}.${minor}.${patch - 1}` : `${major}.${minor - 1}.9999`
+  const h = await host(t, { scenario: 'runtime-ready' })
+  Object.assign(h.env, { HERMES_FAKE_VERSION: older, HERMES_FAKE_INSTALL: 'docker' })
+  const { failure, view } = await h.test({ host: alias, hermesPath: h.hermesPath })
+  assert.equal(failure.code, 'bot/hermes-ssh-update')
+  // The screen's facts: what runs there, what is needed, and how that install is updated.
+  assert.deepEqual({ kind: view.kind, stage: view.stage, version: view.version, minimum: view.minimum, install: view.install, alias: view.alias },
+    { kind: 'update-required', stage: 'remote-start', version: older, minimum: HERMES_MINIMUM, install: 'docker', alias })
+  const [entry] = await h.logged()
+  assert.equal(entry.code, 'bot/hermes-ssh-update')
+  assert.match(entry.text, new RegExp(`^Remote Hermes SSH failed: alias=<alias> stage=remote-start kind=update-required elapsed=\\d+ms version=${older.replaceAll('.', '\\.')} minimum=${HERMES_MINIMUM.replaceAll('.', '\\.')} install=docker$`))
+  for (const [where, text] of Object.entries(await leaving(h, 1))) {
+    assert.ok(!text.includes(alias), where)
+    assert.match(text, /kind=update-required/, where)
+  }
+  // Hermes was asked for its version and nothing else: no serve, so no token on that side.
+  const records = (await readFile(join(h.home, 'record.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line))
+  assert.deepEqual(records.filter(record => record.role === 'runtime').map(record => record.event), ['version'])
+})
+
+test('a version that names no release is stored as what Hermes printed, with names and addresses as placeholders', async t => {
+  const alias = `sample-alias-${randomUUID().slice(0, 8)}`
+  const h = await host(t, { scenario: 'runtime-ready' })
+  // A build that names itself by who made it, where: none of it may reach a report.
+  const printed = `Hermes Agent vgit.0a1b2c3 built by sample-user@sample-remote.example.invalid (192.0.2.44, 2001:db8::7:1) for ${alias}`
+  h.env.HERMES_FAKE_VERSION_LINE = printed
+  const { failure, view } = await h.test({ host: alias, user: 'sample-user', hermesPath: h.hermesPath })
+  assert.equal(failure.code, 'bot/hermes-ssh-version')
+  assert.deepEqual({ kind: view.kind, stage: view.stage, version: view.version, minimum: view.minimum, install: view.install, hermes: view.hermes },
+    { kind: 'version-unknown', stage: 'remote-start', version: undefined, minimum: HERMES_MINIMUM, install: 'git', hermes: [printed] })
+  const [entry] = await h.logged()
+  assert.match(entry.text, new RegExp(`^Remote Hermes SSH failed: alias=<alias> stage=remote-start kind=version-unknown elapsed=\\d+ms minimum=${HERMES_MINIMUM.replaceAll('.', '\\.')} install=git `))
+  assert.ok(entry.text.includes('hermes="Hermes Agent vgit.0a1b2c3 built by <user>@<host> (<ip>, <ip>) for <alias>"'), entry.text)
+  for (const [where, text] of Object.entries(await leaving(h, 1))) for (const name of [alias, ...WHO]) assert.ok(!text.includes(name), `${where}: ${name}`)
+  // It is the unknown version's own kind: never an update the release did not ask for.
+  assert.ok(!entry.text.includes('update-required') && !entry.text.includes(' version='))
+})
+
+test('a chat connection that fails after SSH leaves no socket address and no token in the line or any export', async t => {
+  const credential = randomBytes(32).toString('hex')
+  const answers = async url => {
+    const path = new URL(url).pathname
+    return path === '/api/status' ? response({ gateway_shared_with: ['sample-profile'] }) : path === '/api/profiles' ? response({ profiles: [{ name: 'sample-profile' }] }) : response({}, 404)
+  }
+  const sockets = []
+  for (const socket of [
+    // The socket fails naming its own address, as a client library would.
+    url => { sockets.push(url); throw new Error(`could not open ${url}`) },
+    // Hermes turns the socket away without a word.
+    url => { sockets.push(url); const refused = new EventTarget(); refused.close = () => {}; queueMicrotask(() => refused.dispatchEvent(new Event('close'))); return refused },
+  ]) {
+    const h = await host(t, { fetch: answers, startSsh: async () => ({ address: 'http://127.0.0.1:4041', credential, close: async () => {} }),
+      transport: options => new HermesTransport({ ...options, socket }) })
+    const { failure, view } = await h.test({ host: 'sample.invalid' })
+    assert.equal(sockets.at(-1), `ws://127.0.0.1:4041/api/ws?token=${credential}`, 'the one-time token went to the socket')
+    assert.equal(failure.code, 'bot/hermes-connection')
+    assert.deepEqual({ kind: view.kind, stage: view.stage }, { kind: 'connection', stage: 'chat' })
+    const kept = { ...await leaving(h, 1), failure: `${failure.message}\n${failure.stack}\n${JSON.stringify(failure)}`, view: JSON.stringify(view) }
+    for (const [where, text] of Object.entries(kept)) for (const secret of [credential, 'token=', '/api/ws', '4041']) assert.ok(!text.includes(secret), `${where}: ${secret}`)
+    assert.match(kept.file, /stage=chat kind=connection/)
   }
 })
 

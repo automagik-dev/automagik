@@ -7,7 +7,15 @@ import { homedir } from 'node:os'
 const args = process.argv.slice(2)
 const scenario = process.env.HERMES_SSH_SCENARIO
 const record = fields => appendFileSync(process.env.HERMES_SSH_RECORD, `${JSON.stringify({ role: 'runtime', pid: process.pid, ...fields })}\n`, { mode: 0o600 })
-if (args.includes('--help')) {
+if (args.includes('--version')) {
+  // Upstream's own shape (hermes_cli/_startup_fast.py): the release on the first line, then
+  // the install folder and kind. The test names the release; a build without one says so.
+  record({ event: 'version', args })
+  console.log(process.env.HERMES_FAKE_VERSION_LINE ?? `Hermes Agent v${process.env.HERMES_FAKE_VERSION ?? '999.0.0'} (2026.9.24) · upstream 0a1b2c3d`)
+  console.log(`Install directory: ${homedir()}/.hermes/hermes-agent`)
+  if (process.env.HERMES_FAKE_INSTALL !== '') console.log(`Install method: ${process.env.HERMES_FAKE_INSTALL ?? 'git'}`)
+  console.log('Python: 3.14.9')
+} else if (args.includes('--help')) {
   record({ event: 'probe', args })
   console.log(scenario === 'runtime-old' ? 'serve' : 'serve --ssh-session-token-file --ssh-owner-nonce')
 } else {

@@ -5,7 +5,7 @@ import { watch } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, delimiter, dirname } from 'node:path'
 import { test } from 'node:test'
-import { redactSshText, startHermesSsh, trustHermesSshHostKey } from '../src/host/hermes-ssh.js'
+import { HERMES_MINIMUM, redactSshText, startHermesSsh, trustHermesSshHostKey } from '../src/host/hermes-ssh.js'
 
 // A sample host key: random bytes in a public key's wire shape, never a real key.
 const sampleKey = () => Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from('ssh-ed25519'), Buffer.from([0, 0, 0, 32]), randomBytes(32)]).toString('base64')
@@ -217,6 +217,62 @@ test('our supervisor checks actual fake capability output before starting a chil
   const hermesPath = await fakeRuntime(f)
   await assert.rejects(f.open({ ...f.config, hermesPath }), error => error.sshError === 'update-required' && error.code === 'bot/hermes-ssh-update' && !error.cleanupUnknown)
   assert.ok(!(await f.records()).some(record => record.event === 'runtime-start'))
+})
+
+// The release just under one: the last patch before it, or the last one of the minor before.
+const below = release => { const [major, minor, patch] = release.split('.').map(Number); return patch ? `${major}.${minor}.${patch - 1}` : minor ? `${major}.${minor - 1}.9999` : `${major - 1}.9999.9999` }
+const versioned = (f, values) => ({ env: { ...f.options.env, ...values } })
+
+test('an older Hermes is refused before serve, with the release it reported, the minimum and its install kind', async t => {
+  assert.match(HERMES_MINIMUM, /^\d+\.\d+\.\d+$/, 'the contract file names the minimum release')
+  assert.equal(JSON.parse(await readFile(new URL('../src/host/hermes-contract.json', import.meta.url), 'utf8')).minimumRelease, HERMES_MINIMUM, 'one place holds it')
+  // Numbers, not text: 0.9.30 sorts after 0.21.5 as a string and is still older.
+  const [major, minor] = HERMES_MINIMUM.split('.').map(Number)
+  for (const [older, install] of [[below(HERMES_MINIMUM), 'git'], [minor > 9 ? `${major}.9.30` : `${major - 1}.30.30`, 'docker']]) {
+    const f = await fixture(t, 'runtime-ready')
+    const hermesPath = await fakeRuntime(f)
+    let refusal
+    await assert.rejects(f.open({ ...f.config, hermesPath }, versioned(f, { HERMES_FAKE_VERSION: older, HERMES_FAKE_INSTALL: install })), error => { refusal = error; return true })
+    assert.deepEqual({ kind: refusal.sshError, code: refusal.code, stage: refusal.sshStage, cleanupUnknown: refusal.cleanupUnknown }, { kind: 'update-required', code: 'bot/hermes-ssh-update', stage: 'remote-start', cleanupUnknown: undefined })
+    assert.deepEqual({ version: refusal.sshDetail.version, minimum: refusal.sshDetail.minimum, install: refusal.sshDetail.install }, { version: older, minimum: HERMES_MINIMUM, install })
+    assert.match(refusal.message, new RegExp(`to v${HERMES_MINIMUM.replaceAll('.', '\\.')} or newer`))
+    const records = await f.records()
+    assert.deepEqual(records.filter(record => record.role === 'runtime').map(record => record.event), ['version'], 'asked for its version, then nothing: no capability probe, no serve')
+    await assert.rejects(access(join(f.home, '.hermes', 'desktop-ssh')), 'no token was written')
+  }
+})
+
+test('the minimum release itself is accepted, and so is a build past it', async t => {
+  const [major, minor] = HERMES_MINIMUM.split('.').map(Number)
+  for (const values of [{ HERMES_FAKE_VERSION: HERMES_MINIMUM }, { HERMES_FAKE_VERSION: `${major}.${minor + 79}.0` },
+    // A source checkout past a release, as upstream prints it, and an install that names no kind.
+    { HERMES_FAKE_VERSION_LINE: `Hermes Agent v${HERMES_MINIMUM}+1935.g0a1b2c3 (2026.9.24) · stable · local 0a1b2c3d4e5f`, HERMES_FAKE_INSTALL: '' }]) {
+    const f = await fixture(t, 'runtime-ready')
+    const hermesPath = await fakeRuntime(f)
+    const connection = await f.open({ ...f.config, hermesPath }, versioned(f, values))
+    assert.deepEqual((await f.records()).filter(record => record.role === 'runtime').map(record => record.event), ['version', 'probe', 'runtime-start'], JSON.stringify(values))
+    await connection.close()
+  }
+})
+
+test('a version that names no release is reported as it is, not guessed', async t => {
+  for (const [line, shown] of [
+    ['Hermes Agent vgit.0a1b2c3 (2026.9.24) · upstream 0a1b2c3d', ['Hermes Agent vgit.0a1b2c3 (2026.9.24) · upstream 0a1b2c3d']],
+    ['Hermes Agent vunknown', ['Hermes Agent vunknown']],
+    // Half a release is not a release; neither is one inside another word.
+    [`Hermes Agent v${HERMES_MINIMUM.split('.').slice(0, 2).join('.')}`, [`Hermes Agent v${HERMES_MINIMUM.split('.').slice(0, 2).join('.')}`]],
+    [`Sample tool 999.0.0`, ['Sample tool 999.0.0']],
+    // No first line at all: what it did print is shown, with the home folder by its short name.
+    ['', ['Install directory: ~/.hermes/hermes-agent']],
+  ]) {
+    const f = await fixture(t, 'runtime-ready')
+    const hermesPath = await fakeRuntime(f)
+    let refusal
+    await assert.rejects(f.open({ ...f.config, hermesPath }, versioned(f, { HERMES_FAKE_VERSION_LINE: line })), error => { refusal = error; return true })
+    assert.deepEqual({ kind: refusal.sshError, code: refusal.code, stage: refusal.sshStage }, { kind: 'version-unknown', code: 'bot/hermes-ssh-version', stage: 'remote-start' }, line)
+    assert.deepEqual({ version: refusal.sshDetail.version, minimum: refusal.sshDetail.minimum, install: refusal.sshDetail.install, hermes: refusal.sshDetail.hermes }, { version: undefined, minimum: HERMES_MINIMUM, install: 'git', hermes: shown }, line)
+    assert.ok(!(await f.records()).some(record => ['probe', 'runtime-start'].includes(record.event)), 'neither taken for new nor started')
+  }
 })
 
 test('our supervisor bounds the remote lease with heartbeats even when SSH stdin stays open', async t => {

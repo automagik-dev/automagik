@@ -30,6 +30,7 @@ const CONNECTION_ERRORS = Object.freeze({
   'bot/hermes-ssh-missing': 'SSH could not find Hermes. Install Hermes or enter its executable path.',
   'bot/hermes-ssh-interactive': 'SSH needs interactive sign-in. Unlock the key in your SSH agent, then test again.',
   'bot/hermes-ssh-update': 'The remote Hermes needs an update before it can connect.',
+  'bot/hermes-ssh-version': 'The remote Hermes did not report a release number. Update it, then test again.',
   'bot/hermes-ssh-platform': 'This remote platform does not support the Hermes SSH connection.',
   'bot/hermes-ssh-timeout': 'SSH did not answer in time. Check the connection and test again.',
   'bot/hermes-ssh-unreachable': 'SSH could not reach the other computer. Check the host and connection.',
@@ -60,13 +61,16 @@ function failureView(error, alias, elapsedMs, stage) {
   if (Array.isArray(detail.identities)) view.identities = detail.identities.filter(name => text(name, 64)).slice(0, 6)
   for (const key of ['agentKeys', 'port', 'errno', 'line']) if (Number.isSafeInteger(detail[key]) && detail[key] > 0) view[key] = detail[key]
   for (const key of ['unsaved', 'mismatch']) if (detail[key] === true) view[key] = true
+  // The release Hermes reported, the oldest one this adapter speaks to, and the install kind.
+  for (const key of ['version', 'minimum']) if (/^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(detail[key] ?? '')) view[key] = detail[key]
+  if (/^[a-z0-9-]{1,32}$/.test(detail.install ?? '')) view.install = detail.install
   return view
 }
 // The one diagnostics line of a failed SSH connection. No identity file name and no
 // host key: the person's screen has those, a report does not need them. The line may be
 // attached to a report, so it names no one: `storedView` is what it is made from.
 const failureLine = view => [`Remote Hermes SSH failed: alias=${view.alias} stage=${view.stage} kind=${view.kind} elapsed=${view.elapsedMs}ms`,
-  view.exit !== undefined ? `exit=${view.exit}` : '', view.fault ? `fault=${view.fault}${view.errno ? `/${view.errno}` : ''}${view.line ? `@${view.line}` : ''}` : '', view.port ? `port=${view.port}` : '',
+  view.exit !== undefined ? `exit=${view.exit}` : '', view.version ? `version=${view.version}` : '', view.minimum ? `minimum=${view.minimum}` : '', view.install ? `install=${view.install}` : '', view.fault ? `fault=${view.fault}${view.errno ? `/${view.errno}` : ''}${view.line ? `@${view.line}` : ''}` : '', view.port ? `port=${view.port}` : '',
   view.ssh ? `ssh=${JSON.stringify(view.ssh.join(' | '))}` : '', view.hermes ? `hermes=${JSON.stringify(view.hermes.join(' | '))}` : ''].filter(Boolean).join(' ')
 // The view as a stored line may show it: the alias the person typed, the remote user,
 // the host and every address become placeholders. The screen keeps the view itself.

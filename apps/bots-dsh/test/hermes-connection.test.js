@@ -405,18 +405,24 @@ test('saved token re-test cannot refresh or save after its source credential cha
 })
 
 test('safe-errors-collapsed: an expired saved token or session reaches the UI endpoint as a fixed typed auth failure', async t => {
+  // A saved session mints a ticket and is refused there. A saved token has no ticket: Hermes
+  // turns its socket away without a word, and one request with the same token says why.
+  const turnedAway = () => { const socket = new EventTarget(); socket.close = () => {}; queueMicrotask(() => socket.dispatchEvent(new Event('close'))); return socket }
   for (const authMode of ['token', 'password']) {
-    const f = dashboard({ handle: path => path === '/api/auth/ws-ticket' ? response({ message: 'private fixture detail' }, 401) : undefined })
-    const h = runtime(t, f, { transport: options => new HermesTransport(options) })
+    const asked = authMode === 'token' ? '/api/profiles' : '/api/auth/ws-ticket'
+    const f = dashboard({ handle: path => path === asked ? response({ message: 'private fixture detail' }, 401) : undefined })
+    const sockets = []
+    const h = runtime(t, f, { transport: options => new HermesTransport({ ...options, socket: (url, protocols) => { sockets.push({ url, protocols }); return turnedAway() } }) })
     savedToken(h, f, { authMode, secret: authMode === 'token' ? { kind: 'token', credential: f.credential } : { kind: 'session', cookie: `hermes_session_at=${f.access}` } })
     await assert.rejects(h.endpoints.get('hermes-remote-connect')({}), error => {
       assert.equal(error.code, 'bot/hermes-auth')
-      for (const secret of [f.credential, f.access, 'private fixture detail']) assert.ok(!error.message.includes(secret))
+      for (const secret of [f.credential, f.access, 'private fixture detail', 'token=']) assert.ok(!error.message.includes(secret))
       return true
     })
     assert.equal(f.calls.length, 1)
-    assert.ok(f.calls[0].url.endsWith('/api/auth/ws-ticket'))
+    assert.ok(f.calls[0].url.endsWith(asked))
     assert.equal(authMode === 'token' ? f.calls[0].headers['X-Hermes-Session-Token'] : f.calls[0].headers.Cookie, authMode === 'token' ? f.credential : `hermes_session_at=${f.access}`)
+    assert.equal(sockets.length, authMode === 'token' ? 1 : 0, 'a refused ticket opens no socket')
   }
 })
 
