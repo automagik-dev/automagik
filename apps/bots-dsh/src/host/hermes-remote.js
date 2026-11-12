@@ -70,8 +70,8 @@ const failureLine = view => [`Remote Hermes SSH failed: alias=${view.alias} stag
   view.ssh ? `ssh=${JSON.stringify(view.ssh.join(' | '))}` : '', view.hermes ? `hermes=${JSON.stringify(view.hermes.join(' | '))}` : ''].filter(Boolean).join(' ')
 // The view as a stored line may show it: the alias the person typed, the remote user,
 // the host and every address become placeholders. The screen keeps the view itself.
-function storedView(view, ssh, error) {
-  const names = { alias: view.alias === NO_ALIAS ? undefined : view.alias, hosts: strings(error?.sshNames?.hosts), users: [...strings(error?.sshNames?.users), ...strings([ssh?.user])] }
+function storedView(view, ssh, origin) {
+  const names = { alias: view.alias === NO_ALIAS ? undefined : view.alias, hosts: strings(origin?.sshNames?.hosts), users: [...strings(origin?.sshNames?.users), ...strings([ssh?.user])] }
   const stored = { ...view, alias: names.alias ? '<alias>' : NO_ALIAS }
   for (const key of ['ssh', 'hermes']) if (view[key]) stored[key] = view[key].map(line => redactSshNames(line, names))
   return stored
@@ -87,10 +87,12 @@ export function install(rt, { transport = options => new HermesTransport(options
   // The last failed SSH connection of each wizard request, kept in memory for its own
   // screen (the stage, SSH's and Hermes's last lines, a new host key to trust).
   const failures = new Map()
-  function noteSshFailure(key, ssh, error, started) {
+  // `origin` is the error SSH itself threw: a failure shown as another one (unconfirmed
+  // cleanup, a start deadline) still takes the connection's names from it.
+  function noteSshFailure(key, ssh, error, started, origin = error) {
     const alias = text(typeof ssh?.host === 'string' ? ssh.host.trim() : '', 255) ?? NO_ALIAS
     const view = failureView(error, alias, Math.max(0, Date.now() - started), text(error?.sshStage ?? error?.hermesStage, 40) ?? 'connection')
-    rt.noteFailure?.({ source: 'host', where: 'Remote Hermes', code: view.code, text: failureLine(storedView(view, ssh, error)) })
+    rt.noteFailure?.({ source: 'host', where: 'Remote Hermes', code: view.code, text: failureLine(storedView(view, ssh, origin)) })
     if (typeof key !== 'string' || !key || key.length > 100) return view
     failures.delete(key)
     failures.set(key, { view, ssh: sshFields(ssh), expires: Date.now() + FAILURE_LIFETIME })
@@ -185,8 +187,10 @@ export function install(rt, { transport = options => new HermesTransport(options
     const abort = () => controller.abort()
     signal?.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) abort()
-    const timer = setTimeout(abort, limit)
-    return { controller, signal: controller.signal, until, finish: () => { clearTimeout(timer); signal?.removeEventListener('abort', abort) } }
+    // Whether the deadline itself ended the work, not the person or a newer request.
+    let expired = false
+    const timer = setTimeout(() => { expired = true; abort() }, limit)
+    return { controller, signal: controller.signal, until, expired: () => expired, finish: () => { clearTimeout(timer); signal?.removeEventListener('abort', abort) } }
   }
   const remaining = until => ({ ...deadlines, start: Math.max(1, until - Date.now()) })
 
@@ -454,7 +458,12 @@ export function install(rt, { transport = options => new HermesTransport(options
     } catch (error) {
       // A test the person replaced or closed is not a failure to report.
       const shown = error?.cleanupUnknown === true ? connectionFailure(error) : error
-      if (draft?.mode === 'ssh' && owner === testGeneration && !disposed) noteSshFailure(pending.requestId, draft.ssh, error?.cleanupUnknown === true ? Object.assign(shown, { sshStage: error.sshStage, sshDetail: error.sshDetail, sshError: 'cleanup' }) : error, started)
+      // The start deadline ended this test: SSH only saw its own cancel, and the wizard
+      // shows a timeout. The record says the same, with the stage SSH had reached.
+      const noted = error?.cleanupUnknown === true ? Object.assign(shown, { sshStage: error.sshStage, sshDetail: error.sshDetail, sshError: 'cleanup' })
+        : startup.expired?.() && error?.sshError === 'unknown' ? Object.assign(new Error(CONNECTION_ERRORS['bot/hermes-ssh-timeout']), { code: 'bot/hermes-ssh-timeout', sshError: 'timeout', sshStage: error.sshStage, sshDetail: error.sshDetail })
+        : error
+      if (draft?.mode === 'ssh' && owner === testGeneration && !disposed) noteSshFailure(pending.requestId, draft.ssh, noted, started, error)
       throw shown
     } finally {
       startup.finish()

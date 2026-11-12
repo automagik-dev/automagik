@@ -4,13 +4,13 @@
 // no network, no real host name, user or key.
 import assert from 'node:assert/strict'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { install as installDiagnostics } from '../src/host/diagnostics.js'
 import { install } from '../src/host/hermes-remote.js'
-import { startHermesSsh } from '../src/host/hermes-ssh.js'
+import { startHermesSsh, trustHermesSshHostKey } from '../src/host/hermes-ssh.js'
 import { redactSshNames, sshNames } from '../src/host/hermes-ssh-names.js'
 import { fakeContext } from './fake-ctx.js'
 
@@ -19,14 +19,14 @@ const sampleKey = () => Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from('
 const fingerprintOf = blob => `SHA256:${createHash('sha256').update(Buffer.from(blob, 'base64')).digest('base64').replace(/=+$/, '')}`
 const response = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value, headers: { getSetCookie: () => [] } })
 
-async function host(t, { scenario, ...overrides } = {}) {
+async function host(t, { scenario, realTrust = false, ...overrides } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'hermes-ssh-failures-'))
   const fixture = name => readFile(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
   await writeFile(join(home, 'ssh'), `#!${process.execPath}\n${await fixture('hermes-fake-ssh.mjs')}`, { mode: 0o700 })
   const hermesPath = join(home, 'sample-hermes')
   await writeFile(hermesPath, `#!${process.execPath}\n${await fixture('hermes-fake-runtime.mjs')}`, { mode: 0o700 })
   const credential = randomBytes(32).toString('hex'), hostKey = sampleKey()
-  const env = { ...process.env, HOME: home, PATH: `${dirname(process.execPath)}${delimiter}${home}${delimiter}${process.env.PATH}`, HERMES_SSH_RECORD: join(home, 'record.jsonl'), HERMES_SSH_SCENARIO: scenario ?? 'ready', HERMES_SSH_REMOTE_PORT: '4040', HERMES_SSH_HOST_KEY: hostKey }
+  const env = { ...process.env, HOME: home, PATH: `${dirname(process.execPath)}${delimiter}${home}${delimiter}${process.env.PATH}`, HERMES_SSH_RECORD: join(home, 'record.jsonl'), HERMES_SSH_SCENARIO: scenario ?? 'ready', HERMES_SSH_REMOTE_PORT: '4040', HERMES_SSH_HOST_KEY: hostKey, HERMES_SSH_KNOWN_HOSTS: join(home, '.ssh', 'known_hosts') }
   const ctx = fakeContext(), endpoints = new Map(), trusted = []
   ctx.llm.registerAdapter = () => () => {}
   const rt = { ctx, home, config: {}, state: { prefs: {}, bots: {}, mainBotIds: [], rooms: {} }, hooks: { endpoint: (name, fn) => endpoints.set(name, fn) },
@@ -36,7 +36,9 @@ async function host(t, { scenario, ...overrides } = {}) {
     deadlines, fetch: async () => response({}, 500),
     // The real SSH adapter, against the fake ssh executable in this test's own folder.
     startSsh: (ssh, options) => startHermesSsh(ssh, { ...options, env, allocatePort: async () => 4041, randomBytes: size => size === 32 ? Buffer.from(credential, 'hex') : randomBytes(size) }),
-    trustSsh: async (...args) => { trusted.push(args); return { trusted: true, added: 1 } },
+    // The real trust step against the same fake ssh, or a stand-in that records its call.
+    trustSsh: realTrust ? (ssh, expected, options) => trustHermesSshHostKey(ssh, expected, { ...options, env, home, temp: home })
+      : async (...args) => { trusted.push(args); return { trusted: true, added: 1 } },
     ...overrides,
   })
   t.after(async () => { ctx.dispose(); await rm(home, { recursive: true, force: true, maxRetries: 5 }) })
@@ -47,7 +49,7 @@ async function host(t, { scenario, ...overrides } = {}) {
     return { failure, requestId, view: (await call('hermes-remote-test-status', { requestId })).failure }
   }
   const logged = async () => (await rt.diagnostics.entries()).filter(entry => entry.where === 'Remote Hermes')
-  return { rt, home, call, test, logged, trusted, credential, hostKey, hermesPath }
+  return { rt, home, env, call, test, logged, trusted, credential, hostKey, hermesPath }
 }
 
 test('a failed SSH test leaves one cleaned diagnostics line: stage, kind, time and the last lines, never the alias', async t => {
@@ -222,14 +224,79 @@ test('the stored line and every export name no remote user, host, address or ali
   // SSH said nothing of its own here, so the line holds the end of its trace: cleaned too.
   assert.match(other.text, /^Remote Hermes SSH failed: alias=<alias> stage=[a-z-]+ kind=hermes-exited elapsed=\d+ms exit=2 ssh="debug1: Connecting to <host> \[<ip>\] port 22\. \| debug1: Authenticating to <host>:22 as '<user>'" hermes="serving <user> on <host> \| bound <ip>:8642 and \[<ip>\]:8642 for <alias>"$/)
 
-  // What is stored, and everything the Feedback page shows, copies, downloads or files.
   for (const run of [h, exited]) {
-    const report = await run.rt.diagnostics.report({})
-    const leaving = { stored: JSON.stringify(await run.logged()), file: await logFile(run, 1), entries: JSON.stringify(report.entries), markdown: report.markdown, log: await run.rt.diagnostics.logText() }
-    for (const [where, text] of Object.entries(leaving)) {
+    for (const [where, text] of Object.entries(await leaving(run, 1))) {
       assert.match(text, /Remote Hermes SSH failed: alias=<alias> /, where)
       for (const name of [...WHO, alias]) assert.ok(!text.includes(name), `${where} names ${name}`)
     }
+  }
+})
+
+// What is stored, and everything the Feedback page shows, copies, downloads or files.
+const leaving = async (h, lines) => {
+  const report = await h.rt.diagnostics.report({})
+  return { stored: JSON.stringify(await h.logged()), file: await logFile(h, lines), entries: JSON.stringify(report.entries), markdown: report.markdown, log: await h.rt.diagnostics.logText() }
+}
+
+test('a named failure whose cleanup is unconfirmed still names no one in the stored line or any export', async t => {
+  const alias = `sample-alias-${randomUUID().slice(0, 8)}`
+  // The user and host come only from SSH's trace: the details rely on the config's defaults.
+  const h = await host(t, { scenario: 'frame-exit-named-unclean' })
+  const { failure, view } = await h.test({ host: alias })
+  assert.equal(failure.code, 'bot/hermes-ssh-cleanup')
+  assert.deepEqual({ kind: view.kind, alias: view.alias, exit: view.exit }, { kind: 'cleanup', alias, exit: 2 })
+  assert.deepEqual(view.hermes, ['serving sample-user on sample-remote.example.invalid', `bound 192.0.2.44:8642 and [2001:db8::7:1]:8642 for ${alias}`])
+  const [entry] = await h.logged()
+  assert.match(entry.text, /^Remote Hermes SSH failed: alias=<alias> stage=[a-z-]+ kind=cleanup elapsed=\d+ms exit=2 ssh="debug1: Connecting to <host> \[<ip>\] port 22\. \| debug1: Authenticating to <host>:22 as '<user>'" hermes="serving <user> on <host> \| bound <ip>:8642 and \[<ip>\]:8642 for <alias>"$/)
+  for (const [where, text] of Object.entries(await leaving(h, 1))) {
+    assert.match(text, /Remote Hermes SSH failed: alias=<alias> /, where)
+    for (const name of [...WHO, alias]) assert.ok(!text.includes(name), `${where} names ${name}`)
+  }
+})
+
+test('a trust probe that saves no key and fails keeps its kind, stage and lines, and names no one in the log', async t => {
+  const alias = `sample-alias-${randomUUID().slice(0, 8)}`
+  const h = await host(t, { scenario: 'host-key-gone', realTrust: true })
+  const { requestId, view } = await h.test({ host: alias })
+  assert.equal(view.kind, 'host-key-unknown')
+  const said = ['kex_exchange_identification: sample-remote.example.invalid closed the connection for sample-user', `ssh: Could not resolve hostname ${alias}: Name or service not known`]
+
+  // The trust step itself: a classified error, never a bare value, and no file of its own left.
+  let thrown
+  await assert.rejects(trustHermesSshHostKey({ host: alias }, { keyType: view.keyType, fingerprint: view.fingerprint }, { deadlines, env: h.env, home: h.home, temp: h.home }), error => { thrown = error; return true })
+  assert.ok(thrown instanceof Error, 'an error, not a string')
+  assert.deepEqual({ code: thrown.code, kind: thrown.sshError, stage: thrown.sshStage, ssh: thrown.sshDetail.ssh }, { code: 'bot/hermes-ssh-unreachable', kind: 'unreachable', stage: 'host-key', ssh: said })
+  // Who and where stays on the error, host side, and is not one of its own fields.
+  assert.deepEqual(thrown.sshNames, { hosts: ['sample-remote.example.invalid'], users: ['sample-user'] })
+  assert.ok(!Object.keys(thrown).includes('sshNames') && !JSON.stringify({ ...thrown, sshDetail: undefined }).includes('sample-remote'))
+  assert.deepEqual((await readdir(h.home)).filter(name => name.startsWith('automagik-host-key-') || name === '.ssh'), [], 'nothing saved, nothing left behind')
+
+  // Through the button: its own code, its own screen facts, and a line that names no one.
+  await assert.rejects(h.call('hermes-remote-ssh-trust', { requestId }), error => error.code === 'bot/hermes-ssh-unreachable' && !error.message.includes(alias) && !error.message.includes('sample-remote'))
+  const after = (await h.call('hermes-remote-test-status', { requestId })).failure
+  assert.deepEqual({ kind: after.kind, stage: after.stage, alias: after.alias, ssh: after.ssh }, { kind: 'unreachable', stage: 'host-key', alias, ssh: said })
+  const entries = await h.logged()
+  assert.equal(entries.length, 2)
+  assert.match(entries[1].text, /^Remote Hermes SSH failed: alias=<alias> stage=host-key kind=unreachable elapsed=\d+ms ssh="kex_exchange_identification: <host> closed the connection for <user> \| ssh: Could not resolve hostname <alias>: Name or service not known"$/)
+  for (const [where, text] of Object.entries(await leaving(h, 2))) for (const name of [...WHO, alias]) assert.ok(!text.includes(name), `${where} names ${name}`)
+})
+
+test('a start that hits the deadline is stored as the timeout the wizard shows, not as SSH’s cancel', async t => {
+  const h = await host(t, { scenario: 'stalled-start', deadlines: { start: 700, control: 300, cancel: 300 } })
+  const { failure, requestId } = await h.test({ host: 'sample.invalid' })
+  assert.equal(failure.code, 'bot/hermes-timeout', 'the wizard’s timed-out screen')
+  // The record follows once SSH has stopped: the wizard reads it by its request.
+  const until = Date.now() + 5000
+  let view
+  while (!(view = (await h.call('hermes-remote-test-status', { requestId })).failure) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual({ code: view.code, kind: view.kind, stage: view.stage }, { code: 'bot/hermes-ssh-timeout', kind: 'timeout', stage: 'hermes-start' })
+  const entries = await h.logged()
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].code, 'bot/hermes-ssh-timeout')
+  assert.match(entries[0].text, /^Remote Hermes SSH failed: alias=<alias> stage=hermes-start kind=timeout elapsed=\d+ms/)
+  for (const [where, text] of Object.entries(await leaving(h, 1))) {
+    assert.match(text, /stage=hermes-start kind=timeout /, where)
+    assert.ok(!text.includes('kind=unknown'), where)
   }
 })
 

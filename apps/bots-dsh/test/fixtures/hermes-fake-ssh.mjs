@@ -21,18 +21,22 @@ const finish = () => {
   if (runtime) { runtime.stdin.end(); return }
   closed = true
   record({ event: 'closed' })
-  if (role === 'supervisor' && nonce) emit({ type: 'closed', clean: scenario !== 'unclean' })
+  if (role === 'supervisor' && nonce) emit({ type: 'closed', clean: !scenario.endsWith('unclean') })
   process.exit(0)
 }
 process.on('SIGTERM', finish)
 if (role === 'config') {
   // ssh -G: only the line the trust step reads, pointing at the test's own folder.
-  process.stdout.write(`hostname ${target}\nuserknownhostsfile ${process.env.HERMES_SSH_KNOWN_HOSTS || '/dev/null'}\n`)
+  // A config entry that resolves the alias to another name and user: sample values.
+  const resolved = scenario === 'host-key-gone' ? 'hostname sample-remote.example.invalid\nuser sample-user\n' : `hostname ${target}\n`
+  process.stdout.write(`${resolved}userknownhostsfile ${process.env.HERMES_SSH_KNOWN_HOSTS || '/dev/null'}\n`)
   process.exit(0)
 }
 if (role === 'trust') {
   // What ssh does with accept-new: a host whose saved key differs is refused and nothing
   // is written; a new host's key goes to the first listed file; a known host adds nothing.
+  // The host went away between the screen and the button: no key is written, SSH fails.
+  if (scenario === 'host-key-gone') { process.stderr.write(`kex_exchange_identification: sample-remote.example.invalid closed the connection for sample-user\nssh: Could not resolve hostname ${target}: Name or service not known\n`); process.exit(255) }
   const option = args.find(arg => arg.startsWith('UserKnownHostsFile=')).slice('UserKnownHostsFile='.length)
   const files = [...option.matchAll(/"([^"]*)"|(\S+)/g)].map(match => match[1] ?? match[2])
   const presented = scenario === 'trust-swapped' ? process.env.HERMES_SSH_SWAPPED_KEY : hostKey
@@ -49,13 +53,14 @@ if (role === 'trust') {
 // What a -v trace says of where and as whom SSH connects: sample names and the
 // documentation address ranges only.
 const whoTrace = "debug1: Connecting to sample-remote.example.invalid [192.0.2.44] port 22.\ndebug1: Authenticating to sample-remote.example.invalid:22 as 'sample-user'\n"
-if (['host-key', 'changed-key', 'auth', 'auth-delayed', 'interactive', 'unreachable', 'python-missing', 'unclassified', 'named-tail'].includes(scenario)) {
+if (['host-key', 'changed-key', 'auth', 'auth-delayed', 'interactive', 'unreachable', 'python-missing', 'unclassified', 'named-tail', 'host-key-gone'].includes(scenario)) {
   // SSH's own lines, as its -v trace gives them: the trace of every sign-in names
   // "keyboard-interactive" and a timeout, which no verdict may be read from.
   const trace = `debug1: Server host key: ssh-ed25519 ${fingerprint(hostKey)}\ndebug1: Authentications that can continue: publickey,keyboard-interactive\ndebug1: ServerAliveInterval timeout 5\n`
   const offered = 'debug1: Will attempt key: /sample/home/.ssh/id_sample ED25519 SHA256:sampleSampleSampleSampleSampleSampleSample1 explicit\ndebug1: Offering public key: /sample/home/.ssh/id_sample ED25519 SHA256:sampleSampleSampleSampleSampleSampleSample1 explicit\ndebug1: Offering public key: sample@example.invalid ED25519 SHA256:sampleSampleSampleSampleSampleSampleSample2 agent\ndebug1: Trying private key: /sample/home/.ssh/id_other\n'
+  const unknownKey = `${trace}No ED25519 host key is known for ${target} and you have requested strict checking.\nHost key verification failed.\n`
   process.stderr.write({
-    'host-key': `${trace}No ED25519 host key is known for ${target} and you have requested strict checking.\nHost key verification failed.\n`,
+    'host-key': unknownKey, 'host-key-gone': unknownKey,
     'changed-key': `${trace}@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\nHost key verification failed.\n`,
     auth: `${trace}${offered}sample@${target}: Permission denied (publickey).\n`, 'auth-delayed': `${trace}${offered}sample@${target}: Permission denied (publickey).\n`,
     interactive: `${trace}interactive verification required\n`, unreachable: 'ssh: Could not resolve hostname\n', 'python-missing': `${trace}zsh:1: command not found: python3\n`,
@@ -115,7 +120,7 @@ if (role === 'tunnel') {
         if (scenario === 'oversized') { process.stdout.write(options.credential.repeat(2048)); return }
         if (scenario === 'stalled-start') { emit({ type: 'stage', name: 'remote-start' }); emit({ type: 'stage', name: 'hermes-start' }); return }
         if (scenario === 'frame-exit') { emit({ type: 'error', code: 'hermes-exited', exit: 2, tail: ['sample start failure', `echoed ${options.credential} ${options.nonce}`, 'config at /home/sample-person/.hermes/config.yaml'] }); finish(); return }
-        if (scenario === 'frame-exit-named') { process.stderr.write(whoTrace); emit({ type: 'error', code: 'hermes-exited', exit: 2, tail: ['serving sample-user on sample-remote.example.invalid', `bound 192.0.2.44:8642 and [2001:db8::7:1]:8642 for ${target}`] }); finish(); return }
+        if (scenario.startsWith('frame-exit-named')) { process.stderr.write(whoTrace); emit({ type: 'error', code: 'hermes-exited', exit: 2, tail: ['serving sample-user on sample-remote.example.invalid', `bound 192.0.2.44:8642 and [2001:db8::7:1]:8642 for ${target}`] }); finish(); return }
         if (scenario === 'frame-host-key') { emit({ type: 'error', code: 'host-key-unknown', keyType: 'ssh-ed25519', fingerprint: fingerprint(hostKey) }); return }
         if (scenario !== 'timeout') {
           // A login banner may be valid JSON without being a record: a number, a word.

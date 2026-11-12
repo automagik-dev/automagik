@@ -580,9 +580,9 @@ export async function trustHermesSshHostKey(ssh, expected, {
   try {
     const scratch = join(folder, 'known_hosts')
     if (/["\x00-\x1f\x7f]/.test(scratch)) throw stop('unknown')
-    const named = path => /\s/.test(path) ? `"${path}"` : path
+    const pathWord = path => /\s/.test(path) ? `"${path}"` : path
     const probe = await collect(spawn, sshCommand, ['-T', '-v', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
-      '-o', `UserKnownHostsFile=${[scratch, ...files].map(named).join(' ')}`, '-o', 'UpdateHostKeys=no',
+      '-o', `UserKnownHostsFile=${[scratch, ...files].map(pathWord).join(' ')}`, '-o', 'UpdateHostKeys=no',
       '-o', 'PubkeyAuthentication=no', '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no', '-o', 'GSSAPIAuthentication=no', '-o', 'HostbasedAuthentication=no',
       '-o', 'ClearAllForwardings=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no', '-o', 'ConnectionAttempts=1',
       '-o', `ConnectTimeout=${Math.max(1, Math.ceil(limits.control / 1000))}`, ...config.args, '--', config.target, 'true'], options)
