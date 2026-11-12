@@ -47,9 +47,11 @@ const CHILD = fileURLToPath(new URL('./script-child.js', import.meta.url))
 
 // The child's flags and no others: the host's own (loaders, --expose-internals) are not
 // the child's. --permission with no --allow-* flag refuses what the list above says;
-// node:sqlite is outside that model and goes by its own flag. The old space of the
-// child's own heap is capped; the script's memory is the interpreter's to cap.
-const CHILD_FLAGS = ['--permission', '--no-experimental-sqlite', '--max-old-space-size=128']
+// node:sqlite is outside that model and goes by its own flag. Memory: the script's is
+// the interpreter's WebAssembly memory, capped here at 2,048 pages of 64 KiB (128 MB),
+// past which the script gets an out-of-memory error of its own; the old space of the
+// child's own heap is capped beside it.
+const CHILD_FLAGS = ['--permission', '--no-experimental-sqlite', '--wasm-max-mem-pages=2048', '--max-old-space-size=128']
 
 // The longest helper arguments a script may send (the child refuses more before
 // sending), and the longest line that can carry them: JSON escaping makes at most six

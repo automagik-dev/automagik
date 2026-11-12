@@ -9,6 +9,9 @@
 //
 // What the runner lists as not refused has no test here: the network, signals to the
 // same user's processes, facts about the machine, V8's flags.
+//
+// The last tests run real scripts in the real child on both runtimes: the interpreter is
+// what a script meets, with no Node in reach, and its memory stops at the runner's cap.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -17,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
+import { GLOBALS } from './fixtures/browser-script-globals.js'
 
 const HOST = fileURLToPath(new URL('./fixtures/browser-script-wall-host.mjs', import.meta.url))
 const SECRET = 'BROWSER_SCRIPT_TEST_SECRET'
@@ -211,6 +215,53 @@ for (const runtime of RUNTIMES) {
     if (!result) return
     assert.match(result.error, REFUSED)
     assert.notEqual(result.exit, 'survived')
+  })
+}
+
+for (const runtime of RUNTIMES) {
+  test(`${runtime.name}: a script runs in the interpreter, with its built-ins and no Node`, async (t) => {
+    const result = await check(t, runtime, {
+      script: `
+        const went = await goto('https://example.com/')
+        await new Promise(resolve => setTimeout(resolve, 20))
+        const reach = [typeof process, typeof require, typeof fetch, typeof globalThis.constructor.constructor('return typeof process')()]
+        return JSON.stringify({ went, reach, globals: Object.getOwnPropertyNames(globalThis).sort() })
+      `,
+    })
+    if (!result) return
+    assert.equal(result.error, undefined)
+    const { went, reach, globals } = JSON.parse(result.answer)
+    assert.equal(went, 'went to https://example.com/')
+    assert.deepEqual(reach, ['undefined', 'undefined', 'undefined', 'undefined'])
+    assert.deepEqual(globals, GLOBALS)
+  })
+
+  test(`${runtime.name}: a script's memory stops at the cap, with an error the script can catch`, async (t) => {
+    const result = await check(t, runtime, {
+      script: `
+        const kept = []
+        let error = 'none'
+        try { for (;;) kept.push(new Array(100000).fill(kept.length)) } catch (caught) { error = caught === null ? 'null' : caught.name + ': ' + caught.message }
+        const arrays = kept.length
+        kept.length = 0
+        return JSON.stringify({ error, arrays })
+      `,
+    })
+    if (!result) return
+    assert.equal(result.error, undefined)
+    const { error, arrays } = JSON.parse(result.answer)
+    assert.match(error, /^(InternalError: out of memory|null)$/)
+    // Each array is 100,000 numbers, about 0.8 MB: 128 MB holds fewer than 160 of them.
+    assert.ok(arrays > 40 && arrays < 160, `${arrays} arrays`)
+  })
+
+  test(`${runtime.name}: a script that recurses too deep gets a stack error and the run goes on`, async (t) => {
+    const result = await check(t, runtime, {
+      script: 'const down = () => down(); try { down() } catch (error) { return error.name + ": " + error.message }',
+    })
+    if (!result) return
+    assert.equal(result.error, undefined)
+    assert.equal(result.answer, 'InternalError: stack overflow')
   })
 }
 

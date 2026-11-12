@@ -9,20 +9,8 @@
 // gets the two functions bare, as the real prelude does before it hides them.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MAX_TEXT, MEMORY_LIMIT, openSandbox } from '../src/script-child/sandbox.js'
-
-// Every global of the interpreter. Nothing of Node, nothing of a browser: no process,
-// require, fetch, URL, timers, console, Intl, WebAssembly or Atomics. The script's
-// setTimeout, console and helpers are arguments of its function, not globals.
-const GLOBALS = [
-  'AggregateError', 'Array', 'ArrayBuffer', 'BigInt', 'BigInt64Array', 'BigUint64Array', 'Boolean', 'DataView', 'Date',
-  'Error', 'EvalError', 'FinalizationRegistry', 'Float16Array', 'Float32Array', 'Float64Array', 'Function', 'Infinity',
-  'Int16Array', 'Int32Array', 'Int8Array', 'InternalError', 'Iterator', 'JSON', 'Map', 'Math', 'NaN', 'Number', 'Object',
-  'Promise', 'Proxy', 'RangeError', 'ReferenceError', 'Reflect', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'Symbol',
-  'SyntaxError', 'TypeError', 'URIError', 'Uint16Array', 'Uint32Array', 'Uint8Array', 'Uint8ClampedArray', 'WeakMap',
-  'WeakRef', 'WeakSet', 'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'eval',
-  'globalThis', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'undefined', 'unescape',
-]
+import { MAX_TEXT, openSandbox } from '../src/script-child/sandbox.js'
+import { GLOBALS } from './fixtures/browser-script-globals.js'
 
 // Opens a sandbox whose prelude is `code`, a function of (call, finish) run at once.
 // Resolves to what the host's two functions were given, and the sandbox.
@@ -182,22 +170,6 @@ test('what this side gives back is a number, a boolean, and text or null', async
   assert.deepEqual(reported(run), [
     ['number', 'boolean', 'string'], ['number', 'boolean', 'string'], ['number', 'boolean', 'null'], ['number', 'boolean', 'null'],
   ])
-})
-
-test('the interpreter may allocate up to its limit and no more', async () => {
-  assert.equal(MEMORY_LIMIT, 64 * 1024 * 1024)
-  const run = await probe(`
-    const kept = []
-    let error = 'none'
-    try { for (;;) kept.push(new Array(100000).fill(kept.length)) } catch (caught) { error = caught.name + ': ' + caught.message }
-    const arrays = kept.length
-    kept.length = 0
-    finish(JSON.stringify({ error, arrays }), null)
-  `)
-  const { error, arrays } = reported(run)
-  assert.equal(error, 'InternalError: out of memory')
-  // Each array is 100,000 numbers: tens of megabytes fit, hundreds do not.
-  assert.ok(arrays > 10 && arrays < 200, `${arrays} arrays`)
 })
 
 test('past its stack limit the script gets an error of its own', async () => {

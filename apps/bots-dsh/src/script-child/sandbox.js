@@ -16,12 +16,14 @@
 import variant from '@jitl/quickjs-singlefile-mjs-release-sync'
 import { newQuickJSWASMModuleFromVariant } from 'quickjs-emscripten-core'
 
-// The most the interpreter may allocate, and the stack it may use: about 1,500 nested
-// calls. Past either the script gets an error of its own (out of memory, stack overflow).
-// The stack limit stays well under this process's own stack, which the interpreter's
-// calls are made on; where a deep structure still runs through it, the run ends with the
-// same error.
-export const MEMORY_LIMIT = 64 * 1024 * 1024
+// The stack the interpreter may use: about 1,500 nested calls. Past it the script gets
+// an error of its own (stack overflow). The limit stays well under this process's own
+// stack, which the interpreter's calls are made on; where a deep structure still runs
+// through it, the run ends with the same error.
+//
+// Memory has no limit here. The interpreter's own limit counts one allocation at a time
+// in this build, not the total, so the total is capped where it cannot be miscounted: the
+// runner starts this process with a cap on any WebAssembly memory (script-runner.js).
 const STACK_LIMIT = 256 * 1024
 // The longest text `call` takes: the host refuses longer helper arguments.
 export const MAX_TEXT = 4_000_000
@@ -39,7 +41,9 @@ export const PRELUDE = `(function (call, finish, namesJson, body) {
   // "TypeError: cannot read property 'x' of null": the kind of error is half the message.
   const describe = error => {
     try {
-      if (error === null || typeof error !== 'object' || !('message' in error)) return toText(error)
+      // The interpreter throws null when it has no memory left to make an error with.
+      if (error === null) return 'Script threw null (the interpreter does that when it is out of memory).'
+      if (typeof error !== 'object' || !('message' in error)) return toText(error)
       const name = typeof error.name === 'string' && error.name !== 'Error' ? error.name + ': ' : ''
       return name + toText(error.message)
     } catch { return 'Script failed.' }
@@ -119,7 +123,6 @@ export const PRELUDE = `(function (call, finish, namesJson, body) {
 export async function openSandbox({ call, finish, prelude = PRELUDE }) {
   const QuickJS = await newQuickJSWASMModuleFromVariant(variant)
   const runtime = QuickJS.newRuntime()
-  runtime.setMemoryLimit(MEMORY_LIMIT)
   runtime.setMaxStackSize(STACK_LIMIT)
   // import() and import statements find nothing to load.
   runtime.setModuleLoader(() => ({ error: new Error('Imports are not available.') }))
@@ -127,12 +130,19 @@ export async function openSandbox({ call, finish, prelude = PRELUDE }) {
 
   // Text out of the interpreter, or undefined for anything that is not text or is too long.
   const text = (handle) => {
-    if (context.typeof(handle) !== 'string') return undefined
+    if (handle === undefined || context.typeof(handle) !== 'string') return undefined
     // The length first: a text too long is refused before a copy of it is made here.
     const length = context.getProp(handle, 'length').consume(value => context.getNumber(value))
     return length <= MAX_TEXT ? context.getString(handle) : undefined
   }
-  const isNull = handle => context.typeof(handle) === 'object' && context.sameValue(handle, context.null)
+  // Text or null out of the interpreter; undefined for anything else, a missing argument
+  // included.
+  const textOrNull = (handle) => {
+    if (handle === undefined) return undefined
+    const type = context.typeof(handle)
+    if (type === 'string') return context.getString(handle)
+    return type === 'object' && context.sameValue(handle, context.null) ? null : undefined
+  }
 
   const callFunction = context.newFunction('call', (nameHandle, argsHandle) => {
     let id = 0
@@ -145,8 +155,8 @@ export async function openSandbox({ call, finish, prelude = PRELUDE }) {
   })
   const finishFunction = context.newFunction('finish', (answerHandle, errorHandle) => {
     try {
-      const answer = isNull(answerHandle) ? null : context.typeof(answerHandle) === 'string' ? context.getString(answerHandle) : undefined
-      const error = isNull(errorHandle) ? null : context.typeof(errorHandle) === 'string' ? context.getString(errorHandle) : undefined
+      const answer = textOrNull(answerHandle)
+      const error = textOrNull(errorHandle)
       if (answer === undefined || error === undefined) finish(null, 'Script produced an answer that is not text.')
       else finish(answer, error)
     } catch {}

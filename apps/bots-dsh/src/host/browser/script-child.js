@@ -3696,7 +3696,6 @@ function smartUnwrap(val) {
 }
 
 // src/script-child/sandbox.js
-var MEMORY_LIMIT = 64 * 1024 * 1024;
 var STACK_LIMIT = 256 * 1024;
 var MAX_TEXT = 4e6;
 var PRELUDE = `(function (call, finish, namesJson, body) {
@@ -3709,7 +3708,9 @@ var PRELUDE = `(function (call, finish, namesJson, body) {
   // "TypeError: cannot read property 'x' of null": the kind of error is half the message.
   const describe = error => {
     try {
-      if (error === null || typeof error !== 'object' || !('message' in error)) return toText(error)
+      // The interpreter throws null when it has no memory left to make an error with.
+      if (error === null) return 'Script threw null (the interpreter does that when it is out of memory).'
+      if (typeof error !== 'object' || !('message' in error)) return toText(error)
       const name = typeof error.name === 'string' && error.name !== 'Error' ? error.name + ': ' : ''
       return name + toText(error.message)
     } catch { return 'Script failed.' }
@@ -3785,16 +3786,20 @@ var PRELUDE = `(function (call, finish, namesJson, body) {
 async function openSandbox({ call: call2, finish: finish2, prelude = PRELUDE }) {
   const QuickJS = await newQuickJSWASMModuleFromVariant(src_default);
   const runtime = QuickJS.newRuntime();
-  runtime.setMemoryLimit(MEMORY_LIMIT);
   runtime.setMaxStackSize(STACK_LIMIT);
   runtime.setModuleLoader(() => ({ error: new Error("Imports are not available.") }));
   const context = runtime.newContext();
   const text = (handle) => {
-    if (context.typeof(handle) !== "string") return void 0;
+    if (handle === void 0 || context.typeof(handle) !== "string") return void 0;
     const length = context.getProp(handle, "length").consume((value) => context.getNumber(value));
     return length <= MAX_TEXT ? context.getString(handle) : void 0;
   };
-  const isNull = (handle) => context.typeof(handle) === "object" && context.sameValue(handle, context.null);
+  const textOrNull = (handle) => {
+    if (handle === void 0) return void 0;
+    const type = context.typeof(handle);
+    if (type === "string") return context.getString(handle);
+    return type === "object" && context.sameValue(handle, context.null) ? null : void 0;
+  };
   const callFunction = context.newFunction("call", (nameHandle, argsHandle) => {
     let id = 0;
     try {
@@ -3807,8 +3812,8 @@ async function openSandbox({ call: call2, finish: finish2, prelude = PRELUDE }) 
   });
   const finishFunction = context.newFunction("finish", (answerHandle, errorHandle) => {
     try {
-      const answer = isNull(answerHandle) ? null : context.typeof(answerHandle) === "string" ? context.getString(answerHandle) : void 0;
-      const error = isNull(errorHandle) ? null : context.typeof(errorHandle) === "string" ? context.getString(errorHandle) : void 0;
+      const answer = textOrNull(answerHandle);
+      const error = textOrNull(errorHandle);
       if (answer === void 0 || error === void 0) finish2(null, "Script produced an answer that is not text.");
       else finish2(answer, error);
     } catch {
