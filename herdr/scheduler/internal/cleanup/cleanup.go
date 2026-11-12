@@ -140,7 +140,8 @@ func scan(cfg *config.Config, r repos) (Plan, error) {
 	plan := Plan{repos: r}
 	seen := map[string]bool{}
 	for _, a := range cfg.Automations {
-		if seen[a.Repo] {
+		// A command has no repo and makes no worktree.
+		if a.Command != nil || seen[a.Repo] {
 			continue
 		}
 		seen[a.Repo] = true

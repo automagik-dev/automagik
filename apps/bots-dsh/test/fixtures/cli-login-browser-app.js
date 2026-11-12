@@ -4,6 +4,8 @@
 import { createElement as h, useSyncExternalStore } from 'react'
 import { CLI_LOGIN_CSS, CliLoginConversation, installKnownStateGuard } from '../../src/client/cli-login.js'
 import { createCliLogin } from '../../src/client/cli-login-state.js'
+import { CliAccounts } from '../../src/client/cli-accounts.js'
+import { install as installAccountActions } from '../../src/host/cli-login.js'
 import { createSource, indexRoster } from '../../src/client/sources.js'
 import { teamActions } from '../../src/client/team-actions.js'
 import { SHELL_CSS, CONVERSATION_CSS } from '../../src/client/styles.js'
@@ -207,6 +209,63 @@ slots.register({ name: 'root', children: {
 slots.register({ name: 'conversation.composer.bar', inject: id => runtimes.get(id)?.inputProps ?? {} }, native.InputBar)
 slots.register({ name: 'conversation.input.dock', id: 'bot-cli-login', inject: face }, CliLoginConversation)
 const root = createRoot(document.getElementById('root'))
+window.showAccounts = (failure) => {
+  window.accountCalls = []
+  const entry = { authScope: 'isolated', signedIn: true,
+    account: { email: 'bot@example.test' }, terminal: { email: 'terminal@example.test' } }
+  const actions = {
+    cliLoginAccounts: async () => ({ accounts: { 'acp-codex': { ...entry } } }),
+    cliLoginSignOut: async () => {
+      if (failure) throw Object.assign(new Error('private-process-diagnostic'), { code: failure })
+      window.accountCalls.push('signout'); entry.signedIn = false
+    },
+    cliLoginSwitch: async () => { window.accountCalls.push('switch') },
+    refreshModels: async () => {},
+    openCliLogin: () => window.accountCalls.push('open'),
+  }
+  root.render(h(CliAccounts, { bot: { id: 'alpha' }, actions }))
+}
+window.showRecoveryAccounts = evidence => {
+  window.accountCalls = []
+  window.accountReads = 0
+  let recovery = true
+  const acp = {
+    authScope: 'isolated', status: async () => ({ agents: [] }),
+    accountRecovery: async id => ({
+      required: id === 'acp-codex' && recovery && evidence === 'pending',
+    }),
+    account: async id => {
+      if (id === 'acp-claude') return {
+        signedIn: true, account: { email: 'healthy@example.test' },
+      }
+      if (recovery) throw Object.assign(new Error('private-damaged-proof'), {
+        code: 'acp-account/unverified-login',
+      })
+      return { signedIn: false }
+    },
+    terminalAccount: async () => ({ account: { email: 'terminal@example.test' } }),
+    accountReset: async id => {
+      if (id !== 'acp-codex') throw new Error('Unexpected vendor')
+      window.accountCalls.push('reset')
+      recovery = false
+    },
+  }
+  const bot = { id: 'alpha' }
+  const rt = { ctx: { get: () => acp, on: () => {} }, botOf: id => id === bot.id ? bot : null }
+  installAccountActions(rt)
+  const actions = {
+    cliLoginAccounts: () => {
+      window.accountReads++
+      return rt.cliLoginActions['cli-login-accounts']({})
+    },
+    cliLoginReset: (botId, provider) => rt.cliLoginActions['cli-login-reset']({
+      botId, provider,
+    }),
+    refreshModels: async () => {},
+    openCliLogin: () => window.accountCalls.push('open'),
+  }
+  root.render(h(CliAccounts, { bot, actions }))
+}
 root.render(slots.renderSlot('root', {}))
 
 window.setBots = (bots, { blank = false, shown } = {}) => {

@@ -190,10 +190,19 @@ export default class ModManager extends View {
     const layouts = (await exec("ls", [`${appHome()}/layouts`])).stdout.split("\n").filter(Boolean);
     r.pkg = pkg;
     r.record = record;
+    // A linked layouts/ (#511): the review says its layouts stay, as the install then does.
+    r.linkedLayouts = await core.linkedLayouts(io, appHome());
+    // The shown layout as the install will read it (#512), for the review's kept-mod lines.
+    r.shown = await this.shownLayout();
     r.plan = await core.planInstall(io, {
       appHome: appHome(), dir: r.fetched.dir, pkg, record, existingMods: this.mods.map((m) => m.name), existingLayouts: layouts,
     });
     this.mode = "review";
+  }
+
+  // The layout Herdr shows, its tree read from layouts/ when Herdr names it but gives none (#512).
+  shownLayout() {
+    return core.shownLayout(io, appHome(), { name: shared("layout"), tree: layout() });
   }
 
   async finishReview() {
@@ -206,23 +215,27 @@ export default class ModManager extends View {
     await this.work(cx, `installing ${r.pkg.name}…`, async () => {
       // The shown layout an update stops shipping stays until the person switches (#431), and so
       // does a mod it stops shipping that the shown layout's blocks name (#490).
-      const shown = shared("layout");
+      // The layout is held on its name, the mod on the shown layout's tree, whatever its name (#512).
+      const { name: shown, tree, unread } = await this.shownLayout();
       const dropped = core.droppedLayouts(r.record, r.plan);
       const retired = core.retiredMods(r.record, r.plan);
-      // With no shown layout to read, the retired mods go as before; say which layouts name them.
-      const naming = typeof shown === "string" && shown ? {} : await core.layoutsNamingMods(io, appHome(), retired);
+      // With no tree to read, the retired mods go as before; say which layouts name them.
+      const naming = tree ? {} : await core.layoutsNamingMods(io, appHome(), retired);
+      // A linked layouts/ is the person's folder (#511): applyInstall moves and writes no layout through it.
+      const linkedTo = await core.linkedLayouts(io, appHome());
       const rec = await core.applyInstall(io, {
-        appHome: appHome(), plan: r.plan, source: r.source, prefix: r.pkg.prefix, sha: r.fetched.sha, record: r.record, shown, tree: layout(),
+        appHome: appHome(), plan: r.plan, source: r.source, prefix: r.pkg.prefix, sha: r.fetched.sha, record: r.record, shown, tree,
       });
       saveRecords([...records().filter((x) => !(x.source === rec.source && x.prefix === rec.prefix)), rec]);
       const failures = await core.checkMods(io, appHome(), r.plan.mods);
       const verb = r.record ? "updated" : "installed";
       this.message = failures.length
         ? `${r.pkg.name} ${verb}, but herdr-app check failed for ${failures.map((f) => f.mod).join(", ")}: ${failures[0].error.split("\n")[0]}`
-        : `${r.pkg.name} ${verb} (${r.plan.mods.join(", ")})${r.plan.layouts.length ? `; layouts: ${r.plan.layouts.join(", ")} (switch with ctrl-shift-l)` : ""}`;
+        : `${r.pkg.name} ${verb} (${r.plan.mods.join(", ")})${r.plan.layouts.length && linkedTo == null ? `; layouts: ${r.plan.layouts.join(", ")} (switch with ctrl-shift-l)` : ""}`;
       const said = [
-        ...core.retiredModLines({ retired, held: rec.mods.filter((m) => !r.plan.mods.includes(m)), shown, naming }),
-        ...core.droppedLayoutLines({ dropped, held: rec.layouts.filter((l) => !r.plan.layouts.includes(l)), shown }),
+        ...core.linkedLayoutsLines({ appHome: appHome(), target: linkedTo, record: r.record, plan: r.plan }),
+        ...core.retiredModLines({ retired, held: rec.mods.filter((m) => !r.plan.mods.includes(m)), shown, tree, unread, naming }),
+        ...(linkedTo == null ? core.droppedLayoutLines({ dropped, held: rec.layouts.filter((l) => !r.plan.layouts.includes(l)), shown }) : []),
       ];
       for (const l of said) this.message += ` · ${l}`;
       notify({ title: `mod ${verb}`, body: this.message, level: failures.length || said.length ? "warning" : "success" });
@@ -252,21 +265,24 @@ export default class ModManager extends View {
   // What the shown layout says about removing `mod` (every mod of its package that is on, as off
   // asks of one, #305, #414): the first refusal, else the notes. No layout to read: nothing to guard.
   // A package whose own layout is the one shown is refused first: its remove moves that layout aside (#420).
-  removeGuard(mod) {
-    const tree = layout(), name = shared("layout");
+  // The tree decides for the mods, read from layouts/ when Herdr names the layout but gives no
+  // tree (#512), so another shown layout naming a package's mod refuses too. `shown`: what was read.
+  async removeGuard(mod) {
+    const shown = await this.shownLayout();
+    const { name, tree } = shown;
     const own = mod.record ? core.packageLayoutGuard({ name, layouts: mod.record.layouts }) : null;
-    if (own) return own;
+    if (own) return { ...own, shown };
     const guards = (mod.record ? mod.record.mods : [mod.name])
       .filter((m) => this.mods.some((x) => x.name === m && x.enabled))
       .map((m) => ({ m, ...core.layoutGuard({ name, tree, mod: m, then: "remove it" }) }));
     const refused = guards.find((g) => g.refuse);
-    if (refused) return { refuse: refused.refuse };
+    if (refused) return { refuse: refused.refuse, shown };
     const notes = guards.filter((g) => g.note).map((g) => `${mod.record ? g.m : "it"} was ${g.note}`);
-    return notes.length ? { note: notes.join(" · ") } : null;
+    return notes.length ? { note: notes.join(" · "), shown } : { shown };
   }
 
   async remove(cx, mod) {
-    const guard = this.removeGuard(mod);
+    const guard = await this.removeGuard(mod);
     if (guard?.refuse) {
       this.message = guard.refuse;
       cx.notify();
@@ -274,17 +290,23 @@ export default class ModManager extends View {
     }
     await this.work(cx, `removing ${mod.name}…`, async () => {
       if (mod.record) {
-        // No shown layout to read (#491): the guards had nothing to check, so the remove says so,
-        // with the layouts naming its mods (read before uninstall() moves them aside).
-        const shown = shared("layout");
-        const naming = typeof shown === "string" && shown ? {} : await core.layoutsNamingMods(io, appHome(), mod.record.mods);
-        await core.uninstall(io, { appHome: appHome(), record: mod.record });
+        // What the guards could not check of the shown layout (#491, #512): the remove says so,
+        // with what uninstall() moved and the layouts naming its mods (read before the move).
+        const { name: shown, tree, unread } = guard.shown;
+        const naming = tree ? {} : await core.layoutsNamingMods(io, appHome(), mod.record.mods);
+        const { moved } = await core.uninstall(io, { appHome: appHome(), record: mod.record });
         saveRecords(records().filter((x) => x !== mod.record && !(x.source === mod.record.source && x.prefix === mod.record.prefix)));
         this.message = `removed: ${mod.record.mods.join(", ")}`;
-        for (const l of core.packageRemoveLines({ record: mod.record, shown, naming })) this.message += ` · ${l}`;
+        for (const l of core.packageRemoveLines({ record: mod.record, shown, tree, unread, moved, naming })) this.message += ` · ${l}`;
       } else {
+        // No tree of the shown layout to check (#545): a mod that was on goes as before (fail
+        // open), and the remove says why, with the layouts naming it. One already off is in no
+        // layout's way.
+        const { tree, unread } = guard.shown;
+        const naming = tree || !mod.enabled ? {} : await core.layoutsNamingMods(io, appHome(), [mod.name]);
         await core.removeLocal(io, { appHome: appHome(), name: mod.name, symlink: mod.symlink, path: mod.path });
         this.message = mod.symlink ? `link ${mod.name} removed (the folder it points to stays)` : `removed: ${mod.name}`;
+        if (mod.enabled) for (const l of core.localRemoveLines({ name: mod.name, tree, unread, naming })) this.message += ` · ${l}`;
       }
       if (guard?.note) this.message += ` · ${guard.note}`;
       await this.reloadMods();
@@ -383,8 +405,12 @@ export default class ModManager extends View {
       this.message = core.POCKET_LINK_REFUSAL;
     } else if (ch === "u") {
       if (mod.kind === "pack") {
-        const count = this.mods.filter((m) => m.kind === "pack").length;
-        this.confirm = { text: `update ${core.PACK_TITLE} (all ${count} of its mods) with automagik-herdr update? (y/n)`, run: (cx) => this.updatePack(cx) };
+        // The pack's update takes every one of its mods, the switched-off ones too: updated where
+        // they are (mods-disabled/), never copied back into mods/. Said before the yes (#219).
+        const pack = this.mods.filter((m) => m.kind === "pack");
+        const off = pack.filter((m) => !m.enabled).map((m) => m.name);
+        const offSaid = !off.length ? "" : `; ${off.join(", ")} ${off.length === 1 ? "is off and stays" : "are off and stay"} off, updated in ${core.OFF_DIR}/`;
+        this.confirm = { text: `update ${core.PACK_TITLE} (all ${pack.length} of its mods${offSaid}) with automagik-herdr update? (y/n)`, run: (cx) => this.updatePack(cx) };
       } else if (mod.kind !== "installed") this.message = mod.kind === "herdr" ? "built-in mods update with Herdr" : "only mods installed from the marketplace have a source to update from";
       else if (!mod.enabled) this.message = `${mod.name} is off: switch it on before updating`;
       else cx.spawn(async (cx) => this.startReview(cx, mod.record.source));
@@ -395,10 +421,13 @@ export default class ModManager extends View {
       if (mod.kind === "herdr") this.message = "built-in mods are not removed; to change one, use mod.clone";
       else {
         // Refused before the question: a mod the shown layout's blocks name stays (removeGuard).
-        const guard = this.removeGuard(mod);
         const what = mod.record ? `${mod.record.mods.join(", ")} and the keys it added` : mod.symlink ? `the link ${mod.name} (the folder it points to stays)` : `the folder mods/${mod.name}`;
-        if (guard?.refuse) this.message = guard.refuse;
-        else this.confirm = { text: `remove ${what}? (y/n)`, run: (cx) => this.remove(cx, mod) };
+        cx.spawn(async (cx) => {
+          const guard = await this.removeGuard(mod);
+          if (guard?.refuse) this.message = guard.refuse;
+          else this.confirm = { text: `remove ${what}? (y/n)`, run: (cx) => this.remove(cx, mod) };
+          cx.notify();
+        });
       }
     } else if (ch === "o") {
       const url = mod.name === core.POCKET_LINK
@@ -684,20 +713,22 @@ export default class ModManager extends View {
   }
 
   reviewView(t) {
-    const { plan, pkg, source, fetched, record } = this.review;
+    const { plan, pkg, source, fetched, record, linkedLayouts: linked = null } = this.review;
     const line = (text, color) => div().text_color(color ?? t.muted).child(text);
     const section = (title, lines) => v_flex().gap(2).child(div().font_semibold().text_color(t.foreground).child(title)).children(lines);
-    const heldMods = core.heldRetiredMods({ record, plan, shown: shared("layout"), tree: layout() });
+    const heldMods = core.heldRetiredMods({ record, plan, tree: this.review.shown?.tree ?? layout() });
     const blocks = [
       section("What comes in", [
         line(`mods: ${plan.mods.map((m) => `mods/${m}`).join(", ")}`),
-        plan.layouts.length ? line(`layouts: ${plan.layouts.join(", ")} (your layout stays)`) : null,
+        plan.layouts.length && linked == null ? line(`layouts: ${plan.layouts.join(", ")} (your layout stays)`) : null,
+        // A linked layouts/ (#511): no layout is moved out of it or written into it.
+        ...core.linkedLayoutsLines({ appHome: appHome(), target: linked, record, plan }).map((l) => line(l, t.blocked)),
         // The record's mods this commit drops (#490): kept while the shown layout names it, else moved aside.
         ...core.retiredMods(record, plan).map((m) => (heldMods.includes(m)
           ? line(`mods/${m}: no longer shipped; kept while the shown layout names it (switch layouts, then update again)`, t.blocked)
           : line(`mods/${m}: no longer shipped; moved to the backup folder`))),
         // The record's layouts this commit drops (#431): kept while Herdr shows it, else moved aside.
-        ...core.droppedLayouts(record, plan).map((l) => (core.isShownLayout(shared("layout"), l)
+        ...(linked == null ? core.droppedLayouts(record, plan) : []).map((l) => (core.isShownLayout(shared("layout"), l)
           ? line(`layouts/${l}: no longer shipped; kept while Herdr shows it (switch layouts, then update again)`, t.blocked)
           : line(`layouts/${l}: no longer shipped; moved to the backup folder`))),
         line(`${pkg.files.length} file(s) · commit ${short(fetched.sha)}${record ? ` (installed: ${short(record.sha)})` : ""}${pkg.recipe ? "" : " · no RECIPE.md"}`),

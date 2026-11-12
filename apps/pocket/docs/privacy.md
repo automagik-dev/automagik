@@ -2,7 +2,7 @@
 title: "Privacy policy"
 type: policy
 created: 2026-11-01
-updated: 2026-11-08
+updated: 2026-11-11
 tags: [privacy, policy, play]
 ---
 # Automagik Pocket privacy policy
@@ -29,7 +29,7 @@ before 2026-11, [automagik-si/automagik-pocket](https://github.com/automagik-si/
 |---|---|---|
 | Terminal screens, agent status, messages and replies you type or speak | Only between the phone and your machine | This is what the app is for |
 | Chat: an agent's transcript (its messages, tool calls with their input and output, approvals, questions and token counts) and the Automagik Bots' chats, sent by Pocket Link's chat route ([RFC 0015](../../../docs/rfcs/0015-live-chat-projection.md)) | Only between the phone and your machine. Kept in memory while the chat is open (the receipts of requests answered while the phone was away included), dropped when you leave it. While Home or Team shows, the list of the Bots' chats (each one's name, state, whether it is shown and, while it waits on a question or an approval, the request's text) is read every 30 seconds and kept in memory only, with what the phone saw of each chat's state between two readings and, for a request it saw answered, who answered and what (the Home row's Done line). Never written to the phone's storage, never logged, never sent anywhere else | To show an agent as a chat beside its terminal. Tool output can hold secrets such as tokens; it is the same text the terminal already shows the phone, and it is not redacted |
-| What you type, approve, deny or stop in an Automagik Bot's chat, when that computer's Pocket Link says it takes the phone's writes ([RFC 0015](../../../docs/rfcs/0015-live-chat-projection.md), Amendments, 2026-11-07) | Sent over Pocket Link to that computer's Automagik (DSH), and nowhere else: a message becomes your prompt in the Bot's current chat, recorded in that chat as yours; an approval or a question's answer settles that one request; Stop cancels the running turn. The computer records your phone's name with an approval you answer. Nothing of it is kept on the phone or logged | So you can talk to your Bots and answer their approvals from the phone. Only for the Bots the computer shows: a project's after its yes in Herdr or Automagik, and the global Bots, the Main Bot included. Allow for the whole session stays on the computer. Remove the phone in Pocket Link to end its writes within 2 seconds |
+| What you type or speak, approve, deny or stop in an Automagik Bot's chat, when that computer's Pocket Link says it takes the phone's writes ([RFC 0015](../../../docs/rfcs/0015-live-chat-projection.md), Amendments, 2026-11-07) | Sent over Pocket Link to that computer's Automagik (DSH), and nowhere else: a message becomes your prompt in the Bot's current chat, recorded in that chat as yours; an approval or a question's answer settles that one request; Stop cancels the running turn. The computer records your phone's name with an approval you answer. Nothing of it is kept on the phone or logged | So you can talk to your Bots and answer their approvals from the phone. Only for the Bots the computer shows: a project's after its yes in Herdr or Automagik, and the global Bots, the Main Bot included. Allow for the whole session stays on the computer. Remove the phone in Pocket Link to end its writes within 2 seconds |
 | Paired machine details: name, session name, the desktop's Pocket Link ticket | Stays on the phone | To reconnect |
 | Machines saved over SSH by an older version: name, hostname, SSH user, port, session name, host key fingerprint | Stays on the phone and is never used to connect; deleted when you pair that computer with QR or remove it | So the card can ask you to pair it again ([RFC 0008](rfcs/0008-drop-ssh.md)) |
 | The phone's make and model (for example "Pixel 8") | Sent once to the desktop you pair with | So the desktop can name the paired phone. The desktop lists it beside a fingerprint of the phone's Pocket Link public key, which it already has, so two phones with the same name can be told apart |
@@ -87,11 +87,12 @@ choose the app and the recipient), or **Clear** it.
 
 ## Microphone
 
-Used only when you tap the microphone in the side-button assistant panel. The app uses Android's
-`SpeechRecognizer`, which hands the audio to the phone's **default speech recognition service**
-(chosen in Android's settings, often Google's). That service turns it into text, and the app puts
-the text in the message box for you to send. The app itself never records or stores audio. Whether
-the audio leaves the phone depends on that service and its own privacy policy.
+Used only when you tap the microphone in the chat composer, the terminal composer, or the side-button
+assistant panel. The app uses Android's `SpeechRecognizer`, which hands the audio to the phone's
+**default speech recognition service** (chosen in Android's settings, often Google's). That service
+turns it into text, and the app puts the text in the message box for you to send. The app itself
+never records or stores audio. Whether the audio leaves the phone depends on that service and its
+own privacy policy.
 
 ## Camera
 
@@ -113,7 +114,7 @@ phone. No picture is stored or sent.
 | Notifications | Alert you when an agent needs you or finishes |
 | Foreground service (special use) | **Watch in background**: keep connections open while you're away, with a "Watching" notification you can stop |
 | Run at startup | **Watch in background**: after the phone restarts and you unlock it, reconnect the machines it was watching, only if watching was on ([RFC 0007](rfcs/0007-watch-after-reboot.md)) |
-| Microphone | Speak a message in the side-button panel |
+| Microphone | Speak a message in the chat or terminal composer, or in the side-button panel |
 | Camera | Scan the pairing QR code (added by the ZXing scanner library) |
 | Install packages, update without asking again | Install updates from GitHub releases; Android asks once |
 | Network state | Download automatic updates only on Wi-Fi and other unmetered networks |

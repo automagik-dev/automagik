@@ -103,6 +103,18 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     deleteAvatar: id => call('avatar-delete', { id }),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
+    // A model on another route: the host starts a new conversation with a handoff note
+    // (parts.js). `patch` carries the thinking level picked with it.
+    switchRoute: (id, ref, patch = {}) => after(call('switch-route', { id, ...patch, model: ref })),
+    switchRouteInChat: async (id, ref, patch = {}) => {
+      try { return await after(call('switch-route', { id, ...patch, model: ref })) } catch (error) {
+        // A signed-out agent opens its sign-in row; the pick is made again after it.
+        const provider = cliProviderOf(ref)
+        if (error?.code === 'bot/sign-in-required' && provider && openCliLogin(id, provider)) return undefined
+        if (error?.code === 'bot/account-confirm-required' && provider && openCliLogin(id, provider)) return undefined
+        throw error
+      }
+    },
     // A model chosen in a Bot's chat (rule 2): an agent that is signed out opens the sign-in row
     // in that chat instead of failing; the Bot keeps its model until the sign-in is done.
     // `patch` goes with the model in the same update (its thinking level).
@@ -125,6 +137,10 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     cliLoginConnections: () => call('cli-login-connections', {}),
     cliLoginConfirm: (botId, provider, ref, model) => call('cli-login-confirm', loginPayload(botId, provider, { ...(ref === undefined ? {} : { ref }), ...(model === undefined ? {} : { model }) })),
     cliLoginAccounts: () => call('cli-login-accounts', {}),
+    cliLoginSwitch: (botId, provider) => call('cli-login-switch', loginPayload(botId, provider)),
+    cliLoginReset: (botId, provider) => call('cli-login-reset', loginPayload(botId, provider)),
+    cliLoginSignOut: (botId, provider) => call('cli-login-signout',
+      loginPayload(botId, provider)),
     cliLoginNoticed: provider => call('cli-login-noticed', { provider }),
     contextStatus: botId => call('context-status', { botId }),
     usageStats: (botId, sessionId) => call('usage-stats', { botId, sessionId }),
@@ -184,10 +200,14 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     pets: () => call('pets'),
     petsBrowse: (query, page, sort) => call('pets-browse', { query, page, sort }),
     petUse: (botId, source, id) => after(call('pet-use', { botId, source, id })),
+    agentAccess: () => call('agent-access'),
+    agentTokenCreate: name => call('agent-token-create', { name }),
+    agentTokenRevoke: id => call('agent-token-revoke', { id }),
     privacy: () => call('privacy'),
     privacySet: (share, on) => call('privacy-set', { share, on }),
     diagnosticsLog: () => call('diagnostics-log'),
     diagnosticsClear: () => call('diagnostics-clear'),
+    diagnosticsPermissions: () => call('diagnostics-permissions'),
     repoStars: () => call('repo-stars'),
     // A failed action away from any form (a menu, the palette) shows as a toast.
     reportError: (error, where = 'action') => {

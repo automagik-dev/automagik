@@ -147,8 +147,11 @@ export class ConsentStore {
       writeFileSync(tmp, `${JSON.stringify({ ...this.rest, version: 1, key: this.key, vendors: this.vendors }, null, 2)}\n`, { mode: 0o600 })
       renameSync(tmp, this.file)
       this.saved = true
+      this.saveError = undefined
       this.dirty.clear()
     } catch (error) {
+      // Why the last write failed, for whoever waits on the record (index.js): the code only.
+      this.saveError = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{1,31}$/.test(error.code) ? error.code : 'error'
       // Kept in memory for this run; the next change tries again.
       this.log(`the account record was not saved: ${error?.code ?? 'error'}`)
     }
@@ -218,6 +221,15 @@ export class ConsentStore {
     this.sync()
     const seen = this.digests(account)
     this.vendors[id] = { consent: 'given', at: this.now(), ...(seen === undefined ? {} : { account: seen }) }
+    this.dirty.add(id)
+    this.save()
+  }
+
+  /** A fresh home generation has no inherited word for the previous Bot account. */
+  forget(id) {
+    if (!this.ids.includes(id)) return
+    this.sync()
+    delete this.vendors[id]
     this.dirty.add(id)
     this.save()
   }

@@ -2,14 +2,17 @@
 
 Scheduled agent prompts, as a side panel: a prompt, a cron line and a repo — every weekday at 09:00
 an agent starts in a fresh worktree and works. The panel is where you find what ran while you were
-away, start one now, pause them all, or write a new one with its next runs previewed. It needs
-the `herdr-automations` scheduler, a separate program the pack does not install.
+away, start one now, pause them all, or write a new one with its next runs previewed. An automation
+may also be a plain command the scheduler runs itself, with no agent and no model (#938). It needs
+the `herdr-automations` scheduler, a separate program: `install.sh` installs the build this mod
+pins (#220); the pack's own updater does not.
 
 **It ships switched off**, footer tab included (#220): a fresh install puts it in
 `<app home>/mods-disabled/am-automations`, where Herdr does not load it. To turn it on, open the
 **Mods** panel, find *Automagik Automations* and switch it on; the footer's **Automations** tab then
 appears. Without the scheduler the panel says what is missing and shows the command that installs
-it (the pinned release, hash-checked, into `~/.local/bin`), with **Copy**; it never runs it. An
+it (the pinned release, hash-checked, into `~/.local/bin`), with **Copy** and **Install**; only a
+click on Install runs it. An
 install that already has the mod keeps its state through updates, on or off (`OFF_BY_DEFAULT` in
 `am-sidebar/release.js`; `am install herdr.am-automations` also switches it on).
 
@@ -24,20 +27,32 @@ pack.
 A card filling its block (`rounded(10)`, 1 px `border`, `background`), three parts top to bottom:
 a 42 px header — "Automations", "Active" / "All paused", a switch, and `+`; while the scheduler
 binary is missing, a `blocked`-tinted block with one line ("Missing the scheduler: herdr-automations
-is not on PATH or in ~/.local/bin."), the install command and **Copy**; a `blocked`-tinted banner
-with a solid **Start** button while no scheduler holds the lock; and a scrolling body in one of
+is not on PATH or in ~/.local/bin."), the install command, **Copy** and a solid **Install**; a
+`blocked`-tinted banner with a solid **Start** button while no scheduler holds the lock; a
+`blocked`-tinted line while the backend is `herdr`; and a scrolling body in one of
 three views:
 
 - **List**: `INBOX` (finished runs not yet seen, with "Mark all read" and "Nothing new."), then
   `AUTOMATIONS` — per entry a dot, the name, `▶`, its schedule and next run, and "agent · model ·
-  workspace · permissions"; entries that did not load follow on an `ansi1` tint with the message.
+  workspace · permissions" (a command: "command · <its words> · tells <bot>"); entries that did
+  not load follow on an `ansi1` tint with the message. An inbox row's second line is the run's
+  result line or error, else its duration.
 - **Detail**: name, `Run now` / `Pause` / `Edit` / `Delete` (delete asks once), schedule, next, repo,
-  where it runs, agent, permissions, the prompt, and `HISTORY` per run with status, duration or error, and when.
+  where it runs, agent, permissions, the prompt, and `HISTORY` per run with status, the result line,
+  error or duration, and when. A command shows "Runs: a command, as you: no agent, no model", its
+  folder, env names, timeout and the bot it tells, the command in mono, and `LAST RESULT`: status
+  and exit code, the result line, the last lines of stderr when it failed, and what became of the
+  report to its bot.
 - **Form**: name, schedule pills over a cron field, repo with `Choose…`, "runs in" (new worktree,
   repo root, existing space), an "after a run" close switch (worktree and repo root only), agent
   pills (installed agents plus hc templates), model, `PERMISSIONS`, prompt, timeout, MCP config, and
   `Next: …` previewed live; `Cancel` / `Save`. A prompt naming a terminal address gets a
   `blocked`-coloured line under it.
+- **Form, command kind** (#938): `RUNS` pills, `Agent prompt` / `Command (no model)`. A command
+  shows `COMMAND` (the program and its arguments on one line), a note ("No shell reads this line …
+  It runs as you … Exit 0 is done; any other exit, or the timeout, is failed."), `WORKING FOLDER`
+  with `Choose…`, `ENV` (`KEY=value` words), `TELL A BOT`, and the timeout; repo, runs in, after a
+  run, agent, model, permissions, prompt and MCP config are not drawn.
 - **PERMISSIONS** (#498): pills for the mode the run starts the agent in — `As saved: <mode>` (an
   existing entry), `Automatic (<flag>)` (codex and claude), `Agent default` — a line "Runs <mode>:
   <agent> <args>", and a field for more words to the agent (`agent_args` past the permission flags;
@@ -51,12 +66,19 @@ three views:
 
 - **Finding the scheduler**: `herdr-automations version` on PATH, then
   `~/.local/bin/herdr-automations`; the answer also says whether it is ours (`-am.` in the version).
-  Neither answers: the repair block shows `repairCommand()` for this Mac's `uname -m`
-  (`SCHEDULER` in `scheduler.js` pins our `herdr-automations-v<version>` release and its darwin
-  sha256s from its `checksums.txt`, checked by `herdr/scripts/scheduler-pin.mjs`), and every 30 s
-  refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes
-  the command to the clipboard; the panel never runs it and never installs a login service (only
-  **Start**, pressed by you, runs `service install`).
+  Neither answers: the repair block shows `repairCommand()` for this machine's `uname -m` and
+  `uname -s` (`SCHEDULER` in `scheduler.js` pins our `herdr-automations-v<version>` release and its
+  four sha256s, two darwin and two Linux, from its `checksums.txt`, checked by
+  `herdr/scripts/scheduler-pin.mjs`; `install.sh` installs the same build from the same pins), and
+  every 30 s refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes the
+  command to the clipboard; **Install** runs exactly that command (`sh -c`), once per click (it
+  removes its own scratch folder, worked or not), and a
+  failure keeps the block and says why. Nothing runs without a click, and the panel never installs
+  a login service by itself (only **Start**, pressed by you, runs `service install`).
+- **Readiness**: `ls --json` answering is the check. No scheduler pid: the "Scheduler stopped"
+  banner with **Start**. `backend: herdr` (or none in the file): a line saying runs open in the
+  Herdr TUI, not in this app, naming the `automations.yaml` to set `backend: hc` in; the panel
+  never edits that file.
 - Every read and write goes through the CLI (`ls --json`, `history --json`, `put [--dry-run]`,
   `rm`, `seen`, `run --bg`, `pause|resume`, `service install`); the panel never edits
   `automations.yaml` or `history.jsonl` itself. Config and state folders are watched to know when to
@@ -101,6 +123,17 @@ three views:
   `-am.`; with an upstream `herdr-automations` the switch is replaced by one line saying our build
   is needed, and the key is never sent, so a hand-written `close_workspace` (and `session`) survives
   an edit there. Hand-writing it in `automations.yaml` still works: `on-success` or `never`.
+- **Command kind** (#938): offered only when the scheduler's `ls --json` names it (`kinds` holds
+  `command`); any other build gets one line, "This scheduler build runs agent prompts only. A newer
+  herdr-automations also runs a plain command, with no model.", and the keys are never sent. The
+  command line and `ENV` split on spaces, with `"…"` and `'…'` keeping theirs; no shell reads
+  either. A word in `ENV` that is not `KEY=value` is said under the form and nothing is sent. A
+  command is saved with every agent and space key empty (put removes them: the scheduler refuses a
+  command that names one), and an entry switched back to a prompt sends `command: null` and an
+  empty `notify`. The scheduler runs the program as you, with no sandbox, and decides the status
+  from its exit code; the panel only shows what `history --json` reports (`result`, `exit_code`,
+  `stderr`, `notified`). A running command has no terminal: its dot is `working` while its last
+  record says `running`.
 - **Address warning** (#498): a prompt holding an hc address (`t3q1`, `build-box/t9`: a `t`, a
   digit, then letters and digits) is warned about on every preview and on Save, "… is a terminal
   address; it changes on restart. Name the bot instead"; it is saved all the same. A name given with
@@ -115,7 +148,8 @@ three views:
 ## Built from
 
 `mods/am-automations/main.js`, `agents.js` (which agents the form offers, never a retired one),
-`modes.js` (permission flags read as a mode, the automatic flags, the address check; pure),
+`modes.js` (permission flags read as a mode, the automatic flags, the address check, a command's
+env line; pure),
 `scheduler.js` (the scheduler release pin and its repair command; pure, so the pin check reads it),
 `retired.js` (the retired agents: a byte-equal copy of am-sidebar's, the pack's one list),
 `automations.svg` (a clock, 24×24 stroke), `mod.json`
@@ -123,16 +157,26 @@ three views:
 (DnzzL's MIT, verbatim). Herdr API: `exec`, `hc`, `home`, `theme`, `terminals`, `spaces`, `run`,
 `notify`, `pickFolder`, `watchFolder`, `knownAgents`; `InputState`, `TextareaState`.
 
-Programs: `herdr-automations` (the scheduler; installed separately as a login service), `hc`
-templates, `sh`, and the agents a run starts (`claude`, `codex`, `pi`).
+Programs: `herdr-automations` (the scheduler; `install.sh` installs it and, when you say yes, its
+login service), `hc` templates, `sh`, `uname`, and the agents a run starts (`claude`, `codex`,
+`pi`); **Install** runs the repair command's `curl`, `shasum` or `sha256sum`, `chmod` and `mv`.
 
 ## Watch out
 
 - **It runs programs**: `herdr-automations` on every action, `hc templates` for the form, and it
-  starts agents. It reaches no network and writes no file itself.
-- Without the scheduler binary the panel shows the repair block instead of the list. Shipping the
-  scheduler with the pack (an RFC 0012 part, installed by `am install`) comes later; until then a
-  new scheduler release means updating `SCHEDULER` (version and both sha256s) by hand.
+  starts agents. It reaches no network and writes no file itself, except when you click
+  **Install**: that one command downloads the pinned scheduler from this repository's release and
+  writes `~/.local/bin/herdr-automations` once its sha256 matches. `exec`'s 30 s limit applies to
+  it: on a slow link it fails and says so, and the copied command in a terminal has no limit.
+- **A command automation runs a program as you** (#938): the scheduler starts it on its schedule
+  with your network and files, no sandbox, and its result line is pasted into the named bot's
+  terminal. Whoever can write `automations.yaml` (this form included) decides what runs.
+- The pinned scheduler release (`SCHEDULER`, `0.12.1-am.1`) does not run commands; the form offers
+  the kind once a build that names it is installed.
+- Without the scheduler binary the panel shows the repair block instead of the list. `install.sh`
+  provisions it (#220); shipping it as an RFC 0012 part (installed by `am install` and the pack's
+  updater) comes later. A new scheduler release means updating `SCHEDULER` (version and all four
+  sha256s) by hand; `install.sh` reads them from the pack, so it needs no change.
 - `exec` has no stdin and a 30 s limit: both are worked around (shell printf, `--bg`), and a very
   slow `ls`/`history` would show as an error rather than a hang.
 - The fork means upstream changes arrive by hand; `LICENSE-upstream` and the NOTICE entry must stay.

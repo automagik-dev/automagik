@@ -61,6 +61,8 @@ function fakeAgents(rows = {}, { inspect = true } = {}) {
     }
   }
   const service = {
+    // Historical shared-host restoration tests. Shipped ACP now declares only isolated.
+    authScope: 'shared',
     status: async () => {
       calls.status += 1
       return { agents: Object.keys(state).map(rowOf) }
@@ -532,10 +534,24 @@ test('Codex gone at the first pass after a start restores at once; a failed CLI 
     await until(() => host.saved().bots.c1.model === SOL, { label: `restored (${label})` })
     assert.equal(host.saved().subscriptionCliMoved['openai-codex'], undefined, label)
   }
-  // No acp-dsh at all, and none on its way in.
+  // Without a host positively declaring shared scope there is no legacy restoration.
   const host = await gated(settledTeam(), { agents: null, providers: ['deepseek', 'openai-codex'] })
   t.after(host.stop)
-  await until(() => host.saved().bots.c1.model === SOL, { label: 'restored (no service)' })
+  for (let pass = 0; pass < 3; pass++) await host.pass()
+  assert.equal(host.saved().bots.c1.model, settledTeam().bots.c1.model)
+})
+
+test('isolated sign-out keeps an unconfirmed Bot on its chosen model and history', async t => {
+  const agents = fakeAgents({ 'acp-codex': { ...READY, signedIn: false } })
+  agents.service.authScope = 'isolated'
+  const team = seed([movedBot('c1', movedRecord({ confirmed: false }))], MOVED)
+  const host = await gated(team, { agents,
+    records: { 'llm-pi-ai/openai-codex': 'grant' } })
+  t.after(host.stop)
+  for (let pass = 0; pass < 3; pass++) await host.pass()
+  assert.equal(host.saved().bots.c1.model, team.bots.c1.model)
+  assert.equal(host.saved().bots.c1.sessionId, team.bots.c1.sessionId)
+  assert.deepEqual(host.selected, [])
 })
 
 test('a CLI that is missing, installing or not yet read never restores a confirmed Bot', async (t) => {

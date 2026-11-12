@@ -57,12 +57,13 @@ release that has `plugins.json`. The dispatch runs on `dev` or on a `v<version>`
 
 ## The image
 
-Three stages, every base digest-pinned:
+Four preparation/runtime stages, every base digest-pinned (plus the distroless base input):
 
 | Stage | What it does |
 |---|---|
-| `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, fetches and verifies the release tarballs, installs the profile with dsh's own `plugin … install`, prunes what the profile does not compose, writes `versions.json` |
+| `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, verifies the release tarballs, installs/prunes the profile, prepares its inspected offline dependency store, writes version/revision metadata |
 | `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, git core, `ripgrep`, their `ldd` closure, and the empty `/data` tree owned by uid 1000. No perl: git's perl subcommands are not shipped |
+| `gate-deps` | Bun 1.4.4 installs the exact WebAuthn dependency and `server/bun.lock`, with lifecycle scripts disabled, then prunes development files. Bun stays in this stage |
 | `runtime` | `scratch` holding the distroless nodejs24 rootfs (node and glibc), cleaned in the `tools` stage (man pages and changelogs stripped there with coreutils), plus the tools above, the code, nothing else — no apt, npm, curl or build toolchain |
 
 The distroless tag ships Node 24.14.0 (above dsh's 24.9 floor); the builder is 24.22.2. The
@@ -77,6 +78,7 @@ composes.
 node server/build.mjs --tag automagik-server:local --version 3.93.0 --image-version 3.93.0 \
   --revision "$(git rev-parse HEAD)"
 node server/smoke.mjs automagik-server:local
+node server/follow-smoke.mjs automagik-server:local
 ```
 
 `--version` is the release whose plugin tarballs are installed; `--image-version` is the content
@@ -91,6 +93,9 @@ three plugins are in `/data`, `launch-url` is `0600`, the process is uid 1000, D
 check turns healthy, the composed tree still has its 200 entries (bots, welcome, ACP, web app,
 office), no composed plugin failed to import, koffi and node-pty load and a PTY spawns, and a
 restart does not reseed. No coreutils are assumed: the checks use node and bash.
+The follow smoke builds a companion release, seeds a volume with the real older plugins, then
+starts the newer image on that same volume with networking disabled. It verifies all three
+versions moved, a backup exists, user settings survived, and a second restart keeps the update.
 
 ## Run
 
@@ -127,8 +132,59 @@ healthy `401` says the fence is up, not that a model is configured.
 | `/data/secrets/deepseek-api-key` | optional model key, `0400` |
 
 `/opt/automagik` is read-only code. The image bakes nothing into `/data`: the profile is seeded
-at the first start only, and an existing profile is the user's and is never replaced. To reseed
-from a newer image, move `/data/dsh/profiles/automagik-web` aside first.
+at first start. An image-managed seed follows newer image releases on subsequent starts, as
+described below; a profile whose `package.json` the owner changed stays owner-managed.
+
+## Update a workspace through its image
+
+Arca and host operators update by changing the pinned image digest and restarting on the **same
+volumes**. Take a host snapshot of the workspace volumes first. Replace the container using the
+new digest and the same mounts/environment from Run, or set `AUTOMAGIK_SERVER_IMAGE` to the new
+digest for both Compose services and recreate them. Do not remove the data volumes or move the
+profile aside for a normal update.
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate up -d
+docker compose -f server/compose.gate.yml --profile gate exec gate \
+  /nodejs/bin/node /opt/automagik/healthcheck.mjs --json
+```
+
+For the single-container form, read the same report with:
+
+```sh
+docker exec automagik /nodejs/bin/node /opt/automagik/healthcheck.mjs --json
+```
+
+At seeding, `automagik-server-profile` records the image release and a SHA-256 of the exact seeded
+`package.json`. A newer image updates the Bot team, welcome and ACP only while that hash still
+matches. Old volumes without the structured marker are adopted only when the entire canonical
+package manifest matches the known image seed shape. The manifest identifies that seed even
+when installed plugins are missing or mixed; corruption never becomes an owner-managed exception.
+Extra fields, changed dependencies or other manifest edits opt out. Owner-managed profiles are
+left alone and identified in both startup logs and the report. Settings such as
+`cordis.patch.yml` survive an automatic update.
+
+Image preparation holds a kernel file lock on the DSH volume across recovery, first seeding
+and the complete update. Concurrent starts sharing that volume wait up to 180 seconds, then
+read the completed profile instead of repeating the install. Failure to acquire the lock stops
+startup. The private `.automagik-image-follow.lock` file stays in place; the operating system
+releases its lease when the holder exits, including after a crash. Do not delete the lock file
+while containers are using the volume.
+
+Before installing, the image saves the complete old profile, including its package manifest,
+lock and installed dependencies, under `/data/dsh/backups/<UTC>/automagik-web`. Installation runs
+in a separate staging profile through `dsh plugin install --offline --frozen-lockfile --prod
+--ignore-scripts`. Its local tarballs are materialized from the image's inspected, unpacked
+plugin files, and transitive dependencies come from its pruned offline store. No runtime release
+download or registry access is needed; the image still ships no archive that bypasses the
+secrecy scan. All three installed versions must verify before the staged profile replaces the
+old one. A failed attempt leaves the old profile running and reports `update-rolled-back` with
+an unhealthy result, so a keeper can distinguish rollback from a successful update.
+
+Equal or older releases never downgrade installed plugins. **Going back requires restoring the
+host snapshot**, including matching image/data state: plugin migrations are forward only.
+Changing to an older digest alone leaves newer plugins in place and reports `newer-than-image`.
+The profile backup is an install recovery copy, not a substitute for the host's data snapshot.
 
 The first launch URL, token included, is written to `/data/dsh/launch-url` (`0600`) and printed
 redacted in the log:
@@ -136,6 +192,21 @@ redacted in the log:
 ```sh
 docker exec automagik cat /data/dsh/launch-url
 ```
+
+## Configuration
+
+`AUTOMAGIK_PUBLIC_URL` optionally names the public HTTPS URL for a single-container run without
+the gate, served by your tunnel or reverse proxy, for example `https://example.invalid/`. Pass it with
+`--env AUTOMAGIK_PUBLIC_URL=https://example.invalid/` in the `docker run` command above.
+The entrypoint passes `--public-url <url>` and `--trusted-host <host[:port]>` to dsh, preserving
+an explicit non-default port. The proxy must reach the loopback listener and provide HTTPS;
+this setting keeps dsh bound to `127.0.0.1:3081` and keeps its authentication enabled.
+
+When unset, startup is unchanged. An empty or invalid value stops startup with a message
+naming `AUTOMAGIK_PUBLIC_URL`. Use an absolute HTTPS URL with a host, optionally a path prefix
+for a proxy that strips that prefix, and no credentials, query, fragment, whitespace or
+backslashes. The advertised launch URL, including its token, is still saved only in
+`/data/dsh/launch-url` and redacted in logs.
 
 ### Incus
 
@@ -218,6 +289,16 @@ the row says RSS; anon and file are the 5-minute split.
 The **350 MB unpacked target is not reachable** (546,556,270 bytes, 521.24 MiB across layers).
 The **350 MB compressed target is met** (176.7 MiB).
 
+The 350 MB goal is therefore the **compressed** size, the bytes a pull fetches. As an unpacked
+size it is not a trim goal any more: no small cut closes the gap. The office stack
+(`@deepseek-ai/libreoffice-kit-wasm`, 152,349,402 bytes, 145.3 MiB) is the only large
+discretionary piece, and the flattened rootfs without it is still 371.2 MiB (389.3 MB). Getting
+under 350 MB unpacked would also mean dropping the shell tools Bots use (bash, git, ripgrep and
+their libraries, 48.3 MiB), so it removes features rather than waste. A smaller unpacked image
+is a product decision (for example office fetched or run on demand), not image work to schedule
+here; it and the first-minute memory peak are tracked in
+[#638](https://github.com/automagik-si/automagik/issues/638).
+
 ## Health
 
 ```sh
@@ -226,9 +307,24 @@ docker exec automagik /nodejs/bin/node /opt/automagik/healthcheck.mjs   # prints
 docker logs automagik | grep 'startup:'
 ```
 
-**Only `401` is healthy**: the auth fence is up. A `200` means the fence answered without a
-session, so it fails; no answer prints `000` and fails. The check is Node's `http`, not curl. The
-entrypoint logs `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)`.
+**Only `401` can be healthy**: a `200` or no answer fails. The compact form prints the status
+(`000` for no answer), and exits nonzero if the profile does not match the image and is not
+explicitly owner-managed. In gate mode, both DSH and the main gate must answer `401`; a gate
+that is up cannot conceal a stopped DSH. The check uses Node's `http`, not curl.
+
+`healthcheck.mjs --json` gives keepers a versioned report:
+
+| Field | Meaning |
+|---|---|
+| `schemaVersion` | Report format, currently `1` |
+| `image.version`, `image.revision` | The image's plugin release and build commit |
+| `plugins` | Actual installed version of each of the three plugins; `null` when unavailable |
+| `followsImage`, `ownerManaged`, `reason` | Whether the seed matches the image, whether the owner opted out, and a fixed reason such as `matching-image`, `owner-managed`, `update-rolled-back`, `newer-than-image` or `missing-plugins` |
+| `dsh`, `gate` | Listener availability and HTTP status; `gate.enabled` says whether it is required |
+| `fence`, `healthy` | Fence status and overall result; exit `0` only for healthy fences plus matching or owner-managed plugins |
+
+No launch URL, token, model key, raw installer diagnostics or home path is included. The startup
+log still names the redacted fence: `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)`.
 
 ## Secrecy gate
 
@@ -252,7 +348,9 @@ binary's `/home/iojs` is excused only when that binary's `sha256sum` matches the
 workflow lists the entries used and reports a stale entry.
 
 The image is shrunk before the scan: third-party test, example and docs folders, non-Linux
-prebuilds and the profile's `vendor/*.tgz` install inputs are pruned (`assemble.mjs`), and the
+prebuilds and the profile's `vendor/*.tgz` install inputs are pruned (`assemble.mjs`). The offline
+store contains only individually hashed files retained in the inspected profile; local plugin
+archives are generated in the writable staging profile at update time. The
 `tools` stage copies the distroless rootfs, strips `usr/share/doc`, `man`, `info` and `lintian`
 there with coreutils, and the final `scratch` copies that cleaned rootfs. There is no `rm` in
 the runtime image. The `archive` rule never allows an archive that is left.
@@ -278,18 +376,24 @@ node server/secrecy.mjs --rootfs /tmp/rootfs --inventory secrecy
 | `assemble.mjs` | builder stage: runtime, release tarballs, profile, prune |
 | `fetch-plugins.mjs` | downloads and verifies the pinned release's tarballs |
 | `entrypoint.mjs`, `lib.mjs` | seed `/data`, key file, pnpm store, dsh, redacted log |
-| `healthcheck.mjs` | the Docker health check |
+| `profile-follow.mjs`, `profile-state.mjs` | ownership, staged offline update, backup and live version state |
+| `plugin-payload.mjs`, `offline-store.mjs` | local install inputs from scanned files; build-only dependency-cache preparation |
+| `healthcheck.mjs` | compact Docker health check and keeper JSON report |
 | `secrecy.mjs`, `secrecy-allowlist.json` | pre-push scan: rootfs extraction, inventory, rules and the exact reviewed exceptions |
 | `passwd` | the image's account record (no `/home/<user>`; `automagik` is uid 1000) |
 | `bin/dsh`, `bin/pnpm` | the image's pinned commands for `docker exec` |
 | `profile/` | the seed profile: `package.json`, `cordis.patch.yml`, `pnpm-workspace.yaml` |
-| `build.mjs`, `smoke.mjs`, `test/` | build, end-to-end smoke, unit tests |
+| `build.mjs`, `smoke.mjs`, `follow-smoke.mjs`, `test/` | build, fresh/restart and older-volume smokes, unit tests |
 
 ## Tests
 
 ```sh
+bun install --cwd server --frozen-lockfile --ignore-scripts --linker hoisted
 node --test 'server/test/*.test.mjs'
 ```
+
+The Compose contract test needs the Docker Compose CLI; `compose config` parses the topology
+without starting containers or requiring a running Docker daemon.
 
 The unit tests cover the token redaction, the startup-line match, the private-key rule, the
 first-start-only seed, the pnpm-store pin, the tarball verification, the third-party prune, and
@@ -300,3 +404,261 @@ line and a `Proc-Type`/`DEK-Info` header are, that a private-key entry is allowe
 gnutls library, that the Node build account is excused only for the pinned binary hash, the exact
 allowlist, and that the image's own redaction regex is not mistaken for a token. The smoke is
 the real check of the image; the workflow runs the scan on the real rootfs before pushing.
+
+## Gate foundation (C2.1, #907)
+
+The image also carries `gate-entrypoint.mjs`, a separate plain Node process. It is disabled by
+default. When enabled, it uses the self-hosted claim and passkeys below, or the optional Access
+mode. Cloud workspace tokens (#909) are a later delivery. The single-container run above still works.
+
+`compose.gate.yml` describes the opt-in two-container topology. Set `AUTOMAGIK_SERVER_IMAGE`
+to the same reviewed digest for both services, `AUTOMAGIK_GATE_ENABLED=1` and
+`AUTOMAGIK_GATE_ORIGIN` to the exact public origin (`https://{instance-host}` or
+`http://localhost:{port}`, with placeholders replaced locally), then use Docker Compose's
+`--profile gate`. The tunnel connector belongs in the `dsh` service's network namespace
+(`network_mode: service:dsh` for another Compose service) and targets `http://127.0.0.1:3082`,
+the gate's loopback listener. No port is published; keep this topology off host networking.
+
+The `dsh` service in `compose.gate.yml` receives no `AUTOMAGIK_PUBLIC_URL` or trusted-host
+setting. `AUTOMAGIK_PUBLIC_URL` is only for the single-container run without the gate above.
+DSH's API/connection routes therefore refuse public `Host` headers with `403`: a tunnel
+misrouted to DSH on port 3081 fails at that fence. The gate sends DSH its loopback Host for
+legitimate traffic. Point the tunnel at the gate on port 3082 and keep DSH's public Host
+untrusted.
+
+Only the network namespace is shared. The gate has its own `gate-data` volume at `/data`,
+never mounted into DSH; it reads `dsh-data` at `/dsh:ro` for the launch credential. It has no
+model key. With Access unset it connects only to the fixed loopback DSH listener and never
+follows a launch file's destination or any upstream redirect. Tests use temporary stores and
+listeners; they do not touch a running installation.
+
+Workspace HTTP requests and every WebSocket upgrade need a gate session; otherwise they get
+`401`, including static assets, `/connect` and unknown paths. Only the sign-in ceremonies below
+can create a session. The health probe
+still expects `401` (at the gate port when enabled). An exact Host, origin including port, and
+same-origin browser markers are checked. Mutations and WebSockets require an Origin. Forwarded
+headers cannot override that decision: TLS termination and the public origin are operator
+configuration, never browser assertions. Self-hosted passkeys require HTTPS or HTTP localhost,
+with the RP ID and exact origin pinned in the owner's authentication record.
+
+The gate exchanges DSH's launch token server-side for its browser owner credential. That
+credential admits DSH's HTTP API and WebSocket owner peer too; it stays in gate memory and is
+never sent as a browser cookie. Browser credentials and identity headers are stripped on the
+upstream hop; DSH's `Set-Cookie` is stripped on the return. A DSH `401` clears and re-mints the
+cached credential from the launch file for the next request, including after a DSH restart.
+The failed request is returned as-is: bodies are never automatically replayed. A browser launch
+token URL and `/connect` cannot establish or replace a gate session.
+
+The local owner has `{version: 1, local_id, instance_id}` and, for passkeys, an `auth` record in
+`/data/owner.json` (`0600`). Both ids are random UUIDs, independent of the host. The first valid
+claim creates the owner exclusively; startup does not create one. Missing, malformed and newer records never
+replace an existing owner; unsupported versions stop startup. Linked records also fail closed
+until linking is implemented. Sessions and rotated-secret hashes are atomic `0600` JSON in the
+gate store, survive restart, and are not written to DSH's volume. No raw session secret is saved.
+
+Sessions have a 12-hour sliding idle limit and `__Host-automagik-session` cookies: `Path=/`,
+`HttpOnly`, `Secure`, `SameSite=Lax`, no Domain. Secure stays set on HTTP localhost too, as the
+`__Host-` prefix requires. A browser must renew before cookie expiry:
+`POST /_gate/session/renew` rotates the secret and refreshes its lifetime. Reusing an old secret
+revokes the entire family, including its open WebSockets. Idle expiry and sign out also close
+open WebSockets. `GET /_gate/sessions` lists session ids and times without secrets and includes
+this settings notice: **On loopback, another local service can receive your cookie. A local
+process holding it can replay it with any Origin; origin binding does not prevent this. Local
+processes are inside the host trust boundary.** `POST /_gate/sign-out-everywhere` revokes all
+families and clears the cookie. All three routes require a session; POST requires the pinned
+Origin. Every passkey or recovery change revokes all families through that same seam.
+
+The gate makes the four-field principal from the owner record, following
+[contracts v1](../docs/cloud/contracts-v1.md). Its upstream envelope is base64url JSON in
+`X-Automagik-Principal`, replaced rather than forwarded from the browser. This is gate-produced
+metadata on the loopback hop: DSH 0.2.2-rc.1 does not interpret that header as its caller
+principal. Its own routes continue to use DSH's owner peer. This is the single-human limit in
+RFC 0024 (b), (c), (f); a Bot that reads the launch credential can impersonate the owner on
+loopback. It is not the unforgeable channel or role filtering needed for other people to join.
+
+The gate tests cover unauthenticated HTTP/upgrade paths, exact origin and port, cookie flags,
+rotation/replay/idle/restart, the downgrade refusal, credential stripping, the principal
+upstream envelope, DSH restart recovery, and live-socket revocation. The container smoke also
+checks the two-volume topology and gate `401`; CI builds, smokes and scans the image as before.
+
+## Self-hosted claim, passkeys and recovery (#908)
+
+Leave all three `AUTOMAGIK_GATE_ACCESS_*` settings unset to use this mode. It makes no outside
+authentication connection. The verifier is the maintained, MIT-licensed
+[`@simplewebauthn/server` 14.1.0](https://github.com/MasterKale/SimpleWebAuthn/releases/tag/v14.1.0),
+pinned exactly with its transitive Bun lock. It supports the image's Node 24 runtime. Registrations
+use ES256, user verification and no attestation; there is no metadata-service or certificate fetch.
+
+Set `AUTOMAGIK_GATE_ORIGIN` before enrolling: either `http://localhost:{port}` or a stable
+`https://{instance-host}` origin, with an optional explicit non-default port. Use placeholders
+only in examples; replace them on your host. IP origins are refused with an explanation: use
+localhost through an SSH tunnel, or a stable HTTPS name. Host and Origin must match exactly,
+including the port; forwarded headers cannot change them.
+
+Choose `AUTOMAGIK_GATE_CLAIM=local` (the default) or `remote` before starting the Compose topology.
+A loopback bind alone does not keep a same-namespace tunnel connector from forwarding remote
+browsers. These modes therefore control which listener serves the claim:
+
+| Mode | Claim boundary |
+|---|---|
+| `local` | Claim page/API only on the separate `127.0.0.1:3083` bootstrap listener. `AUTOMAGIK_GATE_BOOTSTRAP_PORT` can change it, but it must differ from DSH and the main gate port. Main port 3082 returns `404` for claims, including requests with the correct code. **Never forward the bootstrap listener through a public or tailnet connector.** Reach it only from the operator's host or private SSH tunnel |
+| `remote` | Claim page/API on main port 3082. The 128-bit code, delivered to the owner out of band, is the claim barrier. Choose this only when that delivery is trusted. Up to 64 wrong attempts can wait 250 ms outside the state queue; excess wrong attempts get `429` immediately without a timer. Disconnecting cancels the delay and releases its slot. The code is checked first, so a correct code always bypasses this limit and delay. Logs contain a failure count, never the code |
+
+Until claimed, the main listener still binds only `127.0.0.1`, even with
+`AUTOMAGIK_GATE_HOST=0.0.0.0`. After claiming, the default remains loopback, which is correct for
+a tunnel connector sharing DSH's network namespace and forwarding **only main port 3082**. A host
+deployment can use the wildcard setting after claiming; keep DSH on loopback and TLS in front
+of the gate. The local bootstrap listener always stays on loopback and supports the owner's
+authenticated follow-up steps, including adding the offered second passkey.
+
+On the host, retrieve the code through the private gate container, outside captured logs:
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate exec gate \
+  /nodejs/bin/node -e 'process.stdout.write(require("fs").readFileSync("/data/claim-code","utf8"))'
+```
+
+This explicit host read is the only image bootstrap output. The image itself never prints the
+code, even with a terminal attached. It writes `/data/claim-code` as `0600`; `/data/claim-state.json`
+holds only its hash and expiry. Outside the image, an interactive gate writes to its host console
+instead of making that plaintext file. The code is 128 random bits, works once for 15 minutes,
+and is compared in constant time. HTTP never returns it; paste it only into the claim form,
+never a URL. Local claims and recovery allow five operations per minute, with a bounded
+challenge store. Remote claims use the per-attempt delay above instead of a drainable bucket.
+
+In local mode, reach `/_gate/claim` at the configured browser origin while routing your private
+host connection to bootstrap port 3083. For localhost, an operator-only SSH tunnel maps the
+configured browser port to that bootstrap port inside the gate's namespace. For a stable HTTPS
+name, use a host-local TLS proxy targeting the bootstrap listener and local name resolution;
+the public/tailnet connector must continue targeting only main port 3082, never bootstrap.
+In remote mode, the owner's browser reaches `/_gate/claim` through the normal main-port connector.
+In both modes the browser must see the exact configured origin, including its port, that will
+be used afterwards. Claim with a passkey, save the eight recovery codes shown
+once, and use the immediate offer to add a second passkey. Two simultaneous claims cannot replace
+the winner. Claim-code files are removed on success. DSH's launch URL never signs a browser into
+the gate, including after the claim.
+
+Every unauthenticated claim, sign-in or recovery ceremony also belongs to the browser that
+started it. Options create a server-side pre-authentication session with a five-minute
+`__Host-automagik-preauth` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, no Domain).
+Verification requires that same browser cookie as well as the one-time, expiring challenge.
+Copying a ceremony id or response to another browser cannot complete it. Pre-authentication
+credentials are never forwarded to DSH; a completed sign-in issues the ordinary gate session.
+
+Afterwards use `/_gate/sign-in` and manage passkeys at `/_gate/settings`. Adding or removing a
+passkey or replacing recovery codes ends **every** session, including open WebSockets; sign in
+again with a registered passkey. At least one passkey must remain. Each recovery code is stored
+only as an independently salted scrypt hash (`N=16384`, `r=8`, `p=1`). `/_gate/recovery` consumes
+one code, logs only that recovery happened and a generated request id, revokes all sessions, and
+authorizes only registering a new passkey. Sign in normally afterwards. No email reset exists.
+
+An expired claim code can be replaced only by restarting an unclaimed gate or by this host command:
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate exec gate \
+  /nodejs/bin/node /opt/automagik/gate-control.mjs renew-claim
+```
+
+For a lost passkey and no recovery codes, the host operator can start a fresh claim:
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate exec gate \
+  /nodejs/bin/node /opt/automagik/gate-control.mjs reset
+```
+
+Both commands use `/data/control.sock` (`0600`) inside the gate container, never HTTP. Reset
+removes all passkeys, recovery hashes and sessions, closes connections and returns the listener
+to loopback before reporting success. It preserves the instance and local owner ids. Read the
+new private code and claim again in the configured mode: local claims return only on the private
+bootstrap listener; remote claims return on the main listener with the code barrier and delay.
+A changed origin also stays on loopback: enrol the new origin
+through recovery, which replaces the old origin's keys, or use host reset. It never silently
+reopens the first claim. Unsupported newer authentication records stop startup without rewriting
+them. An Access-created owner without passkeys needs an explicit host reset before switching to
+self-hosted enrolment.
+
+The gate protects against the network, not the instance's own Bots. Keep its store and host
+control out of DSH's container, as Compose does. Bots can still reach DSH's own launch credential
+on loopback. Settings also state the local-cookie limit: another localhost service can receive
+and replay a cookie regardless of its port; local processes belong to the host trust boundary.
+
+The tests use fresh keys in a software authenticator against the real WebAuthn verifier. They
+cover wrong RP/origin/port/challenge/signature, verification flags, replay, expiry, concurrent
+claims, recovery, revocation, the private reset socket and actual listener addresses. The image
+smoke checks private claim output and host control in the built runtime.
+
+## Interim Cloudflare Access sign-in
+
+This optional mode gives the first owner a browser sign-in before workspace tokens (#909).
+Configure the Access application and a policy allowing **only the owner's exact e-mail** on the
+public name **before adding a tunnel route**. Point that route at the gate, never DSH, in its
+shared network namespace. Keep the DSH listener off public ingress. The existing
+`AUTOMAGIK_GATE_ENABLED=1` and exact HTTPS `AUTOMAGIK_GATE_ORIGIN` still apply.
+
+Set these non-secret values on the gate container, using your own values on the host:
+
+| Setting | Value |
+|---|---|
+| `AUTOMAGIK_GATE_ACCESS_TEAM_DOMAIN` | `{team}.cloudflareaccess.com`, host only, without a scheme, port or path |
+| `AUTOMAGIK_GATE_ACCESS_AUD` | `{application-audience-tag}` |
+| `AUTOMAGIK_GATE_ACCESS_EMAILS` | `{owner-email}`, or comma-separated exact addresses; trimmed and case-insensitive |
+
+All three unset selects the self-hosted claim/passkey mode and opens no Access connection.
+All three configured selects Access exclusively: no claim secret, passkey routes or host reset
+socket is created. Existing passkeys remain stored but are not an alternate sign-in in Access mode.
+Partial configuration refuses startup and names the missing settings. Every allowlisted address
+gets the same local owner principal and full owner privileges: this is not a member/guest mode.
+The first verified sign-in creates the random local owner record if absent; existing, malformed
+or newer owner records are never overwritten. Workspace tokens will replace this interim mode.
+
+The gate verifies only `Cf-Access-Jwt-Assertion`, never an e-mail header on its own, and exchanges
+a valid assertion for the normal gate cookie. DSH credentials remain server-side. The verifier
+uses the configured team's HTTPS certs endpoint and RS256, exact issuer, application audience,
+timestamps and the exact e-mail allowlist. It never takes a key location from the token.
+[Cloudflare's validation contract](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)
+describes the assertion header and certs endpoint. Tokens belong only in the assertion header,
+never in a URL or log. Authentication failures log only a status and a generated request id.
+
+Certs are fetched on demand, cached for at most five minutes, and refreshed on an unknown key
+id at most once every 30 seconds. A fetch has a five-second deadline and a bounded response
+size. A failed required refresh clears the cache and denies sign-in; stale keys are never used
+as an outage fallback. The verifier permits 30 seconds of clock skew and checks time again
+after the key fetch. A valid cached key remains usable until its bounded cache expiry.
+
+Access sign-in sets the existing `__Host-automagik-session` cookie and uses the same idle,
+rotation and replay rules. A stale or replayed gate cookie is refused even when Access supplies
+an assertion; it never silently replaces a revoked family. Signing out ends gate sessions;
+Access can still authenticate a new session after that cookie is cleared. End the Access
+session too when signing out of the identity provider. Gate sessions retain the normal 12-hour
+idle limit; Access policy enforcement at public ingress remains the operator's responsibility
+until #909 supplies workspace-token revocation.
+
+Access assertions are exchanged only on HTTP requests. WebSocket upgrades require an existing
+gate session cookie and never create an owner, session or browser cookie. Complete HTTP sign-in
+before opening a WebSocket.
+
+The exact Host and Origin checks still apply. The signed assertion may establish the first
+session on a safe top-level GET/HEAD navigation back from Access; cross-site mutations and
+WebSockets stay refused. Gate management paths use the literal `/_gate/` prefix. Alternate
+encoded, backslash, duplicate-slash or dot-segment spellings that enter that namespace get
+`400` before sign-in in both modes, including WebSocket upgrades. Ordinary upstream paths
+retain their raw spelling.
+
+### Agent MCP access
+
+A space with the Bot plugin exposes one separate agent entry through the gate:
+`https://<SPACE_ORIGIN>/api/omni-mcp`. The owner creates a named bearer token in
+**Settings → Agent access**. This exact HTTP path forwards only to the plugin's MCP handler,
+which checks the token on every call and audits reads, writes and authentication refusals.
+It supports MCP Streamable HTTP clients without a browser session or an Access exchange.
+
+The gate pins Host and Origin, rejects cross-site requests, strips caller cookies and identity
+headers, and supplies its own DSH credential only for that fixed upstream path. The plugin
+still refuses missing, wrong or revoked agent tokens; a browser cookie alone never admits MCP.
+Queries, alternate spellings and upgrades retain normal session authentication, as do all other
+web routes. Gate-level Host/origin refusals use the gate audit; calls reaching the plugin appear
+in the owner's activity list. No extra container port needs publishing.
+
+For direct private-network access, the plugin's `agentAccessHost` and `agentAccessPort` configure
+its separate listener; its defaults remain loopback and an OS-selected port. See the Bot
+plugin's [MCP setup and tool reference](../apps/bots-dsh/README.md#agent-access-mcp).

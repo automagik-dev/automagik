@@ -90,19 +90,22 @@
  	}
  	/**
  	* Apply `task` to every Session directory through the shared listing
-@@ -3066,21 +3117,42 @@
+@@ -3066,21 +3117,47 @@
  	* traversal after the directories of the projects before it.
  	* @param task - per-directory operation; must not wait on the listing limiter.
  	* @param signal - optional cancellation for directory listings.
 +	* @param options - `tolerant` (the listing only, #861): a project or directory that is gone or
 +	* not readable (ENOENT, ENOTDIR, EACCES, EPERM) is reported and skipped, and a flat session file
-+	* is reported instead of failing its project; `skipFlatFiles`: only the latter. The default is
-+	* strict, as upstream; every other failure follows the order above.
++	* is reported instead of failing its project; `skipFlatFiles`: only the latter; `onUnreadable`
++	* (the root encoding check, #885): the same gone or unreadable project or directory is reported
++	* and skipped, and the callback hears of each one. The default is strict, as upstream; every
++	* other failure follows the order above.
  	* @returns per-directory results in traversal order.
  	*/
 -	async mapSessionDirectories(task, signal) {
 +	async mapSessionDirectories(task, signal, options) {
 +		const tolerant = options?.tolerant === true;
++		const skipUnreadable = tolerant || typeof options?.onUnreadable === "function";
  		const limit = this.listLimit;
 -		const projects = await settleLimited(limit, await limit(() => this.listProjectDirs(signal)), (project) => this.listSessionDirs(project, signal));
 +		const projectPaths = await limit(() => this.listProjectDirs(signal));
@@ -112,9 +115,10 @@
 -		for (const outcome of projects) {
 +		for (const [index, outcome] of projects.entries()) {
  			if (outcome.status === "rejected") {
-+				if (tolerant && isSkippableListingError(outcome.reason)) {
++				if (skipUnreadable && isSkippableListingError(outcome.reason)) {
 +					signal?.throwIfAborted();
 +					this.warnSkipped("session project", projectPaths[index], outcome.reason);
++					options?.onUnreadable?.(projectPaths[index]);
 +					continue;
 +				}
  				projectFailure = outcome;
@@ -126,9 +130,10 @@
 +		const settled = await settleLimited(limit, dirs, task);
 +		const results = [];
 +		for (const [index, outcome] of settled.entries()) {
-+			if (outcome.status === "rejected" && tolerant && isSkippableListingError(outcome.reason)) {
++			if (outcome.status === "rejected" && skipUnreadable && isSkippableListingError(outcome.reason)) {
 +				signal?.throwIfAborted();
 +				this.warnSkipped("session folder", dirs[index], outcome.reason);
++				options?.onUnreadable?.(dirs[index]);
 +				continue;
 +			}
 +			if (outcome.status === "rejected") throw outcome.reason;
@@ -137,7 +142,7 @@
  		if (projectFailure !== void 0) throw projectFailure.reason;
  		return results;
  	}
-@@ -3107,11 +3179,38 @@
+@@ -3107,11 +3184,38 @@
  		signal?.throwIfAborted();
  		return hash.digest("hex");
  	}
@@ -178,7 +183,7 @@
  		const headers = await settleLimited(this.listLimit, generations, async (selected) => {
  			signal?.throwIfAborted();
  			try {
-@@ -3120,21 +3219,34 @@
+@@ -3120,21 +3224,34 @@
  					metadata: await this.readGenerationHeader(selected, void 0, signal)
  				};
  			} catch (error) {
@@ -221,7 +226,7 @@
  			artifacts.push({
  				...metadata,
  				path: selected.sourcePath,
-@@ -3142,6 +3254,7 @@
+@@ -3142,6 +3259,7 @@
  			});
  		}
  		signal?.throwIfAborted();
@@ -229,7 +234,7 @@
  		return artifacts;
  	}
  	/** Read and translate one selected generation header without inspecting its body. */
-@@ -3523,12 +3636,16 @@
+@@ -3523,12 +3641,16 @@
  		}
  	}
  	/** List session-owned directories and reject the obsolete flat-file layout. */
@@ -248,17 +253,27 @@
  		return entries.filter((entry) => entry.isDirectory()).map((entry) => join(project, entry.name));
  	}
  	/** Reject a root that already belongs to the other physical encoding. */
-@@ -3537,10 +3654,12 @@
+@@ -3537,10 +3659,23 @@
  		return this.rootEncodingCheck;
  	}
  	async checkRootEncoding() {
-+		// Strict (#861): any failure, a session of the other encoding included, still fails the root.
-+		// Only a flat session file is left to the listing to report and skip.
++		// Strict (#861): a session of the other encoding, an unreadable root and every unnamed failure
++		// still fail the root. A flat session file is left to the listing to report and skip. A
++		// project or session folder that is gone or not readable is reported and skipped (#885), as
++		// the listing skips it and an unreadable log: one rule for files and folders. A pass that
++		// skipped a folder proves nothing about it, so it is never cached: the next call checks again,
++		// and a folder that turns readable with the other encoding still fails the root.
++		let unreadable = false;
  		await this.mapSessionDirectories(async (dir) => {
  			const incompatible = await this.findOppositeGenerationInDirectory(dir);
  			if (incompatible !== void 0) throw this.encodingMismatch(incompatible);
--		});
-+		}, void 0, { skipFlatFiles: true });
++		}, void 0, {
++			skipFlatFiles: true,
++			onUnreadable: () => {
++				unreadable = true;
++			}
+ 		});
++		if (unreadable) this.rootEncodingCheck = void 0;
  	}
  	async rejectLegacyFlatArtifact(project, id, signal) {
  		signal?.throwIfAborted();

@@ -92,6 +92,26 @@ export function parseArgs(text) {
   return out;
 }
 
+/** A command's env as one line to edit: KEY=value words; a value with a space or a quote is
+ * double-quoted after the = (NOTE="a b"). */
+export function envText(env) {
+  return Object.entries(env && typeof env === "object" ? env : {})
+    .map(([k, v]) => `${k}=${/^[^\s"'\\]*$/.test(v) ? v : JSON.stringify(String(v))}`).join(" ");
+}
+
+/** envText's line back: { env }, or { problem } naming the first word that is not KEY=value.
+ * Quotes may sit anywhere in a word (NOTE="a b", "NOTE=a b"), as a shell reads them. */
+export function parseEnv(text) {
+  const env = {};
+  for (const [raw] of String(text ?? "").matchAll(/(?:[^\s"']+|"(?:[^"\\]|\\.)*"|'[^']*')+/g)) {
+    const word = raw.replace(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g, (_m, dq, sq) => (dq !== undefined ? dq.replace(/\\(.)/g, "$1") : sq));
+    const at = word.indexOf("=");
+    if (at < 1) return { problem: `ENV: "${word}" is not KEY=value` };
+    env[word.slice(0, at)] = word.slice(at + 1);
+  }
+  return { env };
+}
+
 // An hc terminal address, bare (t3q1) or with its machine (build-box/t9): a t and a digit first,
 // so English words stay out. A name given with hc --name can't be told apart; it isn't caught.
 const ADDRESS = /(?<![\w./-])(?:[a-z0-9][a-z0-9._-]*\/)?t[0-9][0-9a-z]*(?![\w-])/g;

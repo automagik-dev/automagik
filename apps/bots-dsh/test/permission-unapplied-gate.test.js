@@ -19,6 +19,7 @@ const STOCK = {
 }
 const AUTO_SPEC = { sandbox: 'danger-full-access', approval: 'ask' }
 const refused = level => ({ code: 'bot/refused', message: new RegExp(`^The ${level} permission level could not be set on this conversation, so no tool runs here until it is\\.`) })
+const unread = { code: 'bot/refused', message: /^DeepSeek Harness could not read where this conversation comes from while a permission level is not set, so no tool runs here until it can\./ }
 
 const TEAM = {
   version: 1,
@@ -337,4 +338,64 @@ test('a saved level DSH no longer offers does not take the tools away', async (t
   await call('state', {})
   await opens('m1')
   assert.equal(await tool('m1'), 'ran')
+})
+
+test('an error from DSH during a try that fails does not unlock the Session', async (t) => {
+  const { call, service, settle, failing, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
+  await call('state', {})
+  failing.add('g2')
+  await call('update-room', { id: 'r1', permission: WRITE })
+  await settle()
+  await assert.rejects(tool('g2'), refused(WRITE))
+  // DSH's catalog throws once, while the next try is still refused its set: nothing
+  // shows that DSH stopped offering the level, so the Session stays marked.
+  const catalog = service.catalog
+  let threw = 0
+  service.catalog = () => {
+    service.catalog = catalog
+    threw += 1
+    throw new Error('permission: the catalog could not be read')
+  }
+  await assert.rejects(tool('g2'), refused(WRITE))
+  assert.equal(threw, 1, 'the catalog threw during that try')
+  assert.equal(levelOf('g2'), FULL)
+  await assert.rejects(tool('g2'), refused(WRITE), 'and it is still refused afterwards')
+  // Only a set that holds lets it go.
+  failing.clear()
+  assert.equal(await tool('g2'), 'ran')
+  assert.equal(levelOf('g2'), WRITE)
+})
+
+test('a Session whose parents cannot be read is refused while a Session is marked', async (t) => {
+  const { ctx, call, settle, failing, headers, tool } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
+  await call('state', {})
+  const read = ctx.sessions.get
+  const unreadable = () => { throw new Error('sessions: the store could not be read') }
+  // Nothing is marked: the guard looks at no Session, readable or not.
+  ctx.sessions.get = unreadable
+  assert.equal(await tool('child'), 'ran')
+  ctx.sessions.get = read
+  failing.add('g2')
+  await call('update-room', { id: 'r1', permission: WRITE })
+  await settle()
+  headers.child = { origin: 'subagent', parentSession: 'g2' }
+  headers.grandchild = { origin: 'subagent', parentSession: 'child' }
+  await assert.rejects(tool('child'), refused(WRITE))
+  // DSH cannot say whose child a Session is: it may be the marked one's, so it runs no tool.
+  ctx.sessions.get = unreadable
+  await assert.rejects(tool('child'), unread)
+  await assert.rejects(tool('grandchild', { header: headers.grandchild }), unread, 'a parent that cannot be read, too')
+  await assert.rejects(tool('elsewhere'), unread, 'and a Session the team does not know')
+  // The marked Session needs no read, and neither does a child that names it.
+  await assert.rejects(tool('g2'), refused(WRITE))
+  await assert.rejects(tool('child', { header: headers.child }), refused(WRITE))
+  // Readable again: only the marked Session's children are refused.
+  ctx.sessions.get = read
+  await assert.rejects(tool('grandchild'), refused(WRITE))
+  assert.equal(await tool('elsewhere'), 'ran')
+  // And once the level holds, a read that fails refuses nothing.
+  failing.clear()
+  assert.equal(await tool('g2'), 'ran')
+  ctx.sessions.get = unreadable
+  assert.equal(await tool('child'), 'ran')
 })

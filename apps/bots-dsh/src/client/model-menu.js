@@ -1,12 +1,14 @@
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { currentPart } from './text.js'
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, SlidersIcon } from './icons.js'
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ConnectorIcon, SlidersIcon } from './icons.js'
 import { BotMark } from './mark.js'
 import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, spring, useLinger, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
 import { HostModelMenu } from './host-model-menu.js'
+import { AgentMark, DshMarkIcon, HerdrMarkIcon } from './marks.js'
+import { crossesHarness, routeOf, selectorRouteOf } from '../shared/routes.js'
 
 const MENU_EXIT_MS = 120
 
@@ -181,71 +183,254 @@ export function offeredModels(models, current) {
 const offModel = model => model.missing === true || unavailableModel(model)
 const Tick = ({ on }) => h('span', { className: 'bt-model-tick', 'aria-hidden': true }, on ? h(CheckIcon) : null)
 
-// The steps of the model menu, one at a time: `{step: 'connections'}`, then
-// `{step: 'models', provider}` (one connection's models), then `{step: 'levels', provider, ref}`
-// (one model's thinking levels).
-export const MENU_ROOT = Object.freeze({ step: 'connections' })
+// The selector's three routes, in the order they are offered (issue #1016). Native is DSH's
+// own loop; ACP is every agent acp-dsh serves; Herdr is the agent's own terminal on
+// herdr-core, which #1007 wires. The names are UI words; their details say what each means.
+export const ROUTE_ORDER = Object.freeze(['native', 'acp', 'herdr'])
+const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr' })
+const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon })
+const routeName = route => t(ROUTE_NAME[route] ?? route)
+const routeDetail = (route) => {
+  switch (route) {
+    case 'acp': return t('Agent Client Protocol')
+    case 'herdr': return t('herdr-core terminal')
+    default: return t('DSH harness')
+  }
+}
 
-// The rows a step shows (model-menu cascade). `current` is the Bot's model, `picked` its level
-// when that model serves it, `levelName` that level's name for the current connection's line.
-// `go(view)` opens another step; `onModel(model)` and `onLevel(model, effort)` pick.
-export function ModelSteps({ roster, view, current, picked, levelName, go, onModel, onLevel, onManage }) {
-  const groups = groupModels(offeredModels(roster.models, current))
-  const group = view.step === 'connections' ? undefined : groups.find(([, list]) => groupKey(list[0]) === view.provider)
-  const model = view.step === 'levels' ? group?.[1].find(entry => entry.ref === view.ref) : undefined
-  const levels = model === undefined ? [] : effortRows(knownEfforts(model))
-  if (model !== undefined && levels.length > 0) {
-    const label = group[0]
-    const on = model.ref === current
-    return h('div', { key: `levels:${model.ref}`, className: 'bt-model-step', role: 'group', 'aria-label': t('Thinking level') },
-      h('button', { type: 'button', role: 'menuitem', className: 'bt-model-back', 'aria-label': t('Back to {connection}', { connection: label }), onClick: () => go({ step: 'models', provider: view.provider }) },
-        h(ChevronLeftIcon), h('span', { className: 'bt-menu-label' }, modelLabel(model))),
-      h('div', { className: 'bt-model-group', role: 'presentation' }, t('Thinking level')),
-      levels.map((row) => {
-        const checked = on && (row.effort ?? null) === (picked ?? null)
-        return h('button', { key: row.effort ?? 'default', type: 'button', role: 'menuitemradio', 'aria-checked': checked, onClick: () => onLevel(model, row.effort) },
-          h('span', { className: 'bt-menu-label' }, row.label), h(Tick, { on: checked }))
-      }))
+// The ACP agents in the order the owner names them; any agent acp-dsh adds later follows,
+// alphabetical, without a change here.
+const ACP_ORDER = Object.freeze(['acp-claude', 'acp-codex', 'acp-hermes', 'acp-antigravity', 'acp-omp'])
+const ACP_NAME = Object.freeze({
+  'acp-claude': 'Claude Code', 'acp-codex': 'Codex', 'acp-hermes': 'Hermes',
+  'acp-antigravity': 'Antigravity', 'acp-omp': 'omp',
+})
+const providerOf = model => model?.provider ?? String(model?.ref ?? '').split('/')[0]
+const routeOfProvider = provider => selectorRouteOf(provider)
+
+// What the menu knows about a model ref: its route, its agent and the connection's name. A
+// model no longer served still has a route, read from its provider id.
+export function modelRoute(roster, ref) {
+  const served = servedOf(roster, ref)
+  const provider = providerOf(served ?? { ref })
+  const route = served?.route?.connectedBy === 'acp' ? 'acp' : routeOfProvider(provider)
+  return {
+    provider,
+    route,
+    harness: served?.route?.harness ?? routeOf(provider).harness,
+    connection: served ? connectionOf(served) : provider,
   }
-  if (group !== undefined) {
-    const [label, list] = group
-    return h('div', { key: `models:${view.provider}`, className: 'bt-model-step', role: 'group', 'aria-label': label },
-      h('button', { type: 'button', role: 'menuitem', className: 'bt-model-back', 'aria-label': t('Back to connections'), onClick: () => go(MENU_ROOT) },
-        h(ChevronLeftIcon), h('span', { className: 'bt-menu-label' }, label)),
+}
+
+// The routes a Bot may use (RFC 0030 Q13, filled in by the plugin's `routePolicy`): absent,
+// all three; otherwise the kind's list, else `default`. No bot type is hard-coded here.
+// The first step of the menu: the route. Every open starts here, so the harness is the first
+// thing the person sees (issue #1016).
+export const MENU_ROOT = Object.freeze({ step: 'routes' })
+
+export function routesFor(bot, roster) {
+  const policy = roster?.routePolicy
+  if (policy === null || typeof policy !== 'object') return [...ROUTE_ORDER]
+  const named = policy[bot?.kind ?? 'automagik'] ?? policy.default
+  if (!Array.isArray(named)) return [...ROUTE_ORDER]
+  return ROUTE_ORDER.filter(route => named.includes(route))
+}
+
+// The agents the owner names, with the models the ACP layer will serve them once #973 lands.
+// They are shown as unavailable until acp-dsh actually lists them, so the route names every
+// supported agent instead of hiding three behind a plugin version; a catalog row always wins.
+const ACP_FALLBACK = Object.freeze({
+  'acp-claude': Object.freeze(['default', 'opus', 'sonnet', 'haiku']),
+  'acp-codex': Object.freeze(['default']),
+  'acp-hermes': Object.freeze(['default']),
+  'acp-antigravity': Object.freeze(['default']),
+  'acp-omp': Object.freeze(['default']),
+})
+const pendingAgent = (provider) => ({
+  provider,
+  name: ACP_NAME[provider] ?? provider,
+  pending: true,
+  models: (ACP_FALLBACK[provider] ?? []).map(id => ({ id, pending: true })),
+})
+
+// The ACP agents the host serves, each with its own models. acp-dsh lists an agent only when
+// it is on, so an agent added later appears without a selector change; the named agents it
+// does not serve yet stay listed, marked unavailable, until #973 turns them on.
+export function acpAgents(models) {
+  const groups = new Map()
+  for (const model of models ?? []) {
+    const provider = providerOf(model)
+    if (routeOfProvider(provider) !== 'acp') continue
+    if (!groups.has(provider)) groups.set(provider, [])
+    groups.get(provider).push(model)
+  }
+  const rank = provider => {
+    const at = ACP_ORDER.indexOf(provider)
+    return at === -1 ? ACP_ORDER.length : at
+  }
+  const listed = [...groups].map(([provider, list]) => ({
+    provider,
+    name: list[0]?.providerName ?? ACP_NAME[provider] ?? connectionOf(list[0]),
+    models: list,
+  }))
+  for (const provider of ACP_ORDER) if (!groups.has(provider)) listed.push(pendingAgent(provider))
+  return listed.sort((a, b) => rank(a.provider) - rank(b.provider) || a.name.localeCompare(b.name))
+}
+
+// The Native route's models: every DSH model that can be run on, and one that needs an API
+// key, which the menu marks and offers to add. A retired sign-in route (`covered`) is not a
+// Bot connection, and a superseded model is hidden unless it is the one the Bot is on.
+export function nativeModels(models, current) {
+  const list = (models ?? []).filter(model => routeOfProvider(providerOf(model)) === 'native'
+    && model.covered !== true
+    && (model.superseded !== true || model.ref === current))
+  if (typeof current !== 'string' || !current.includes('/') || list.some(model => model.ref === current)) return list
+  const [provider, ...rest] = current.split('/')
+  return [{ ref: current, provider, name: rest.join('/'), missing: true }, ...list]
+}
+
+// Herdr's agents and their models, from the pack's own table
+// (herdr/mods/am-sidebar/models.js). Herdr cannot run a Bot from this app yet (#1007), so the
+// rows are shown, named and disabled rather than hidden: the owner sees what the route will
+// offer and rules on it at approval.
+const HERDR_AGENTS = Object.freeze([
+  Object.freeze({ id: 'claude', name: 'Claude Code', models: Object.freeze(['default', 'opus', 'sonnet', 'haiku']) }),
+  Object.freeze({ id: 'codex', name: 'Codex', models: Object.freeze(['default']) }),
+  Object.freeze({ id: 'hermes', name: 'Hermes', models: Object.freeze(['default']) }),
+  Object.freeze({ id: 'antigravity', name: 'Antigravity', models: Object.freeze(['default']) }),
+  Object.freeze({ id: 'omp', name: 'omp', models: Object.freeze(['default']) }),
+])
+export function herdrAgents() {
+  return HERDR_AGENTS.map(agent => ({ ...agent, models: agent.models.map(id => ({ id })) }))
+}
+const herdrModelLabel = model => (model.id === 'default' ? t('Default') : model.id.charAt(0).toUpperCase() + model.id.slice(1))
+
+// Why a model cannot run, in the menu's words. Undefined: it can run now.
+export function modelUnavailableText(model) {
+  if (model?.pending === true) return t('Not available yet')
+  if (model?.missing === true) return t('Not available')
+  if (model?.needsKey === true) return t('Needs an API key')
+  if (model?.needsSignIn === true) return t('Needs a sign-in')
+  if (model?.needsAccount === true) return t('Needs the account confirmed')
+  if (model?.covered === true || model?.superseded === true) return t('Not available')
+  return undefined
+}
+
+const RouteMark = ({ route }) => h('span', { className: 'bt-route-icon', 'aria-hidden': true }, h(ROUTE_ICON[route] ?? ConnectorIcon, { size: 16 }))
+const stepBack = (label, onClick) => h('button', { type: 'button', role: 'menuitem', className: 'bt-model-back', 'aria-label': label, onClick },
+  h(ChevronLeftIcon), h('span', { className: 'bt-menu-label' }, label))
+
+// The rows a step shows (model-menu cascade). The first step is the route, then (ACP and
+// Herdr) the agent, then the route's and agent's models, then a model's thinking levels.
+// `current` is the Bot's model, `picked` its level when that model serves it, `levelName`
+// that level's name. `go(view)` opens another step; `onModel(model, route)` and
+// `onLevel(model, effort)` pick; the menu offers the provider's API key where it can.
+export function ModelSteps({ roster, bot, view, current, picked, levelName, go, onModel, onLevel, onManage }) {
+  const models = roster.models ?? []
+  const currentRoute = current === undefined ? undefined : modelRoute(roster, current).route
+  const levelModel = view.step === 'levels' ? models.find(entry => entry.ref === view.ref) : undefined
+  const levels = levelModel === undefined ? [] : effortRows(knownEfforts(levelModel))
+  if (view.step === 'levels' && levelModel !== undefined && levels.length > 0) {
+    const model = levelModel
+      const route = view.route ?? modelRoute(roster, model.ref).route
+      const agent = acpAgents(models).find(entry => entry.provider === model.provider)
+      const label = route === 'native' ? routeName('native') : agent?.name ?? modelRoute(roster, model.ref).connection
+      const on = model.ref === current
+      return h('div', { key: `levels:${model.ref}`, className: 'bt-model-step', role: 'group', 'aria-label': t('Thinking level') },
+        stepBack(t('Back to {agent}', { agent: label }), () => go({ step: 'models', route, ...(model.provider ? { provider: model.provider } : {}) })),
+        h('div', { className: 'bt-model-group', role: 'presentation' }, t('Thinking level')),
+        levels.map((row) => {
+          const checked = on && (row.effort ?? null) === (picked ?? null)
+          return h('button', { key: row.effort ?? 'default', type: 'button', role: 'menuitemradio', 'aria-checked': checked, onClick: () => onLevel(model, row.effort) },
+            h('span', { className: 'bt-menu-label' }, row.label), h(Tick, { on: checked }))
+        }))
+  }
+  if (view.step === 'models' || view.step === 'levels') {
+    const route = view.route ?? routeOfProvider(view.provider)
+    const agent = route === 'acp' ? acpAgents(models).find(entry => entry.provider === view.provider) : undefined
+    const list = route === 'native' ? nativeModels(models, current)
+      : route === 'acp' ? (agent?.models ?? [])
+        : herdrAgents().find(entry => entry.id === view.agent)?.models ?? []
+    const back = route === 'native' ? { label: t('Back to routes'), view: MENU_ROOT } : { label: t('Back to agents'), view: { step: 'agents', route } }
+    const backLabel = route === 'native' ? back.label : t('Back to {agent}', { agent: agent?.name ?? routeName(route) })
+    const groups = route === 'native' ? groupModels(list) : list.length === 0 ? [] : [[agent?.name ?? routeName(route), list]]
+    return h('div', { key: `models:${route}:${view.provider ?? view.agent ?? ''}`, className: 'bt-model-step', role: 'group', 'aria-label': t('Models') },
+      stepBack(backLabel, () => go(back.view)),
       h('div', { className: 'bt-menu-sep', role: 'separator' }),
-      list.map((entry) => {
-        const off = offModel(entry)
-        const name = modelLabel(entry)
-        const more = !off && effortRows(knownEfforts(entry)).length > 0
+      groups.length === 0 ? h('div', { className: 'bt-model-none' }, t('No models are set up for this route yet.')) : null,
+      groups.map(([label, entries]) => h(Fragment, { key: label },
+        h('div', { className: 'bt-model-group', role: 'presentation' }, label),
+        entries.map((entry) => {
+          const herdr = route === 'herdr'
+          const pending = entry.pending === true
+          const off = herdr || pending || offModel(entry)
+          const why = herdr || pending ? t('Not available yet') : modelUnavailableText(entry)
+          const name = herdr ? herdrModelLabel(entry) : modelLabel(entry)
+          const more = !off && effortRows(knownEfforts(entry)).length > 0
+          return h('button', {
+            key: entry.ref ?? entry.id, type: 'button', role: 'menuitemradio', 'aria-checked': !herdr && !pending && entry.ref === current,
+            title: entry.ref, 'aria-haspopup': more ? 'menu' : undefined,
+            'data-unavailable': off ? '' : undefined,
+            'aria-label': why ? `${name} · ${why}` : undefined,
+            onClick: () => onModel(entry, route),
+          },
+          h('span', { className: 'bt-menu-label' }, name),
+          why ? h('span', { className: 'bt-menu-hint' }, why)
+            : entry.ref === roster.defaultModel ? h('span', { className: 'bt-menu-hint' }, t('Default')) : null,
+          h(Tick, { on: !herdr && !pending && entry.ref === current }),
+          more ? h(ChevronRightIcon) : null)
+        }))))
+  }
+  if (view.step === 'agents') {
+    const route = view.route
+    const agents = route === 'acp' ? acpAgents(models) : herdrAgents()
+    return h('div', { key: `agents:${route}`, className: 'bt-model-step', role: 'group', 'aria-label': t('Agents') },
+      stepBack(t('Back to routes'), () => go(MENU_ROOT)),
+      h('div', { className: 'bt-model-group', role: 'presentation' }, t('Agents')),
+      agents.length === 0 ? h('div', { className: 'bt-model-none' }, route === 'acp' ? t('No ACP agents are set up in DeepSeek Harness yet.') : t('No agents are set up for this route yet.')) : null,
+      agents.map((agent) => {
+        const herdr = route === 'herdr'
+        const pending = agent.pending === true
+        const here = route === 'acp' && current !== undefined && current.startsWith(`${agent.provider}/`)
+        const signedOut = !herdr && !pending && agent.models.every(entry => offModel(entry)) && agent.models.some(entry => entry.needsSignIn || entry.needsAccount)
+        const why = herdr || pending ? t('Not available yet') : signedOut ? t('Needs a sign-in') : undefined
+        const now = here ? modelLabel(agent.models.find(entry => entry.ref === current) ?? {}) ?? agent.name : undefined
         return h('button', {
-          key: entry.ref, type: 'button', role: 'menuitemradio', 'aria-checked': entry.ref === current, title: entry.ref,
-          'aria-haspopup': more ? 'menu' : undefined,
-          'aria-label': off ? `${name} · ${t('Not available')}` : undefined,
-          onClick: () => onModel(entry),
+          key: agent.provider ?? agent.id, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
+          'data-unavailable': why ? '' : undefined,
+          'aria-label': here ? t('{agent}, current model {model}', { agent: agent.name, model: now ?? '' }) : why ? `${agent.name} · ${why}` : agent.name,
+          onClick: () => go({ step: 'models', route, ...(agent.provider ? { provider: agent.provider } : { agent: agent.id }) }),
         },
-        h('span', { className: 'bt-menu-label' }, name),
-        off ? h('span', { className: 'bt-menu-hint' }, t('Not available'))
-          : entry.ref === roster.defaultModel ? h('span', { className: 'bt-menu-hint' }, t('Default')) : null,
-        h(Tick, { on: entry.ref === current }),
-        more ? h(ChevronRightIcon) : null)
+        h(AgentMark, { id: agent.provider ?? agent.id, name: agent.name }),
+        h('span', { className: 'bt-menu-label' }, agent.name),
+        why ? h('span', { className: 'bt-menu-hint' }, why) : here && levelName ? h('span', { className: 'bt-menu-hint' }, levelName) : null,
+        h(Tick, { on: here }),
+        herdr || pending ? null : h(ChevronRightIcon))
       }))
   }
-  return h('div', { key: 'connections', className: 'bt-model-step', role: 'group', 'aria-label': t('Connections') },
-    groups.length > 0 ? groups.map(([label, list]) => {
-      const on = list.find(entry => entry.ref === current)
-      const now = on === undefined ? undefined
-        : offModel(on) ? `${modelLabel(on)} · ${t('Not available')}`
-          : levelName === undefined ? modelLabel(on) : `${modelLabel(on)} · ${levelName}`
+  const routes = routesFor(bot, roster)
+  return h('div', { key: 'routes', className: 'bt-model-step', role: 'group', 'aria-label': t('Route') },
+    routes.length === 0 ? h('div', { className: 'bt-model-none' }, t('No route is available for this Bot.')) : null,
+    routes.map((route) => {
+      const here = route === currentRoute && current !== undefined
+      const now = here
+        ? [modelRoute(roster, current).connection, levelName].filter(Boolean).join(' · ')
+        : route === 'herdr' ? t('Not available yet') : undefined
       return h('button', {
-        key: groupKey(list[0]), type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': on ? '' : undefined,
-        'aria-label': now === undefined ? undefined : t('{connection}, current model {model}', { connection: label, model: now }),
-        onClick: () => go({ step: 'models', provider: groupKey(list[0]) }),
+        key: route, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
+        'data-route': route, 'data-unavailable': route === 'herdr' ? '' : undefined,
+        title: route === 'acp' ? t('Agent Client Protocol') : route === 'herdr' ? t('Not available yet') : undefined,
+        'aria-label': here ? t('{route}, current model {model}', { route: routeName(route), model: now ?? '' })
+          : now ? `${routeName(route)} · ${now}` : `${routeName(route)} · ${routeDetail(route)}`,
+        onClick: () => go(route === 'native' ? { step: 'models', route } : { step: 'agents', route }),
       },
-      h('span', { className: 'bt-menu-label' }, label),
-      now === undefined ? null : h('span', { className: 'bt-menu-hint' }, now),
-      h(Tick, { on: on !== undefined }),
-      h(ChevronRightIcon))
-    }) : h('div', { className: 'bt-model-none' }, t('No models are set up in DeepSeek Harness yet.')),
+      h(RouteMark, { route }),
+      h('span', { className: 'bt-menu-label' }, routeName(route)),
+      now ? h('span', { className: 'bt-menu-hint' }, now)
+        : h('span', { className: 'bt-menu-hint', 'data-route-detail': '' }, routeDetail(route)),
+      h(Tick, { on: here }),
+      route === 'herdr' ? null : h(ChevronRightIcon))
+    }),
     onManage ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
     onManage ? h('button', { type: 'button', role: 'menuitem', onClick: onManage }, h(SlidersIcon), h('span', { className: 'bt-menu-label' }, t('Models and providers…'))) : null)
 }
@@ -258,7 +443,7 @@ export const Caret = () => h('svg', { className: 'bt-model-caret', width: 12, he
 // A menu that opens under its trigger, or above when the window has no room below. A
 // click outside, Escape, or a scroll outside it closes it. `onEscape` (a menu with steps)
 // handles Escape first, and returns true when it went back a step instead.
-export function useAnchoredMenu({ onEscape } = {}) {
+export function useAnchoredMenu({ onEscape, minWidth = 240 } = {}) {
   const [anchor, setAnchor] = useState(null)
   const [place, setPlace] = useState(null)
   const [shownPlace, leaving] = useLinger(place, MENU_EXIT_MS)
@@ -297,7 +482,7 @@ export function useAnchoredMenu({ onEscape } = {}) {
   useLayoutEffect(() => {
     if (anchor === null || !button.current) return
     const rect = button.current.getBoundingClientRect()
-    const width = Math.max(240, rect.width)
+    const width = Math.max(minWidth, rect.width)
     const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
     const below = viewBottom() - rect.bottom
     setPlace(below >= 260 || below >= rect.top
@@ -318,23 +503,61 @@ export function ModelMenu(props) {
   return h(props.roster?.hostModels?.[props.bot?.id] === undefined ? DshModelMenu : HostModelMenu, props)
 }
 
-function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, onPick, onPickEffort }) {
+// The word before a crossing: the route (or the agent inside ACP) changes, which starts a
+// new conversation with a handoff note (RFC 0030, Decided 6 and 10). Nothing is applied
+// until the person confirms here.
+export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm }) {
+  const from = current === undefined ? undefined : modelRoute(roster, current)
+  const to = modelRoute(roster, target.ref)
+  const routeChanged = from?.route !== to.route
+  // Full access means a different thing on each harness; say which one the Bot is moving to.
+  const fullAccess = bot.permission === 'danger-full-access'
+  const fullAccessLine = !fullAccess ? undefined
+    : to.route === 'native' ? t("Full access: DSH's own tools run without asking.")
+      : to.provider === 'acp-claude' || to.provider === 'acp-codex' ? t("Full access: the CLI's own no-ask mode.")
+        : t("Full access: the agent's actions run without asking.")
+  return h('div', { className: 'bt-model-step bt-model-confirm', role: 'group', 'aria-label': t('Start a new conversation?') },
+    h('div', { className: 'bt-model-confirm-title' }, t('Start a new conversation?')),
+    h('div', { className: 'bt-model-confirm-move' },
+      from ? `${routeName(from.route)} · ${from.connection} → ` : '',
+      `${routeName(to.route)} · ${to.connection}`),
+    h('div', { className: 'bt-model-confirm-text' }, routeChanged
+      ? t('Changing the route starts a new conversation. {name} writes a handoff note first.', { name: bot.name })
+      : t('Changing the agent starts a new conversation. {name} writes a handoff note first.', { name: bot.name })),
+    fullAccessLine === undefined ? null : h('div', { className: 'bt-model-confirm-access', role: 'note' }, fullAccessLine),
+    h('div', { className: 'bt-model-confirm-actions' },
+      h('button', { type: 'button', className: 'bt-model-confirm-cancel', onClick: onCancel }, t('Keep this conversation')),
+      h('button', { type: 'button', className: 'bt-model-confirm-go', onClick: onConfirm }, routeChanged ? t('Change route') : t('Change agent'))))
+}
+
+function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort, saved = onPick === undefined }) {
   const [view, setView] = useState(MENU_ROOT)
+  // A route change waits for the person's word here, because it starts a new conversation.
+  const [confirm, setConfirm] = useState(undefined)
+  // The provider's key, for a model that needs one, is asked for inside the menu when the
+  // window can save it; elsewhere the row leads to the models page.
+  const [keyFor, setKeyFor] = useState(undefined)
   // Levels that arrive for a step on screen draw it again.
   const [, setAsked] = useState(0)
   // Whether the next step takes the focus: the menu was opened or is used from the keyboard.
   const keys = useRef(false)
+  const routeOfView = () => view.route ?? (view.provider ? routeOfProvider(view.provider) : 'native')
   const back = () => {
-    if (view.step === 'connections') return false
+    // Escape on the crossing's word cancels it before it goes back a step.
+    if (confirm !== undefined) { setConfirm(undefined); return true }
+    if (view.step === 'routes') return false
     keys.current = true
-    setView(view.step === 'levels' ? { step: 'models', provider: view.provider } : MENU_ROOT)
+    if (view.step === 'levels') setView({ step: 'models', route: view.route, ...(view.provider ? { provider: view.provider } : {}) })
+    else if (view.step === 'models' && routeOfView() !== 'native') setView({ step: 'agents', route: routeOfView() })
+    else setView(MENU_ROOT)
     return true
   }
-  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ onEscape: back })
+  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ onEscape: back, minWidth: 300 })
   const live = useRef(false)
   live.current = isOpen
   const shown = modelOf(bot, roster)
   const current = bot.model ?? bot.appliedModel
+  const currentRoute = current === undefined ? undefined : modelRoute(roster, current)
   const served = servedOf(roster, current)
   const reasoning = useEfforts(served, current, actions)
   // The level the Bot runs on: its pick when the model serves it, else the model's own.
@@ -343,15 +566,19 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
   const effortLabel = currentEffort === undefined
     ? (reasoning?.efforts?.length > 0 ? t('Default') : undefined)
     : reasoning.efforts.find(effort => effort.id === currentEffort)?.name ?? currentEffort
-  // A connection's models whose levels the catalog does not carry are asked for as it opens,
+  // A route's models whose levels the catalog does not carry are asked for as it opens,
   // so each row can say whether a level step follows.
   useEffect(() => {
     if (!isOpen || view.step !== 'models') return undefined
     let on = true
-    const unknown = (roster.models ?? []).filter(model => groupKey(model) === view.provider && !offModel(model) && knownEfforts(model) === undefined)
+    const route = view.route ?? routeOfProvider(view.provider)
+    const list = route === 'native' ? nativeModels(roster.models, current)
+      : route === 'acp' ? (acpAgents(roster.models).find(agent => agent.provider === view.provider)?.models ?? [])
+        : []
+    const unknown = list.filter(model => model.ref !== undefined && !offModel(model) && knownEfforts(model) === undefined)
     for (const model of unknown) void askEfforts(model.ref, actions).then(() => { if (on) setAsked(count => count + 1) })
     return () => { on = false }
-  }, [isOpen, view, roster.models])
+  }, [isOpen, view, roster.models, current])
   // The step that opens takes the focus when the menu is used from the keyboard (or a row was
   // clicked): its current row, else its first.
   useEffect(() => {
@@ -360,7 +587,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     keys.current = false
     const rows = menuRows(node)
     ;(rows.find(row => row.getAttribute('aria-checked') === 'true' || row.hasAttribute('data-current')) ?? rows[0])?.focus()
-  }, [isOpen, view])
+  }, [isOpen, view, confirm])
   const go = (next) => {
     keys.current = Boolean(menu.current?.contains(document.activeElement))
     setView(next)
@@ -370,6 +597,8 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     // A click with no pointer (Enter, Space) opens the menu with the focus in it.
     keys.current = event?.detail === 0
     setView(MENU_ROOT)
+    setConfirm(undefined)
+    setKeyFor(undefined)
     // DSH settings can change the list at any time, so opening asks again.
     void actions?.refreshModels?.()
     open()
@@ -382,44 +611,74 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
   // Only the Bot's own saved model is the same one: with `onPick` the model shown stands in for
   // one the Bot does not have yet, so a level picked on it saves the model too.
   const same = ref => !onPick && ref === current && Boolean(bot.model)
-  const pickModel = (ref) => {
-    if (onPick) return onPick(ref)
+  // A harness crossing: another route, or another ACP agent (RFC 0030, Decided 6 and 10). A
+  // first pick, and a model change inside one route, keep the conversation.
+  // A Bot already saved (settings, details, the chat bar) crosses; a Bot being created does
+  // not: `onPick` alone says nothing about whether the conversation exists yet.
+  const crossing = ref => Boolean(current) && saved && ref !== current && crossesHarness(current, ref)
+  const pickModel = (ref, effort, { routeChange = false, level = false } = {}) => {
+    // A crossing started from a saved Bot's settings still goes through the picker's own
+    // action: the settings wrapper needs to keep its sign-in/account handling.
+    if (routeChange && typeof onPick === 'function') return onPick(ref, { routeChange: true, effort })
+    if (onPick) {
+      const pickedIt = Promise.resolve(onPick(ref))
+      if (onPickEffort === undefined && effort === undefined) return pickedIt
+      return pickedIt.then((done) => {
+        if (done === false) return done
+        if (onPickEffort) onPickEffort(effort)
+        else if (effort !== undefined || bot.effort) void run(actions.updateBot(bot.id, { effort: effort ?? null }))
+        return done
+      })
+    }
+    if (!routeChange && same(ref)) {
+      if (effort !== bot.effort) void run(actions.updateBot(bot.id, { effort: effort ?? null }))
+      return undefined
+    }
+    if (routeChange) {
+      // The host moves the Bot to a fresh part with a handoff note (parts.js), so the pane
+      // shows a new conversation and nothing of the old harness crosses silently.
+      const pick = chat && actions.switchRouteInChat ? actions.switchRouteInChat : actions.switchRoute
+      if (typeof pick === 'function') return run(pick(bot.id, ref, level || effort !== undefined ? { effort: effort ?? null } : {}))
+    }
     // In a Bot's chat a signed-out agent opens the sign-in row there (cli-login.js, rule 2).
-    if (!same(ref)) return run(chat && actions.chooseModelInChat ? actions.chooseModelInChat(bot.id, ref) : actions.updateBot(bot.id, { model: ref }))
-    return undefined
+    if (chat && actions.chooseModelInChat) return run(actions.chooseModelInChat(bot.id, ref, level || effort !== undefined ? { effort: effort ?? null } : {}))
+    return run(actions.updateBot(bot.id, { model: ref, ...(level || effort !== undefined ? { effort: effort ?? null } : {}) }))
   }
-  const pickEffort = (effort) => {
-    if (onPickEffort) onPickEffort(effort)
-    else if (effort !== bot.effort) void run(actions.updateBot(bot.id, { effort: effort ?? null }))
+  const commit = (model, effort) => {
+    if (model.ref !== undefined && crossing(model.ref)) { setConfirm({ ref: model.ref, effort }); return }
+    finish()
+    void Promise.resolve(pickModel(model.ref, effort)).catch(() => {})
   }
   // A model with levels opens its level step; one without applies now. Levels not known yet
-  // are asked for first.
-  const onModel = (model) => {
+  // are asked for first. A model that needs an API key asks for it, a signed-out agent opens
+  // its sign-in row in the chat, and Herdr's models wait for #1007.
+  const onModel = (model, route) => {
+    if (route === 'herdr' || model.ref === undefined) return
+    if (model.needsKey) {
+      if (typeof actions.setProviderKey === 'function') { setKeyFor(model); return }
+      const manage = manageModels(actions)
+      if (manage) { finish(); manage(); return }
+    }
+    if (model.needsSignIn || model.needsAccount) {
+      if (chat && typeof actions.openCliLogin === 'function') { finish(); actions.openCliLogin(bot.id, model.provider, undefined) }
+      return
+    }
+    if (offModel(model)) return
     const decide = (levels) => {
       if (!live.current) return
-      if (!offModel(model) && effortRows(levels).length > 0) go({ step: 'levels', provider: groupKey(model), ref: model.ref })
-      else { finish(); void pickModel(model.ref) }
+      if (effortRows(levels).length > 0) go({ step: 'levels', route, ref: model.ref, ...(model.provider ? { provider: model.provider } : {}) })
+      else commit(model, undefined)
     }
-    const known = offModel(model) ? null : knownEfforts(model)
+    const known = knownEfforts(model)
     if (known !== undefined) decide(known)
     else void askEfforts(model.ref, actions).then(decide)
   }
   // A level of the current model changes the level only; on another model, the model and its
-  // level go together (one update where the Bot is saved here).
+  // level go together, and a crossing asks first.
   const onLevel = (model, effort) => {
+    if (crossing(model.ref)) { setConfirm({ ref: model.ref, effort }); return }
     finish()
-    if (same(model.ref)) { pickEffort(effort); return }
-    if (onPick) {
-      void Promise.resolve(onPick(model.ref)).then((done) => {
-        if (done === false) return
-        if (onPickEffort) onPickEffort(effort)
-        else if (effort !== undefined || bot.effort) void run(actions.updateBot(bot.id, { effort: effort ?? null }))
-      }, () => {})
-      return
-    }
-    void run(chat && actions.chooseModelInChat
-      ? actions.chooseModelInChat(bot.id, model.ref, { effort: effort ?? null })
-      : actions.updateBot(bot.id, { model: model.ref, effort: effort ?? null }))
+    void Promise.resolve(pickModel(model.ref, effort, { level: true })).catch(() => {})
   }
   const onKeyDown = (event) => {
     const rows = menuRows(event.currentTarget)
@@ -434,26 +693,48 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
   }
   const models = roster.models ?? []
   const manage = manageModels(actions)
+  const keyActions = typeof actions.setProviderKey === 'function'
+    ? {
+        ...actions,
+        setProviderKey: (provider, value) => Promise.resolve(actions.setProviderKey(provider, value)).then((done) => {
+          if (done !== false) { setKeyFor(undefined); void actions.refreshModels?.() }
+          return done
+        }),
+      }
+    : actions
+  const bits = shown === undefined ? [] : [currentRoute ? routeName(currentRoute.route) : undefined, shown.provider].filter(Boolean)
+  if (shown !== undefined && shown.unavailable && models.length > 0) bits.push(t('not available'))
+  else if (effortLabel !== undefined) bits.push(effortLabel)
+  const second = bits.length > 0 ? bits.join(' · ') : null
+  const confirmView = confirm === undefined ? null : h(RouteConfirm, {
+    bot, roster, current, target: confirm, onCancel: () => setConfirm(undefined),
+    onConfirm: () => { const next = confirm; setConfirm(undefined); finish(); void Promise.resolve(pickModel(next.ref, next.effort, { routeChange: true })).catch(() => {}) },
+  })
   return h(Fragment, null,
     link ? h('button', {
       ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
     }, t('change')) : h('button', {
-      ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined,
-      'aria-haspopup': 'menu', 'aria-expanded': isOpen, 'aria-label': t('Model: {model}', { model: shown?.name ?? t('none') }),
+      ref: button, type: 'button', className: `bt-model-trigger${bar ? ' bt-model-bar-trigger' : ''}`, 'data-wide': wide || undefined,
+      'data-bar': bar || undefined, 'data-route': currentRoute?.route, 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
+      'aria-label': t('Model: {model}', { model: shown?.name ?? t('none') }),
       'data-missing': shown !== undefined && shown.unavailable && models.length > 0 ? '' : undefined, onClick: toggle,
     },
-    h('span', { className: 'bt-model-copy' },
-      h('span', { className: 'bt-model-name' }, shown?.name ?? t('Choose a model')),
-      shown ? h('span', { className: 'bt-model-provider' }, !shown.unavailable || models.length === 0
-        ? (effortLabel === undefined ? shown.provider : `${shown.provider} · ${effortLabel}`)
-        : t('{provider} · not available', { provider: shown.provider })) : null),
+    bar
+      ? h('span', { className: 'bt-model-bar' },
+        currentRoute === undefined ? null : h('span', { className: 'bt-model-bar-route', 'aria-hidden': true }, h(ROUTE_ICON[currentRoute.route] ?? ConnectorIcon, { size: 14 })),
+        h('span', { className: 'bt-model-bar-name' }, shown?.name ?? t('Choose a model')),
+        effortLabel === undefined ? null : h('span', { className: 'bt-model-bar-effort' }, effortLabel))
+      : h('span', { className: 'bt-model-copy' },
+        h('span', { className: 'bt-model-name' }, shown?.name ?? t('Choose a model')),
+        second === null ? null : h('span', { className: 'bt-model-provider' }, second)),
     h(Caret)),
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown },
-      h(ModelSteps, {
-        roster, view, current, picked, levelName: effortLabel, go, onModel, onLevel,
+      confirmView ?? h(ModelSteps, {
+        roster, bot, view, current, picked, levelName: effortLabel, go, onModel, onLevel,
         onManage: manage ? () => { finish(); manage() } : undefined,
-      })), document.body) : null)
+      }),
+      keyFor === undefined ? null : h(ModelKeyCard, { model: keyFor, actions: keyActions })), document.body) : null)
 }
 
 // True while a chat holds only the Bot's greeting: its one turn is the one the team started
@@ -462,21 +743,28 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
 const KICKOFF = /^\[Bot team setup\]/
 export const greetingOnly = outline => Array.isArray(outline) && outline.length === 1 && (!outline[0]?.prompt || KICKOFF.test(outline[0].prompt))
 
-// What a model is called in a line: its name, and its provider's.
+// What a model is called in a line: its name, its route and its provider's name.
 function modelWords(roster, ref) {
   const served = servedOf(roster, ref)
+  const info = ref === undefined ? undefined : modelRoute(roster, ref)
   const [provider, ...rest] = String(ref ?? '').split('/')
-  return { model: served ? modelLabel(served) : rest.join('/'), provider: served ? connectionOf(served) : provider }
+  return {
+    model: served ? modelLabel(served) : rest.join('/'),
+    route: info === undefined ? '' : routeName(info.route),
+    provider: served ? connectionOf(served) : provider,
+  }
 }
 
-// One line naming the model a Bot runs on and its provider, with "change" opening the
-// model menu (which also leads to the providers): "Using Claude Opus 5.5 · Anthropic ·
-// change". `modelRef` and `onPick` stand in for a model the Bot does not have yet (not
-// `ref`: React keeps that prop for itself, issue #153).
+// One line naming the model a Bot runs on, its route and its provider, with "change"
+// opening the model menu (which also leads to the providers): "Using Claude Opus 5.5 ·
+// ACP · Claude Code · change". `modelRef` and `onPick` stand in for a model the Bot does
+// not have yet (not `ref`: React keeps that prop for itself, issue #153).
 export function ModelLine({ bot, roster, actions, run, modelRef, onPick, chat = false }) {
   const words = modelWords(roster, modelRef ?? bot.model ?? bot.appliedModel)
   return h('div', { className: 'bt-model-line' },
-    h('span', { className: 'bt-model-line-text' }, t('Using {model} · {provider}', words)),
+    h('span', { className: 'bt-model-line-text' }, words.route === ''
+      ? t('Using {model} · {provider}', words)
+      : t('Using {model} · {route} · {provider}', words)),
     h('span', { className: 'bt-model-line-sep', 'aria-hidden': true }, '·'),
     h(ModelMenu, { bot: modelRef ? { ...bot, model: modelRef } : bot, roster, actions, run, link: true, chat, onPick }))
 }
@@ -515,8 +803,9 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   if (!shown) return null
   const models = roster.models ?? []
   // A model whose provider has no API key or sign-in fails every turn, so it is no choice;
-  // nor is one another connection already offers.
-  const usable = models.filter(usableModel)
+  // nor is one another connection already offers, nor one on a route this bot type hides.
+  const routes = routesFor(bot, roster)
+  const usable = models.filter(usableModel).filter(model => routes.includes(modelRoute(roster, model.ref).route))
   const lost = bot.model ? !models.some(model => model.ref === bot.model) : false
   const run = promise => Promise.resolve(promise).then(() => { setError(''); return true }, (failure) => { setError(failure?.message ?? String(failure)); return false })
   // An unknown catalog (none listed) cannot tell a lost model from a slow provider.
@@ -562,10 +851,10 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
     ? setupChoices(actions).map(([label, run]) => h('button', { key: label, type: 'button', className: 'bt-model-chip', onClick: run }, label))
     : [
         ...groupModels(usable).map(([provider, list]) => h('div', { key: list[0].provider ?? provider, className: 'bt-model-choice-group', role: 'group', 'aria-label': provider },
-          h('div', { className: 'bt-model-choice-provider', 'aria-hidden': true }, provider),
+          h('div', { className: 'bt-model-choice-provider', 'aria-hidden': true }, `${routeName(modelRoute(roster, list[0].ref).route)} · ${provider}`),
           h('div', { className: 'bt-model-choice-chips' }, list.map(model => h('button', {
             key: model.ref, type: 'button', className: 'bt-model-chip', disabled: busy !== '', 'aria-busy': busy === model.ref || undefined,
-            'aria-label': `${modelLabel(model)} · ${provider}`,
+            'aria-label': `${modelLabel(model)} · ${routeName(modelRoute(roster, model.ref).route)} · ${provider}`,
             title: model.ref === roster.defaultModel ? `${model.ref} · ${t('Harness default')}` : model.ref,
             onClick: () => pick(model.ref),
           }, modelLabel(model), busy === model.ref ? h('span', { className: 'bt-model-spin', 'aria-label': t('Saving…') }) : null))))),
@@ -701,6 +990,30 @@ export const MODEL_CSS = `
 .bt-model-key-title svg{flex:none;width:16px;height:16px}
 .bt-model-key .bt-q-foot{margin-top:2px}
 .bt-model-key-other{margin-right:auto}
+.bt-route-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--bt-ink-2)}
+.bt-route-icon svg{width:16px;height:16px}
+.bt-model-step>[data-route=acp] .bt-route-icon{color:var(--bt-accent)}
+.bt-agent-mark{flex:none;display:block;border-radius:4px;object-fit:contain}
+.bt-agent-initial{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-weight:600;line-height:1}
+.bt-model-menu .bt-model-step .bt-menu-label{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink)}
+.bt-model-menu .bt-model-step .bt-menu-hint{font-size:12px;color:var(--bt-ink-2)}
+.bt-model-menu .bt-model-step .bt-model-group{font-size:12px;font-weight:600;color:var(--bt-ink-2)}
+.bt-model-step>[data-unavailable]{color:var(--bt-ink-2)}
+.bt-model-step>[data-unavailable] .bt-menu-label{color:var(--bt-ink-2);font-weight:500}
+.bt-model-step>[data-unavailable] :is(.bt-route-icon,.bt-agent-mark,.bt-agent-initial){opacity:.6}
+.bt-model-step .bt-menu-hint[data-route-detail]{max-width:64%;overflow:visible;text-align:right;white-space:normal;line-height:14px;font-style:italic}
+.bt-model-confirm{padding:10px 10px 8px;gap:8px}
+.bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
+.bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
+.bt-model-confirm-text{padding:2px 0 6px;font-size:12px;line-height:17px;color:var(--bt-ink-2)}
+.bt-model-confirm-access{padding:0 0 6px;font-size:12px;line-height:17px;color:var(--bt-danger)}
+.bt-model-confirm-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel,.bt-menu .bt-model-confirm-actions .bt-model-confirm-go{width:auto;min-height:30px;padding:5px 12px;border-radius:999px;font:inherit;font-size:12px;line-height:18px;cursor:pointer}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel{border:.5px solid var(--bt-line-2);background:var(--bt-main);color:var(--bt-ink-2)}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-go{border:.5px solid transparent;background:var(--bt-accent);color:var(--bt-accent-ink);font-weight:600}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel:hover{background:var(--bt-hover)}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-go:hover{filter:brightness(0.96)}
+.bt-model-confirm-cancel:focus-visible,.bt-model-confirm-go:focus-visible{outline:2px solid var(--bt-accent);outline-offset:1px}
 @keyframes bt-model-in{from{opacity:0;transform:translateY(6px)}}
 .bt-model-spin{flex:none;width:14px;height:14px;border-radius:50%;border:1.5px solid var(--bt-line-2);border-top-color:var(--bt-ink-2);animation:bt-model-spin .7s linear infinite}
 @keyframes bt-model-spin{to{transform:rotate(360deg)}}

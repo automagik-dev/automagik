@@ -60,6 +60,8 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0025](0025-cloud-economics.md) | Automagik Cloud economics: billing, managed tokens and agentic payments | Accepted (2026-11-10, by the owner; council 2026-11-09: revise, conditions folded in; owner's decisions 2026-11-09; Chat: legal review scope, 2026-11-09; amends RFC 0024) | none (ships outside the five milestones) |
 | [0026](0026-bot-tag-coverage.md) | Bot-tag coverage | Queued (amends RFC 0021: Decided 5 and 6) | none (ships outside the five milestones) |
 | [0027](0027-automagik-site-and-readme.md) | README, launch film and automagik.si | Accepted (2026-11-10, by the owner: the story, the site base and the 2026-11-16 deadline; Q1-Q4 answered 2026-11-10, Q5 open; D1-D4 and D3b open; M1/M2 folded) | none (ships outside the five milestones) |
+| [0031](0031-auto-permission-level.md) | Auto, a permission level where a model decides each step | Queued (amends RFC 0003 with its delivery 2; numbers 0028 to 0030 are taken by open pull requests) | none (ships outside the five milestones) |
+| [0032](0032-automagik-id.md) | Automagik ID | In delivery (delivery 1 authorized by the owner; replaces RFC 0024's identity-provider sections) | none (independent Worker deployment) |
 
 Milestones, in the owner's order:
 

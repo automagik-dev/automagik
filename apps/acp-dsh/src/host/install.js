@@ -69,12 +69,54 @@ const writeJson = (file, value) => {
   renameSync(tmp, file)
 }
 
+// A version check that could not reach npm (#970): the request never got an answer. Which
+// failures those are is decided here, from a closed list, and remembered beside the error
+// itself: the error a caller gets is the very one `fetch` threw, unchanged.
+const NETWORK_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH', 'ENETDOWN', 'EPIPE', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'])
+const unreachable = new WeakMap()
+
+/**
+ * Why a version check could not reach npm, when that is why it failed: one of a closed list of
+ * connection error codes (`ENOTFOUND`, `ECONNREFUSED`, ...), or `timeout` for the check's own
+ * deadline. Undefined for any other failure: an answer npm did give (whatever its status), a
+ * check its caller stopped, an error of another kind.
+ * @param {unknown} error an error `latestVersion` rejected with
+ * @returns {string | undefined}
+ */
+export function registryUnreachable(error) {
+  return error !== null && typeof error === 'object' ? unreachable.get(error) : undefined
+}
+
+// Remember `error` as a failure to reach npm when it is one. `timeout` is this check's own
+// deadline signal: only its own reason counts as the deadline.
+function noteUnreachable(error, timeout) {
+  if (error === null || typeof error !== 'object') return
+  if (timeout.aborted && error === timeout.reason) return void unreachable.set(error, 'timeout')
+  for (const code of [error.code, error.cause?.code, error.cause?.cause?.code]) {
+    if (typeof code === 'string' && NETWORK_CODES.has(code)) return void unreachable.set(error, code)
+  }
+}
+
 /** The newest version npm publishes for `pkg`. */
 export async function latestVersion(pkg, { fetch = globalThis.fetch, timeoutMs = 15_000, signal } = {}) {
   const timeout = AbortSignal.timeout(timeoutMs)
-  const res = await fetch(`${REGISTRY}/${pkg.replace('/', '%2F')}/latest`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, headers: { accept: 'application/json' } })
+  let res
+  try {
+    res = await fetch(`${REGISTRY}/${pkg.replace('/', '%2F')}/latest`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, headers: { accept: 'application/json' } })
+  } catch (error) {
+    noteUnreachable(error, timeout)
+    throw error
+  }
   if (!res.ok) throw new Error(`npm answered ${res.status} for ${pkg}`)
-  const { version } = await res.json()
+  let body
+  try {
+    body = await res.json()
+  } catch (error) {
+    // The connection can still drop, or the deadline pass, while the answer is read.
+    noteUnreachable(error, timeout)
+    throw error
+  }
+  const { version } = body
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+/.test(version)) throw new Error(`npm gave no version for ${pkg}`)
   return version
 }
@@ -136,12 +178,15 @@ export function killTree(pid) {
 
 // One install command: rejects with its last output when it fails, and kills its whole tree
 // when `signal` aborts or it runs past INSTALL_TIMEOUT_MS.
-export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs = INSTALL_TIMEOUT_MS, kill = killTree }) {
+export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs = INSTALL_TIMEOUT_MS, kill = killTree, onSpawn }) {
   return new Promise((resolve, reject) => {
     if (abort?.aborted) return reject(new Error('install stopped: DSH is quitting'))
     // On Windows the package manager is a batch file (the app's pnpm.cmd, npm.cmd): through
     // cmd.exe, whose tree killTree's taskkill /T ends with it.
     const child = spawn(...batchSafe(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' }))
+    // The process at once, for a caller that must tell when it is gone: 'exit' says Node reaped
+    // it, while 'close' can come after, when a grandchild holds its output open.
+    onSpawn?.(child)
     let output = ''
     let stopped
     const keep = (chunk) => { output = (output + chunk).slice(-16_384) }
@@ -311,7 +356,9 @@ export class AdapterStore {
           writeFileSync(logPath, `${new Date(this.now()).toISOString()} install of ${pkg} failed\n\n${diagnostic}\n`, { encoding: 'utf8', mode: 0o600 })
           chmodSync(logPath, 0o600)
         } catch { /* the diagnostic still travels in the status */ }
-        this.failures.set(pkg, { message, diagnostic, ...(logPath === undefined ? {} : { logPath }) })
+        // A check that could not reach npm says so in the record: the caller tries again sooner.
+        const reason = registryUnreachable(error)
+        this.failures.set(pkg, { message, diagnostic, ...(logPath === undefined ? {} : { logPath }), ...(reason === undefined ? {} : { unreachable: reason }) })
         throw error
       },
     ).finally(() => this.running.delete(pkg))

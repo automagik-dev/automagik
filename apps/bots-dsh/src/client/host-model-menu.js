@@ -44,7 +44,7 @@ export function hostGroups(entries) {
   return [...groups]
 }
 
-export function HostModelMenu({ bot, roster, actions, run, wide = false, link = false }) {
+export function HostModelMenu({ bot, roster, actions, run, wide = false, link = false, bar = false }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu()
   const [confirming, setConfirming] = useState(null)
   const host = roster.hostModels?.[bot.id] ?? { entries: [] }
@@ -79,13 +79,18 @@ export function HostModelMenu({ bot, roster, actions, run, wide = false, link = 
       ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
     }, t('change')) : h('button', {
-      ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined, 'data-host': '',
+      ref: button, type: 'button', className: `bt-model-trigger${bar ? ' bt-model-bar-trigger' : ''}`, 'data-wide': wide || undefined, 'data-host': '',
+      'data-bar': bar || undefined,
       'aria-haspopup': 'menu', 'aria-expanded': isOpen, 'aria-label': t('Model: {model}', { model: current?.label ?? t('none') }),
       onClick: toggle,
     },
-    h('span', { className: 'bt-model-copy' },
-      h('span', { className: 'bt-model-name' }, current?.label ?? t('Choose a model')),
-      second ? h('span', { className: 'bt-model-provider' }, second) : null),
+    bar
+      ? h('span', { className: 'bt-model-bar' },
+        h('span', { className: 'bt-model-bar-name' }, current?.label ?? t('Choose a model')),
+        level === undefined ? null : h('span', { className: 'bt-model-bar-effort' }, t(level.name)))
+      : h('span', { className: 'bt-model-copy' },
+        h('span', { className: 'bt-model-name' }, current?.label ?? t('Choose a model')),
+        second ? h('span', { className: 'bt-model-provider' }, second) : null),
     h(Caret)),
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined },
       status ? h('div', { className: 'bt-host-model-status', role: 'status' }, status) : null,

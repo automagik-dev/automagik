@@ -1,7 +1,9 @@
 //! RFC 0026 delivery 2, the bot-tag coverage report: T1 (a class is counted, not hidden), T2
 //! (one source of truth with the query's `--by bot` and branch answers, the 50-bot and 50-repo
-//! caps), T8 (a report changes nothing), and the verb's exit codes. The (g) ceilings are measured
-//! by [`coverage_ceiling`], which runs only on the RFC 0018 reference store (`CEILING_DIR`).
+//! caps), T6 (the backfill moves before_evidence into the classes without changing any total),
+//! T7 (retention pruning moves usage to before_evidence, never to attributed, and advances
+//! evidence_from), T8 (a report changes nothing), and the verb's exit codes. The (g) ceilings
+//! are measured by [`coverage_ceiling`], which runs only on the RFC 0018 reference store (`CEILING_DIR`).
 //!
 //! Synthetic fixtures only: `example.com` repos, made-up bots, branches and paths.
 
@@ -748,6 +750,276 @@ fn a_window_with_no_evidence_is_a_measured_zero_in_words() {
         "{}",
         r.stdout
     );
+}
+
+/// T6: logs restore the evidence classes; a frozen row without a log keeps its old total.
+#[test]
+fn t6_the_backfill_moves_before_evidence_into_the_classes_and_keeps_every_total() {
+    let frozen = Frozen {
+        bot: Some("frozen-bot"),
+        harness: "claude-code",
+        model: scenes::OPUS,
+        branch: Some("feat/cov-frozen"),
+        hour: t("2026-10-12T10:00:00Z"),
+        tokens: [1000, 9000, 0, 0, 1000, 5],
+    };
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[frozen]);
+    let (w1, wamb) = (wt("cov-t6-1"), wt("cov-t6-amb"));
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-att-old",
+            &w1,
+            Some("feat/cov-t6-1"),
+            at(&["2026-10-15T10"]),
+        )
+        .tokens([100, 900, 0, 0, 100, 0]),
+    );
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-att-d1",
+            &w1,
+            Some("feat/cov-t6-1"),
+            at(&["2026-11-08T10"]),
+        )
+        .tokens([50, 400, 0, 0, 50, 0]),
+    );
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-amb-old",
+            &wamb,
+            Some("feat/cov-t6-amb"),
+            at(&["2026-10-16T10"]),
+        )
+        .tokens([200, 1800, 0, 0, 200, 0]),
+    );
+    s.add(
+        Usage::new(H::Omp, "o-unlinked-old", ROOT, None, at(&["2026-10-17T10"]))
+            .tokens([300, 2700, 0, 0, 300, 0]),
+    );
+    s.sync();
+    let store = s.store();
+    let tx = store.conn.unchecked_transaction().unwrap();
+    meter::evidence::prune(&tx, t(SYNCED), 15, u64::MAX).unwrap();
+    tx.commit().unwrap();
+    drop(store);
+
+    // Records arrive after pruning; an ordinary sync can resolve only retained evidence.
+    let created = t("2026-10-01T08:00:00Z");
+    s.start(Start {
+        session: Some("s-att-old"),
+        ..worker(
+            "t1",
+            "otter",
+            "dev",
+            "lark",
+            "claude",
+            &w1,
+            "feat/cov-t6-1",
+            created,
+        )
+    });
+    s.ledger_row(scenes::session_row(
+        "t1",
+        created,
+        "s-att-d1",
+        "claude",
+        t("2026-11-08T09:00:00Z"),
+    ));
+    for (terminal, bot) in [("t2", "otter"), ("t3", "heron")] {
+        s.start(worker(
+            terminal,
+            bot,
+            "dev",
+            "lark",
+            "claude",
+            &wamb,
+            "feat/cov-t6-amb",
+            t("2026-10-01T09:00:00Z"),
+        ));
+    }
+    s.sync();
+    let before = report(&s, &["--json"]);
+    assert_eq!(before["evidence_from"], "2026-10-25T00:00:00Z");
+    let d30 = window(&before, "d30");
+    assert_eq!(d30["evidence"], "partial");
+    assert_eq!(
+        d30["totals"],
+        json!({
+            "attributed": 500, "ambiguous": 0, "unlinked": 0,
+            "before_evidence": 17600, "total": 18100,
+        })
+    );
+    assert_eq!(d30["bot_coverage"], json!(0.0276));
+    assert_eq!(d30["inspected"], json!(1.0));
+
+    let r = s.sync_with(|o| o.evidence_backfill = Some(30));
+    let b = r.evidence_backfill.expect("a backfill ran");
+    assert!(b.done, "{b:?}");
+    let after = report(&s, &["--json"]);
+    assert_eq!(after["evidence_from"], "2026-10-10T00:00:00Z");
+    for w in ["d1", "d7", "d30"] {
+        assert_eq!(
+            int(&window(&after, w)["totals"]["total"]),
+            int(&window(&before, w)["totals"]["total"]),
+            "backfill keeps the {w} total",
+        );
+    }
+    let d30 = window(&after, "d30");
+    // The 30-day backfill starts at midnight, after d30's first partial day (Oct 9, 20:00).
+    // Its evidence horizon advances even though this window still straddles it.
+    assert_eq!(d30["start"], "2026-10-09T20:00:00Z");
+    assert_eq!(d30["evidence"], "partial");
+    assert_eq!(
+        d30["totals"],
+        json!({
+            "attributed": 1600, "ambiguous": 2200, "unlinked": 3300,
+            "before_evidence": 11000, "total": 18100,
+        })
+    );
+    assert_eq!(int(&d30["before_evidence_tagged"]), 11000);
+    assert_eq!(d30["bot_coverage"], json!(0.0884));
+    assert_eq!(d30["inspected"], json!(0.2254));
+    let p = parts(d30);
+    assert_eq!(p["claimants_differ"].0, 2200);
+    assert_eq!(p["no_record"].0, 3300);
+    assert_eq!(p["before_evidence"].0, 11000);
+
+    let (code, raw) = s.query(&scenes::args(true, &[]));
+    assert_eq!(code, 0, "{raw}");
+    let q: Value = serde_json::from_str(&raw).unwrap();
+    let by_bot: i64 = q["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| int(&r["tokens"]["total"]))
+        .sum();
+    assert_eq!(by_bot, int(&d30["totals"]["attributed"]));
+    assert_eq!(
+        by_bot + int(&q["actor_unattributed"]["tokens_total"]),
+        int(&d30["totals"]["total"])
+    );
+    for (count, part) in [
+        ("ambiguous", "tokens_ambiguous"),
+        ("unlinked", "tokens_unlinked"),
+        ("before_evidence", "tokens_before_evidence"),
+    ] {
+        assert_eq!(
+            int(&q["actor_unattributed"][part]),
+            int(&d30["totals"][count]),
+            "{part}"
+        );
+    }
+}
+
+/// T7: retained tags cannot stand in for the evidence that pruning removed.
+#[test]
+fn t7_retention_pruning_moves_usage_to_before_evidence_and_advances_evidence_from() {
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let w1 = wt("cov-t7-1");
+    let created = t("2026-10-01T08:00:00Z");
+    s.start(Start {
+        session: Some("s-t7-old"),
+        ..worker(
+            "t1",
+            "otter",
+            "dev",
+            "lark",
+            "claude",
+            &w1,
+            "feat/cov-t7-1",
+            created,
+        )
+    });
+    s.ledger_row(scenes::session_row(
+        "t1",
+        created,
+        "s-t7-new",
+        "claude",
+        t("2026-11-08T09:00:00Z"),
+    ));
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-t7-old",
+            &w1,
+            Some("feat/cov-t7-1"),
+            at(&["2026-10-15T10"]),
+        )
+        .tokens([400, 3600, 0, 0, 400, 0]),
+    );
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-t7-new",
+            &w1,
+            Some("feat/cov-t7-1"),
+            at(&["2026-11-08T10"]),
+        )
+        .tokens([100, 900, 0, 0, 100, 0]),
+    );
+    s.sync();
+    let before = report(&s, &["--json"]);
+    assert_eq!(before["evidence_from"], "2026-09-12T00:00:00Z");
+    let d30 = window(&before, "d30");
+    assert_eq!(d30["evidence"], "full");
+    assert_eq!(int(&d30["totals"]["attributed"]), 5500);
+    assert_eq!(int(&d30["totals"]["before_evidence"]), 0);
+    assert_eq!(int(&d30["totals"]["total"]), 5500);
+    assert_eq!(d30["bot_coverage"], json!(1.0));
+    assert_eq!(int(&d30["before_evidence_tagged"]), 0);
+
+    let store = s.store();
+    let tx = store.conn.unchecked_transaction().unwrap();
+    let p = meter::evidence::prune(&tx, t(SYNCED), 15, u64::MAX).unwrap();
+    tx.commit().unwrap();
+    // Pruning keeps the old rollup and its tag; the reader must apply the evidence horizon first.
+    let old: (String, String, i64) = store.conn.query_row(
+        "SELECT bot, actor_state, input_uncached + cache_read + output FROM usage WHERE hour_ms = ?1",
+        [t("2026-10-15T10:00:00Z")],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).unwrap();
+    assert_eq!(old, ("otter".into(), "attributed".into(), 4400));
+    drop(store);
+    assert_eq!(p.evidence, 1);
+
+    let after = report(&s, &["--json"]);
+    assert_eq!(after["evidence_from"], "2026-10-25T00:00:00Z");
+    for w in ["d1", "d7", "d30"] {
+        assert_eq!(
+            int(&window(&after, w)["totals"]["total"]),
+            int(&window(&before, w)["totals"]["total"]),
+            "pruning keeps the {w} total",
+        );
+    }
+    let d30 = window(&after, "d30");
+    assert_eq!(d30["evidence"], "partial");
+    assert_eq!(
+        d30["totals"],
+        json!({
+            "attributed": 1100, "ambiguous": 0, "unlinked": 0,
+            "before_evidence": 4400, "total": 5500,
+        })
+    );
+    assert_eq!(int(&d30["before_evidence_tagged"]), 4400);
+    assert_eq!(d30["bot_coverage"], json!(0.2));
+    assert_eq!(d30["inspected"], json!(1.0));
+    assert_eq!(d30["bots"].as_array().unwrap().len(), 1);
+    assert_eq!(int(&d30["bots"][0]["tokens"]), 1100);
+
+    let (code, raw) = s.query(&scenes::args(true, &[]));
+    assert_eq!(code, 0, "{raw}");
+    let q: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        int(&q["actor_unattributed"]["tokens_before_evidence"]),
+        4400
+    );
+    let rows = q["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["bot"], "otter");
+    assert_eq!(int(&rows[0]["tokens"]["total"]), 1100);
 }
 
 /// T8: every file of the state folder keeps its bytes (the query's companion rule: SQLite may

@@ -118,6 +118,7 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // Windows ships the helper (RFC 0016 delivery 6) this rule changes on purpose.
 // The landing page (apps/landing: the page, its styles, assets and checks; #177) is static and
 // ships from the site, never from a release: no app build and no plugin reads it (#370).
+// Automagik ID (apps/id/) is an independently deployed Worker with D1, never a release asset.
 // The server image (server/: the automagik-web Dockerfile, its build, smoke, scan and
 // entrypoint) is built, scanned and published to ghcr.io by its own workflow
 // (.github/workflows/server-image.yml); no release carries it as an asset, so a server-only
@@ -142,7 +143,7 @@ const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^apps\/desktop\/wslc\//,
   /^meter\/(statusline|schema)\//, /^meter\/usagemeter\/[^/]+\.md$/, /^meter\/usagemeter\/tests\//,
-  /^apps\/landing\//, /^server\//, /^apps\/dsh-sandbox\//, /^\.genie\//];
+  /^apps\/landing\//, /^apps\/id\//, /^server\//, /^apps\/dsh-sandbox\//, /^\.genie\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).

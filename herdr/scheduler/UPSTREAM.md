@@ -43,12 +43,26 @@ file, to be here) and prints each as patched or added; any other difference fail
 
 ```
 docs/adr/0012-a-successful-run-may-close-its-workspace.md — patched: existing mode closes its own tab; blocked grace
-internal/api/api.go            — patched: ls --json carries blocked_grace_minutes
-internal/api/api_test.go       — patched: the listing carries blocked_grace_minutes and its default
-internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab; a new automation's default agent args
-internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load
+docs/adr/0013-a-command-is-a-run-the-scheduler-does-itself.md — added: why a run may be a plain command (#938)
+automations.example.yaml       — patched: a command entry
+CHANGELOG.md                   — patched: the command kind, under Unreleased
+CONTEXT.md                     — patched: work has three kinds; command, result line, report
+internal/api/api.go            — patched: ls --json carries blocked_grace_minutes, kinds, command and notify; history a command run's result
+internal/api/api_test.go       — patched: the listing carries blocked_grace_minutes and its default; kinds, a command entry, a command run
+internal/cleanup/cleanup.go    — patched: a command entry has no repo to scan
+internal/command/command.go    — added: runs a command, its exit status, last lines, timeout and shutdown (#938)
+internal/command/command_test.go — added: exit 0, other exits, signal, timeout and its group, start failure, cleaned lines, shutdown
+internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab; a new automation's default agent args; command and notify
+internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load; command entries that load and that do not
 internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_minutes; existing + on-success accepted
-internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label
+internal/daemon/daemon.go      — patched: a daemon told to stop ends its running commands first
+internal/daemon/daemon_test.go — patched: the stop ends a running command and waits for its record
+internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label; hc send
+internal/history/history.go    — patched: a command run's exit code, result line, stderr and report
+internal/notify/bot.go         — added: a result line to a bot, by its label, through hc send (#938)
+internal/notify/bot_test.go    — added: label lookup, the terminal-name fallback, an undelivered report
+internal/runner/runner.go      — patched: a command run skips the host; true status, then the report
+skills/creating-automations/SKILL.md — patched: the command entry
 internal/herdr/herdr.go        — patched: tab id/list/close; pane process-info for a blocked agent's stop request
 internal/herdr/herdr_test.go   — patched: tab and pane process-info wire cases
 internal/host/agent.go         — patched: herdr blocked grace, rechecked stop; deadline and paced bounded submit retries; only idle or done ends a run done
@@ -66,10 +80,10 @@ internal/host/stop_resume_unix_test.go — added: cleared dialog before signal r
 internal/host/stop_other.go    — added: unsupported platform stop reports an error
 internal/host/screen.go        — added: the dialog line read from a blocked screen
 internal/host/screen_test.go   — added: dialog line, control characters, the bound and the fallback
-internal/runner/runner_test.go — patched: the blocked failure's notice; existing mode's default
-main.go                        — patched: put copies blocked_grace_minutes into the entry; put gives a new automation the form's default agent args
-main_test.go                   — added: the put wire path carries blocked_grace_minutes; existing + on-success accepted; put and a form save write the same file
-README.md                      — patched: blocked_grace_minutes, and existing mode's own-tab close
+internal/runner/runner_test.go — patched: the blocked failure's notice; existing mode's default; command runs and their reports
+main.go                        — patched: put copies blocked_grace_minutes, command and notify into the entry; put gives a new automation the form's default agent args, never a command; list and history show a command
+main_test.go                   — added: the put wire path carries blocked_grace_minutes; existing + on-success accepted; put and a form save write the same file; a command and its bot
+README.md                      — patched: blocked_grace_minutes, and existing mode's own-tab close; run a plain command
 ```
 
 Why: the #498 stopgap, two scheduler changes. An agent that stays `blocked` on a
@@ -130,10 +144,20 @@ agent that ends its turn having given up reports `done` like any other.
 
 `put` gives a new automation the form's automatic mode when the request sends no
 `agent_args` key (`config.DefaultAgentArgs`: codex and claude; no other agent, no
-template, no workflow). A sent key stands, an empty one included, and an edit
+template, no workflow, no command). A sent key stands, an empty one included, and an edit
 (`--original`) keeps the entry's own args as before. The table is the panel's
 `AUTO_ARGS`; `herdr/test/fixtures/automation-put-parity.json` holds the two equal
 (the panel's test checks the form's side, `main_test.go` that both write one file).
+
+The command kind (#938, ADR 0013): an automation may name `command:` (argv, a working folder,
+env) instead of a prompt or a workflow. The daemon starts the program itself, as its own user, with
+no pane and no model, bounded by `timeout_minutes` (SIGTERM to its process group, SIGKILL after ten seconds if anything in the
+group is left; a daemon told to stop ends its commands the same way). Exit 0 is `done`; any other exit, a signal, the
+timeout or a program that would not start is `failed`, with the exit code, the last lines of stderr
+and a one-line result in history. `notify: <bot>` sends that line to the terminal labelled
+`bot=<id>` (else a terminal by that name) through `hc send`; what became of the report is recorded
+after the status and never changes it. `ls --json` names the kinds a build runs (`kinds`), and
+carries `command` and `notify` like the other keys; `put` writes them with the same merge rules.
 
 The earlier patch is still why `close_workspace` exists in the API at all: the pack's
 panel sets it per automation (issue #498). `ls --json` names it for every entry, and

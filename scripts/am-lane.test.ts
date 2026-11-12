@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { KEY_ID, KEYS_FILE, SLOTS, keyVerdict, pointer, postedProblem, signPointer, slotFor, verify } from './am-lane';
+import { KEY_ID, KEYS_FILE, SLOTS, keyVerdict, ownHalfPost, pointer, postedProblem, signPointer, slotFor, verify } from './am-lane';
 
 // A throwaway key, made for this run only: no private key is ever committed.
 const pair = () => {
@@ -126,10 +126,80 @@ describe('the am lane', () => {
     const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
     const mine = signed('3.65.0', key);
     const other = signed('3.64.1', pair());
-    for (const [posted, sig] of [[other.bytes, other.sig], [mine.bytes, null], [null, mine.sig], [Buffer.from('nope'), mine.sig]] as const) {
+    for (const [posted, sig] of [[other.bytes, other.sig], [Buffer.from('nope'), mine.sig]] as const) {
       expect(postedProblem(mine.bytes, posted, sig, keys)).toMatch(/does not verify .* replace_unverified_am_pointer=true/);
       expect(postedProblem(mine.bytes, posted, sig, keys, { replaceUnverified: true })).toBeNull();
     }
     expect(postedProblem(mine.bytes, mine.bytes, mine.sig, [])).toMatch(/a key this am does not trust/);
+  });
+
+  // #768: an upload that fails between the two files leaves one of them on am-lane.
+  test('posted: a half-written pointer is never nothing posted; the refusal names the one-command repair', () => {
+    const key = pair();
+    const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
+    const mine = signed('3.65.0', key);
+    const older = signed('3.64.1', key);
+    const newer = signed('3.66.0', key);
+    // Only am.json.sig: a signature without its bytes says nothing, whoever's it is.
+    for (const sig of [mine.sig, older.sig, newer.sig]) {
+      const problem = postedProblem(mine.bytes, null, sig, keys, { repo: 'owner/repo' });
+      expect(problem).toMatch(/half-written \(am\.json is missing: only am\.json\.sig is posted.*sequence is unknown: refusing to replace it/);
+      expect(problem).toEndWith('re-run this job: gh release delete-asset am-lane am.json.sig --repo owner/repo --yes');
+      expect(postedProblem(mine.bytes, null, sig, keys, { replaceUnverified: true })).toBeNull();
+    }
+    // Only am.json, naming another am (older or newer, it is unsigned either way).
+    for (const posted of [older.bytes, newer.bytes, Buffer.from('nope')]) {
+      const problem = postedProblem(mine.bytes, posted, null, keys, { repo: 'owner/repo' });
+      expect(problem).toMatch(/half-written \(am\.json\.sig is missing: only am\.json is posted.*refusing to replace it/);
+      expect(problem).toEndWith('re-run this job: gh release delete-asset am-lane am.json --repo owner/repo --yes');
+      expect(ownHalfPost(mine.bytes, posted, null)).toBe(false);
+    }
+    // The repository defaults to am's own.
+    expect(postedProblem(mine.bytes, null, mine.sig, keys)).toContain('--repo automagik-dev/automagik --yes');
+  });
+
+  test('posted: am.json alone that names this same am is this release\'s own half-written post, and is finished', () => {
+    const key = pair();
+    const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
+    const mine = signed('3.65.0', key);
+    // A re-run of the job: the same am, a later issuedAt.
+    const rerun = Buffer.from(JSON.stringify({ ...JSON.parse(mine.bytes.toString('utf8')), issuedAt: 'later' }));
+    expect(rerun.equals(mine.bytes)).toBe(false);
+    expect(ownHalfPost(rerun, mine.bytes, null)).toBe(true);
+    expect(postedProblem(rerun, mine.bytes, null, keys)).toBeNull();
+    // Any other field that differs is another am: its commit, its tarball, its key.
+    for (const change of [{ commit: 'b'.repeat(40) }, { keyId: 'am-other' }, { sequence: 650001 }, { tarball: { sha256: 'x' } }]) {
+      const other = Buffer.from(JSON.stringify({ ...JSON.parse(mine.bytes.toString('utf8')), ...change }));
+      expect(ownHalfPost(rerun, other, null)).toBe(false);
+      expect(postedProblem(rerun, other, null, keys)).toMatch(/half-written/);
+    }
+    // With its signature present it is a whole pointer, judged as one.
+    expect(ownHalfPost(rerun, mine.bytes, mine.sig)).toBe(false);
+  });
+
+  test('posted as the release runs it: a folder with one of the two files stops the job, or is finished out loud', () => {
+    const mine = signed('3.65.0', pair());
+    const next = join(dir, 'next-am.json');
+    writeFileSync(next, mine.bytes);
+    const posted = (name: string, files: Record<string, string | Buffer>) => {
+      const folder = join(dir, name);
+      mkdirSync(folder);
+      for (const [file, bytes] of Object.entries(files)) writeFileSync(join(folder, file), bytes);
+      const env = { ...process.env, GITHUB_REPOSITORY: 'owner/repo' } as Record<string, string | undefined>;
+      delete env.AM_LANE_REPLACE_UNVERIFIED;
+      return spawnSync('bun', [SCRIPT, 'posted', next, folder], { encoding: 'utf8', env });
+    };
+    const sigOnly = posted('sig-only', { 'am.json.sig': mine.sig });
+    expect(sigOnly.status).toBe(1);
+    expect(sigOnly.stdout).not.toContain('no pointer posted yet');
+    expect(sigOnly.stderr).toContain('gh release delete-asset am-lane am.json.sig --repo owner/repo --yes');
+    const jsonOnly = posted('json-only', { 'am.json': signed('3.64.1', pair()).bytes });
+    expect(jsonOnly.status).toBe(1);
+    expect(jsonOnly.stdout).not.toContain('no pointer posted yet');
+    expect(jsonOnly.stderr).toContain('gh release delete-asset am-lane am.json --repo owner/repo --yes');
+    const own = posted('own', { 'am.json': mine.bytes });
+    expect(own.status).toBe(0);
+    expect(own.stdout).toContain('::warning::am lane: the posted pointer is half-written (am.json without am.json.sig) and names this same am');
+    expect(posted('none', {}).stdout).toContain('am lane: no pointer posted yet');
   });
 });

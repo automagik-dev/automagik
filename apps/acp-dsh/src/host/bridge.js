@@ -9,11 +9,16 @@
 // so it must not import the plugin's peers or the ACP SDK. It speaks newline-delimited JSON-RPC
 // (MCP). `server/discover` is answered `-32601`, as the spike shows both adapters then fall back
 // to the 2025-06-18/2025-11-25 handshake.
+import { request } from 'node:http'
 import { createInterface } from 'node:readline'
 
 const CREDENTIAL = process.env.DSH_BRIDGE_CREDENTIAL
 const URL = process.env.DSH_BRIDGE_URL
 const WAIT_MS = 20_000
+// The deadline of a short exchange (`list`, `hello`, `bye`). A `call` has none: DSH runs the
+// tool for as long as it takes (a long wait, a slow command, an approval dialog left open), and
+// a bridge that gave up first left DSH running a call nobody was waiting for (#957).
+const RPC_MS = Number(process.env.DSH_BRIDGE_RPC_TIMEOUT_MS) > 0 ? Number(process.env.DSH_BRIDGE_RPC_TIMEOUT_MS) : 60_000
 
 if (typeof CREDENTIAL !== 'string' || CREDENTIAL === '' || typeof URL !== 'string' || URL === '') {
   process.stderr.write('acp-dsh bridge: DSH_BRIDGE_CREDENTIAL and DSH_BRIDGE_URL are required\n')
@@ -31,24 +36,56 @@ const reply = (id, result) => write({ jsonrpc: '2.0', id, result })
 const fail = (id, code, message) => write({ jsonrpc: '2.0', id, error: { code, message } })
 const notify = (method, params) => write({ jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }) })
 
+const CANCELLED = Symbol('cancelled')
+
 class Fatal extends Error {}
 class Refused extends Error {}
 
-async function rpc(op, payload = {}) {
-  let response
-  try {
-    response = await fetch(URL, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${CREDENTIAL}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ op, ...payload }),
-      signal: AbortSignal.timeout(op === 'wait' ? WAIT_MS + 10_000 : 60_000),
-    })
-  } catch (error) {
-    throw new Refused(`back-channel unreachable: ${error?.message ?? error}`)
-  }
-  if (response.status === 401) throw new Fatal('the bridge credential is not valid for this Session')
-  if (!response.ok) throw new Refused(`back-channel answered ${response.status}`)
-  return response.json()
+// One exchange with the back-channel. Node's own `fetch` cannot carry a call: it has a fixed
+// five-minute wait for the answer's headers, so this is a plain HTTP request on a socket of its
+// own (no pooled socket, no idle timeout). `signal` ends the exchange early: the back-channel
+// sees the request close and stops the call.
+function rpc(op, payload = {}, { signal } = {}) {
+  const deadline = op === 'call' ? undefined : op === 'wait' ? WAIT_MS + 10_000 : RPC_MS
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ op, ...payload })
+    let timer
+    const fail = (error) => {
+      clearTimeout(timer)
+      reject(error instanceof Fatal ? error : new Refused(`back-channel unreachable: ${error?.message ?? error}`))
+    }
+    let outgoing
+    try {
+      outgoing = request(URL, {
+        method: 'POST',
+        agent: false,
+        headers: { authorization: `Bearer ${CREDENTIAL}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+        ...(signal === undefined ? {} : { signal }),
+      }, (response) => {
+        const chunks = []
+        response.on('data', chunk => chunks.push(chunk))
+        response.on('error', fail)
+        response.on('end', () => {
+          clearTimeout(timer)
+          if (response.statusCode === 401) return reject(new Fatal('the bridge credential is not valid for this Session'))
+          if (response.statusCode < 200 || response.statusCode > 299) return reject(new Refused(`back-channel answered ${response.statusCode}`))
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+          } catch (error) {
+            fail(error)
+          }
+        })
+      })
+    } catch (error) {
+      return fail(error)
+    }
+    if (deadline !== undefined) {
+      timer = setTimeout(() => outgoing.destroy(new Error('timed out')), deadline)
+      timer.unref?.()
+    }
+    outgoing.on('error', fail)
+    outgoing.end(body)
+  })
 }
 
 async function tools() {
@@ -70,10 +107,24 @@ async function readList() {
   }
 }
 
-async function call(params) {
+// The calls in flight, by their JSON-RPC request id, so `notifications/cancelled` can end one.
+const inflight = new Map()
+
+async function call(params, requestId) {
   const name = typeof params?.name === 'string' ? params.name : ''
   if (name === '') return { content: [{ type: 'text', text: 'The bridge needs a tool name.' }], isError: true }
-  const answer = await rpc('call', { name, arguments: params.arguments ?? {}, callId: typeof params._meta?.callId === 'string' ? params._meta.callId : undefined })
+  const controller = new AbortController()
+  inflight.set(requestId, controller)
+  let answer
+  try {
+    answer = await rpc('call', { name, arguments: params.arguments ?? {}, callId: typeof params._meta?.callId === 'string' ? params._meta.callId : undefined }, { signal: controller.signal })
+  } catch (error) {
+    // A cancelled request gets no response (MCP): the agent already stopped waiting for it.
+    if (controller.signal.aborted) return CANCELLED
+    throw error
+  } finally {
+    inflight.delete(requestId)
+  }
   const content = Array.isArray(answer.content) ? answer.content : []
   return { content: content.length > 0 ? content : [{ type: 'text', text: '' }], isError: answer.isError === true }
 }
@@ -123,8 +174,8 @@ const handlers = {
   async 'tools/list'() {
     return { tools: await readList() }
   },
-  async 'tools/call'(params) {
-    return call(params)
+  async 'tools/call'(params, requestId) {
+    return call(params, requestId)
   },
 }
 
@@ -137,8 +188,12 @@ async function handle(line) {
   }
   if (message === null || typeof message !== 'object' || typeof message.method !== 'string') return
   const id = message.id
-  // Notifications (no id) are acknowledged by doing nothing; `notifications/cancelled` included.
-  if (id === undefined) return
+  // Notifications (no id) are acknowledged by doing nothing, except `notifications/cancelled`:
+  // the agent stopped waiting for that call, so its request to DSH is closed and DSH stops it.
+  if (id === undefined) {
+    if (message.method === 'notifications/cancelled') inflight.get(message.params?.requestId)?.abort()
+    return
+  }
   if (message.method === 'shutdown') {
     reply(id, null)
     return stop()
@@ -149,7 +204,8 @@ async function handle(line) {
     return fail(id, -32601, `method not found: ${message.method}`)
   }
   try {
-    const result = await handler(message.params)
+    const result = await handler(message.params, id)
+    if (result === CANCELLED) return
     reply(id, result)
     if (message.method === 'tools/list' && !stopped) void poll()
   } catch (error) {

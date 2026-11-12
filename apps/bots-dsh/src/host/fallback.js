@@ -18,6 +18,7 @@
 // turn ended, it opens the fallback turn. A turn that started meanwhile (the person wrote
 // again) already ran on the fallback, so the notice is not sent then.
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { leavesCli } from '../shared/routes.js'
 import { splitRef } from './text.js'
 import { MODEL_ACCESS_REQUIRED, switchFailure, switchPending } from './model-state.js'
 
@@ -53,6 +54,20 @@ export function fallbackNotice(failed, fallback, failure) {
   })
 }
 
+/**
+ * What the chat reads when a failed turn is not moved to the fallback model: the Bot has Full
+ * access on its coding CLI, where the CLI itself runs without asking, and another
+ * model would run DSH's own tools at that level. The turn fails as it did, with its own error;
+ * this is one fixed sentence, the one the language tables carry (client/i18n.js, the pt-BR pack).
+ */
+export const STAYS_ON_CLI = 'The model failed and no other model answered in its place: this Bot has Full access on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
+export function stayNotice(failed) {
+  return createUserMessage({
+    content: [{ type: 'text', text: STAYS_ON_CLI }],
+    source: { kind: 'model-selection', form: 'notice', summary: `${label(failed)} failed; the Bot stays on it` },
+  })
+}
+
 export function install(rt) {
   const { ctx, config } = rt
   if (config.fallback === false) return
@@ -84,6 +99,28 @@ export function install(rt) {
     const failed = agent.session.requestHeader?.()?.config
     const fallback = fallbackFor({ failure, failed, fallback: await fallbackRoute().catch(() => undefined) })
     if (fallback === undefined) return decided
+    // A Session at Full access on a coding CLI is not moved to another provider on its own:
+    // there the CLI runs without asking, and the fallback model would run DSH's own tools
+    // unasked at the same level. The turn fails as it did, and the chat says why it stays.
+    // A level that cannot be read is not known to be Full access: the fallback goes on.
+    // It is the Bot's saved model that says it is on that CLI, not only the route that failed:
+    // a Session left on a CLI its Bot was moved off (a selection there that failed) is not one
+    // the person keeps on it, so it falls back as before. So does one whose Bot is not known.
+    const failedIn = agent.session?.id ?? agent.id
+    const owner = rt.botOf?.(rt.selfOf?.(failedIn))
+    const saved = typeof owner?.model === 'string' ? splitRef(owner.model).provider : undefined
+    if (leavesCli(failed, fallback) && saved === failed.provider && rt.sessionWide?.(failedIn, agent.session) === true) {
+      rt.warn(
+        'ds-bot: %s failed on %s (%s); it stays there, at Full access no other model takes over',
+        owner.name ?? agent.id, label(failed), failure.code,
+      )
+      try {
+        agent.session.append('user/message', stayNotice(failed), { surfaceOp: 'append' })
+      } catch (error) {
+        rt.warn('ds-bot: the notice that the Bot stays on its CLI was not written: %s', error)
+      }
+      return decided
+    }
     // DSH prepares the next step's route from agent.model; the failed step's own retry
     // keeps its fixed route, so the backup runs the turn this wakes. The Bot's own selection
     // is snapshotted whole (provider, model and its explicit reasoning effort) first.

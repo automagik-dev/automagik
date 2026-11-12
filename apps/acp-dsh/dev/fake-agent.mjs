@@ -10,6 +10,12 @@
 // plugin's bridge is exercised over real stdio. With FAKE_ACP_SKIP_MCP=1 it connects none, as
 // codex-acp does when the person's own Codex config already defines that server name.
 //
+// FAKE_ACP_DEAF_TO lists ACP methods (comma separated, as on the wire: `initialize`,
+// `session/new`, `session/set_config_option`, `session/set_mode`, `session/fork`,
+// `session/close`, `session/cancel`) it never hears: a request among them is never answered, as
+// a CLI waiting on a first-run question, a keychain dialog or an update leaves it, and with
+// `session/cancel` among them a prompt that waits to be cancelled ("hang", "drift") never ends.
+//
 // Like Claude Code's and Codex's adapters it offers its models and each model's efforts as
 // session config options (categories `model` and `thought_level`, the effort list rebuilt per
 // model), and each turn's thoughts start with the model and effort it runs on. With
@@ -17,6 +23,22 @@
 // list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
 // out, as Codex's does. FAKE_ACP_AUTH=session (or prompt) refuses `session/new` (or every
 // prompt) with ACP's auth_required, as an adapter whose CLI is signed out does.
+//
+// As a native agent's CLI (a command started with `acp`, #959): FAKE_ACP_SESSION_MODELS=1 offers
+// its models only as the session's own list (`models` in the `session/new` answer, switched
+// with `session/set_model`) and no config options, as Hermes does. The trace's `start` entry
+// keeps the arguments it was started with.
+//
+// FAKE_ACP_CHILD=1 starts a process of its own before it serves, as an agent's tool command is
+// (a shell, a build), and traces its id (`child`) once it runs; FAKE_ACP_CHILD=stubborn starts
+// one that ignores SIGTERM. Either ends by itself after a minute, so a failed test leaves none.
+//
+// FAKE_ACP_MODES=a,b,c makes it offer those permission modes (the first is the one it starts in)
+// and take `session/set_mode`, as both real adapters do; without it it offers none, as before.
+// A prompt that says "unasked" runs one of its own tools without asking permission, as an agent
+// does when its mode (or a rule in the person's own CLI settings) lets the call through, and
+// traces `own-tool-ran` with the mode it ran in; "unasked twice" runs two.
+// FAKE_ACP_IGNORE_CANCEL=1 makes it ignore `session/cancel`, as a stuck agent would.
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
@@ -38,6 +60,17 @@ const trace = (entry) => {
   if (TRACE === undefined) return
   try { appendFileSync(TRACE, `${JSON.stringify({ pid: process.pid, ...entry })}\n`) } catch {}
 }
+const MODES = (process.env.FAKE_ACP_MODES ?? '').split(',').filter(Boolean)
+const SESSION_MODELS = process.env.FAKE_ACP_SESSION_MODELS === '1'
+trace({ event: 'start', args: process.argv.slice(2) })
+const modesOf = session => (MODES.length === 0 ? {} : { modes: { currentModeId: session.mode, availableModes: MODES.map(id => ({ id, name: id })) } })
+// What a `session/new` answer says of models and modes, in either shape.
+const offersOf = session => ({
+  ...(SESSION_MODELS
+    ? { models: { currentModelId: session.model, availableModels: MODELS.map(({ value, name, description }) => ({ modelId: value, name, ...(description ? { description } : {}) })) } }
+    : OFFERS ? { configOptions: configOptions(session) } : {}),
+  ...modesOf(session),
+})
 
 function configOptions(session) {
   const model = MODELS.find(entry => entry.value === session.model)
@@ -111,12 +144,34 @@ async function attach(session, servers, sessionId) {
 // A 1x1 PNG, for the image calls.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
-const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
+// The methods this agent never hears are dropped off the wire, before anything can answer them.
+const DEAF_TO = new Set((process.env.FAKE_ACP_DEAF_TO ?? '').split(',').filter(Boolean))
+function hearing(stream) {
+  if (DEAF_TO.size === 0) return stream
+  const heard = new TransformStream({
+    transform(message, controller) {
+      if (DEAF_TO.has(message?.method)) return trace({ event: 'unheard', method: message.method })
+      controller.enqueue(message)
+    },
+  })
+  return { ...stream, readable: stream.readable.pipeThrough(heard) }
+}
+
+if (process.env.FAKE_ACP_CHILD !== undefined) {
+  const deaf = process.env.FAKE_ACP_CHILD === 'stubborn' ? "process.on('SIGTERM', () => {});" : ''
+  const child = spawn(process.execPath, ['-e', `${deaf} setTimeout(() => {}, 60_000); process.stdout.write('up')`], { stdio: ['ignore', 'pipe', 'ignore'] })
+  // Traced once it has run its first line: a stubborn one ignores the signal from then on.
+  child.stdout.once('data', () => trace({ event: 'child', child: child.pid }))
+  child.unref()
+  child.stdout.unref?.()
+}
+
+const stream = hearing(ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)))
 const sessions = new Map()
 let created = 0
 
 function newSession(sessionId, cwd) {
-  const session = { cwd, cancelled: false, turns: 0, model: MODELS[0].value, effort: MODELS[0].effort, mcp: new Map() }
+  const session = { cwd, cancelled: false, turns: 0, model: MODELS[0].value, effort: MODELS[0].effort, mode: MODES[0], mcp: new Map() }
   sessions.set(sessionId, session)
   return session
 }
@@ -134,7 +189,19 @@ const implementation = {
     const session = newSession(sessionId, params.cwd)
     await attach(session, params.mcpServers, sessionId)
     trace({ event: 'new-answer', sessionId, at: Date.now() })
-    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
+    return { sessionId, ...offersOf(session) }
+  },
+  // The session's own model list: registered by its wire name (serve-agent.mjs).
+  async setSessionModel(params) {
+    const session = sessions.get(params?.sessionId)
+    if (!SESSION_MODELS || !session) throw RequestError.methodNotFound('session/set_model')
+    if (!MODELS.some(entry => entry.value === params.modelId)) throw RequestError.invalidParams(undefined, `Unknown model: ${params.modelId}`)
+    // A model the agent lists and then cannot resolve, as Hermes answers for one.
+    if (process.env.FAKE_ACP_SET_MODEL_FAIL === params.modelId) throw RequestError.internalError({ details: 'model_resolution_failed' })
+    session.model = params.modelId
+    session.effort = undefined
+    trace({ event: 'set-model', sessionId: params.sessionId, modelId: params.modelId })
+    return {}
   },
   async forkSession(params) {
     if (process.env.FAKE_ACP_FORK_FAIL === '1') throw RequestError.invalidParams(undefined, 'fork refused')
@@ -147,6 +214,7 @@ const implementation = {
     session.turns = source.turns
     session.model = source.model
     session.effort = source.effort
+    session.mode = source.mode
     session.forkedFrom = params.sessionId
     trace({ event: 'fork', from: params.sessionId, sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
     // A fork that cannot offer the bridge: `session/fork` answers with a session whose server
@@ -157,7 +225,7 @@ const implementation = {
     const delay = Number(process.env.FAKE_ACP_FORK_DELAY_MS ?? 0)
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
     trace({ event: 'fork-answer', sessionId, from: params.sessionId, at: Date.now() })
-    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
+    return { sessionId, ...offersOf(session) }
   },
   async closeSession({ sessionId }) {
     trace({ event: 'close', sessionId })
@@ -186,6 +254,8 @@ const implementation = {
   async authenticate() { return {} },
   async cancel({ sessionId }) {
     trace({ event: 'cancel', sessionId })
+    // FAKE_ACP_IGNORE_CANCEL=1: an agent that goes on working after a cancel.
+    if (process.env.FAKE_ACP_IGNORE_CANCEL === '1') return
     const session = sessions.get(sessionId)
     if (session) {
       session.cancelled = true
@@ -201,7 +271,7 @@ const implementation = {
     // What the client actually sent this turn (a replayed transcript, for a crossing).
     trace({ event: 'prompt', sessionId, turns: session.turns, text: said })
     const update = u => conn.sessionUpdate({ sessionId, update: u })
-    if (OFFERS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
+    if (OFFERS || SESSION_MODELS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `you said "${said}".` } })
@@ -229,6 +299,23 @@ const implementation = {
       await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' })
       await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` Withdrawn: ${answer}.` } })
       return { stopReason: 'end_turn' }
+    }
+    // Its own tool under a mode that does not ask: no `session/request_permission` at all, so
+    // nothing the client answers can stop the call. The trace says it ran, and in which mode.
+    if (/unasked/.test(said)) {
+      const calls = /twice/.test(said) ? 2 : 1
+      for (let n = 1; n <= calls; n++) {
+        if (session.cancelled) return { stopReason: 'cancelled' }
+        const toolCallId = `unasked-${session.turns}-${n}`
+        const command = `touch unasked-${n}`
+        await update({ sessionUpdate: 'tool_call', toolCallId, title: `Run ${command}`, kind: 'execute', status: 'in_progress', rawInput: { command } })
+        trace({ event: 'own-tool-ran', sessionId, toolCallId, mode: session.mode })
+        await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: `ran ${n}` } }] })
+        await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` It ran unasked ${n}.` } })
+        // Between two calls the agent works for a moment, so a cancel can land.
+        if (n < calls) await new Promise(resolve => setTimeout(resolve, Number(process.env.FAKE_ACP_UNASKED_GAP_MS ?? 0)))
+      }
+      return { stopReason: session.cancelled ? 'cancelled' : 'end_turn' }
     }
     // A plain answer with no tool call: the turn ends cleanly, for tests about the session.
     if (/plain/.test(said)) return { stopReason: 'end_turn' }
@@ -369,6 +456,17 @@ const implementation = {
     }
     return { stopReason: 'end_turn' }
   },
+}
+
+// Only a fake that offers modes takes `session/set_mode`; the others answer Method Not Found.
+if (MODES.length > 0) {
+  implementation.setSessionMode = async ({ sessionId, modeId }) => {
+    if (!MODES.includes(modeId)) throw RequestError.invalidParams(undefined, `Unknown mode: ${modeId}`)
+    const session = sessions.get(sessionId)
+    if (session !== undefined) session.mode = modeId
+    trace({ event: 'set-mode', sessionId, modeId })
+    return {}
+  }
 }
 
 const conn = serveAgent(implementation, stream)

@@ -131,7 +131,13 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
     const env = await credentials?.resolve?.(OPENAI_ENV).catch(() => undefined)
     if (typeof env?.value === 'string' && env.value !== '') return { kind: 'openai', token: env.value }
     const service = codexService()
-    if (service !== undefined && (await service.imageAccess().catch(() => undefined))?.ready === true) return { kind: 'codex', service }
+    const access = await service?.imageAccess().catch(() => undefined)
+    if (access?.ready === true) return {
+      kind: 'codex', service, accountGeneration: access.accountGeneration,
+    }
+    // Legacy shared hosts must positively declare their scope. Missing/reloading/unreadable
+    // ACP cannot authorize billing an older grant; the shipped ACP only declares isolated.
+    if (service?.authScope !== 'shared' || access === undefined) return undefined
     const grant = await credentials?.readRecord?.(CODEX_RECORD).catch(() => undefined)
     const payload = grant?.kind === 'grant' ? grant.payload : undefined
     if (payload && typeof payload.access === 'string') {
@@ -222,7 +228,9 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
     }
     const chatgpt = found.kind === 'chatgpt'
     note(callId, { phase: 'generating', via: found.kind, partials: [], started: now(), error: undefined })
-    if (found.kind === 'codex') return drawWithCodex(found.service, { text, size, quality, background, callId, signal })
+    if (found.kind === 'codex') return drawWithCodex(found.service, {
+      text, size, quality, background, callId, signal, accountGeneration: found.accountGeneration,
+    })
     const base = {
       model: chatgpt ? CODEX_IMAGE_MODEL : OPENAI_IMAGE_MODEL,
       prompt: text,
@@ -276,7 +284,9 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
 
   // Codex draws in one piece: the card shows its drawing frame until the image is kept, with no
   // partial images. Its refusals (signed out, usage limit, timeout) are shown as they are.
-  async function drawWithCodex(service, { text, size, quality, background, callId, signal }) {
+  async function drawWithCodex(service, {
+    text, size, quality, background, callId, signal, accountGeneration,
+  }) {
     try {
       const made = await service.generateImage({
         prompt: text,
@@ -284,6 +294,7 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
         quality: QUALITIES.includes(quality) ? quality : 'auto',
         background: BACKGROUNDS.includes(background) ? background : 'auto',
         signal,
+        ...(accountGeneration === undefined ? {} : { accountGeneration }),
       }).catch((error) => { throw signal?.aborted ? error : refused(String(error?.message ?? error).slice(0, 300)) })
       if (typeof made?.base64 !== 'string' || made.base64 === '') throw refused('Codex answered without an image. Try again.')
       return await keep(made.base64, { callId, via: 'codex', size: SIZES.includes(size) ? size : 'auto' })

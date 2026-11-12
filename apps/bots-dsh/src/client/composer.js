@@ -1,9 +1,12 @@
 import { createElement as h, Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChatsIcon, ClockIcon, MicIcon, PaperclipIcon, PeopleIcon, PlusIcon, WaveIcon } from './icons.js'
+import { ChatsIcon, ClockIcon, MicIcon, PaperclipIcon, PeopleIcon, PlusIcon, ShieldIcon, WaveIcon } from './icons.js'
 import { BotMark } from './mark.js'
 import { useLinger, useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
+import { useAnchoredMenu } from './model-menu.js'
+import { cliOfBot, PermissionList, presetName } from './permission-picker.js'
+import { currentPart } from './text.js'
 
 // -------------------------------------------------------------------------
 // Composer: dictation mic and the voice-chat button. The shell's send
@@ -12,6 +15,9 @@ import { t } from './i18n.js'
 
 export const speechApi = () => window.SpeechRecognition ?? window.webkitSpeechRecognition
 const keepComposerFocus = event => event.preventDefault()
+const plusRow = (Icon, label, description, onClick, onMouseDown) => h('button', {
+  type: 'button', role: 'menuitem', className: 'bt-plus-row', ...(onMouseDown ? { onMouseDown } : {}), onClick,
+}, h(Icon), h('span', { className: 'bt-menu-label' }, label), h('span', { className: 'bt-plus-desc' }, description))
 
 export function useDictation(onText) {
   const [listening, setListening] = useState(false)
@@ -106,6 +112,37 @@ export function menuIcons(roster) {
 // menu, whose plan, permission, model and compact rows reach past what Omni keeps
 // for its Bots; "/" still opens that menu. Files go through the shell's own file
 // input beside it.
+// The permission level in the composer's one row: a shield and the level's name in the
+// accent ink, always visible. It opens the same explained levels the Details list uses and
+// saves through the same updateBot, with the one confirm step for Auto and Full access.
+export function ComposerPermission({ sessionId, useRoster, actions }) {
+  const roster = useRoster(value => value)
+  const bot = roster.byId[sessionId]
+  const catalog = roster.permissions
+  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: 320 })
+  if (!bot || !catalog?.options?.length || roster.readOnly || currentPart(bot) !== sessionId) return null
+  const saved = bot.permission ?? catalog.defaultPreset
+  const cli = cliOfBot(bot)
+  const name = presetName(saved, catalog)
+  const toggle = () => { if (isOpen) close(); else open() }
+  const pick = value => Promise.resolve(actions.updateBot(bot.id, { permission: value })).then(
+    () => { close(); return true },
+    (failure) => { actions.reportError?.(failure, 'permission'); return false },
+  )
+  return h(Fragment, null,
+    h('button', {
+      ref: button, type: 'button', className: 'bt-perm-chip', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
+      'aria-label': t('Permissions: {level}', { level: name }), title: t('Permissions: {level}', { level: name }),
+      onMouseDown: keepComposerFocus, onClick: toggle,
+    },
+    h(ShieldIcon, { size: 14 }),
+    h('span', null, name)),
+    shownPlace ? createPortal(h('div', {
+      ref: menu, className: `bt-menu bt-menu-up bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
+      role: 'menu', 'aria-label': t('Permissions'), style: shownPlace, 'data-leaving': leaving || undefined,
+    }, h(PermissionList, { catalog, saved, onPick: pick, name: bot.name, cli })), document.body) : null)
+}
+
 export function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
   const roster = useRoster(value => value)
   const [open, setOpen] = useState(null)
@@ -160,7 +197,7 @@ export function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
       ref: menu, className: 'bt-menu bt-menu-up bt-plus-menu', role: 'menu', 'aria-label': t('Add'),
       style: place ?? {}, 'data-leaving': leaving || undefined,
     },
-    shown.files ? h('button', { type: 'button', role: 'menuitem', onClick: attach }, h(PaperclipIcon), h('span', { className: 'bt-menu-label' }, t('Add files'))) : null,
-    canReference ? h('button', { type: 'button', role: 'menuitem', onMouseDown: keepComposerFocus, onClick: reference }, h(ChatsIcon), h('span', { className: 'bt-menu-label' }, t('Reference a chat'))) : null,
-    h('button', { type: 'button', role: 'menuitem', onClick: schedule }, h(ClockIcon), h('span', { className: 'bt-menu-label' }, t('Scheduled task')))), document.body) : null)
+    shown.files ? plusRow(PaperclipIcon, t('Add photos & files'), t('Upload from computer'), attach) : null,
+    canReference ? plusRow(ChatsIcon, t('Reference a chat'), t('Continue in another conversation'), reference, keepComposerFocus) : null,
+    plusRow(ClockIcon, t('Scheduled task'), t('Run this chat later'), schedule)), document.body) : null)
 }

@@ -730,7 +730,11 @@ test('Auto review refuses when the call row cannot be written', async () => {
     assert.equal(h.executed.length, 0)
     const events = h.session.snapshotEvents()
     assert.equal(events.filter(event => event.type === 'tool/call').length, 0)
-    assert.equal(events.filter(event => event.type === 'tool/result').length, 0)
+    // The advertisement stays in the log, so it is answered with DSH's not-started repair row:
+    // a step that ended with it unanswered would not load (#957).
+    const results = events.filter(event => event.type === 'tool/result')
+    assert.equal(results.length, 1)
+    assert.deepEqual(results[0].data.error, { name: 'ToolNotStartedError', code: 'TOOL_NOT_STARTED' })
     const synthetic = events.find(event => event.type === 'assistant/message')
     assert.equal(h.session.surface.nodes.includes(synthetic.seq), false, 'the synthetic block is closed')
   } finally {
