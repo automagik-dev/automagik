@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Queued (answers: Q1-Q8, 2026-11-10, by the owner, PR #1010; Q9 open) |
+| Status | Proposed (owner not yet read; answers: Q1-Q8, 2026-11-10, by the owner, PR #1010; Q9 open) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none (docs here; every delivery is under `.github/`, `scripts/` or top-level `*.md` such as `AGENTS.md`, which never ship, so none cuts a release) |
 | Created | 2026-11-10 |
