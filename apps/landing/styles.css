@@ -581,6 +581,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .we-use-list{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px var(--gap);margin:0;padding:0;list-style:none}
 .we-use-list li{display:flex}
 .we-use-copy{display:none}
+.we-use-pause{display:none}
 .used{display:inline-flex;align-items:center;gap:10px;min-height:44px;color:var(--text);text-decoration:none;white-space:nowrap;border-radius:10px;font:800 1.1rem/1 var(--head);letter-spacing:-.01em}
 .used img{display:block;max-width:none}
 .used-inset{margin:-10px}
@@ -596,6 +597,19 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .we-use-track:not(:focus-within) .we-use-copy{display:flex}
   .we-use-track:hover .we-use-list{animation-play-state:paused}
   @media (max-width:700px){.we-use-track:not(:focus-within){--edge:5%;--lap:132s}}
+  /* The pause switch, for a touch screen: a checkbox drawn as a small pill under the row. The
+     box itself covers the pill, so a tap, a click and the Space key all reach it. */
+  .we-use-pause{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;width:fit-content;min-height:44px;margin:8px auto 0;padding:0 16px 0 14px;border-radius:999px;color:var(--muted);font:700 .8rem/1 var(--head);letter-spacing:.02em;user-select:none;-webkit-user-select:none}
+  .we-use-pause input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+  .we-use-pause svg{fill:currentColor}
+  .we-use-pause .when-paused{display:none}
+  .we-use-pause:hover{color:var(--text);background:var(--bt-hover)}
+  .we-use-pause:has(input:focus-visible){outline:3px solid var(--ring);outline-offset:3px}
+  .we-use-pause:has(input:checked){color:var(--text);background:var(--bt-active)}
+  .we-use-pause:has(input:checked) .when-moving{display:none}
+  .we-use-pause:has(input:checked) .when-paused{display:block}
+  .we-use:has(.we-use-pause input:checked) .we-use-list{animation-play-state:paused}
+  .we-use-pause+.we-use-note{margin-top:6px}
   /* Page to page: a short cross-fade, the header holds still, a character travels to its page. */
   @view-transition{navigation:auto}
   ::view-transition-old(root){animation:page-out .16s ease-in both}

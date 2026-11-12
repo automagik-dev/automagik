@@ -239,6 +239,13 @@ test('the projects row: eleven projects in the approved order, each with its own
   const start = css.indexOf('@media (prefers-reduced-motion:no-preference){')
   assert.ok(css.indexOf('we-use-drift') > start && !css.slice(0, start).includes('.we-use-copy{display:flex}'))
   assert.ok(css.includes('.we-use-copy{display:none}') && css.includes('.we-use-track:hover .we-use-list{animation-play-state:paused}') && css.includes('.we-use-track:not(:focus-within) .we-use-list{'))
+  // The pause switch, for a touch screen: one plain checkbox between the row and its credit,
+  // no script, hidden unless the row drifts.
+  assert.equal(row.split('<label class="we-use-pause"><input type="checkbox">').length - 1, 1)
+  assert.match(row, /<\/ul><\/div>\n<label class="we-use-pause"><input type="checkbox">.*?<span class="when-moving">Pause<\/span><span class="when-paused">Paused<\/span><\/label>\n<p class="we-use-note wrap">/)
+  assert.ok(!row.includes('<script') && !/\son[a-z]+=/.test(row))
+  assert.ok(css.slice(0, start).includes('.we-use-pause{display:none}') && !css.slice(0, start).includes('.we-use-pause{position'))
+  assert.ok(css.indexOf('.we-use:has(.we-use-pause input:checked) .we-use-list{animation-play-state:paused}') > start)
 })
 
 test('the logo and the icons: the logo kit\'s own files, unchanged, in the header, the footer and the browser tab', async () => {

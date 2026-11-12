@@ -90,9 +90,15 @@ credit: no ranking, and no partnership, sponsorship or endorsement wording.
 - One line of credit under the row; the trademark sentence is in the footer's legal line on
   every page, and NATS™ is in its mark's alt text.
 - The row drifts only for a visitor who allows motion (slower on a phone, so every name is
-  whole on screen as it passes), stops under the pointer, and is the still, wrapped list with
-  reduced motion or with the keyboard in it. The second copy of the list only fills the gap
-  while it drifts and is out of reach of the keyboard and of assistive technology.
+  whole on screen for at least 7 s as it passes; the browser gate holds that number), stops
+  under the pointer, and is the still, wrapped list with reduced motion or with the keyboard
+  in it. The second copy of the list only fills the gap while it drifts and is out of reach
+  of the keyboard and of assistive technology.
+- Under the row is a pause switch (WCAG 2.2.2, Pause, Stop, Hide), for a touch screen, where
+  no pointer can rest on the row: a plain checkbox drawn as a small pill, "Pause" and then
+  "Paused", with no script. A tap, a click or the Space key holds the row where it is and
+  lets it go again; nothing on the page moves when it does. It is shown only while the row
+  drifts, so not with reduced motion.
 - `assets/brand/LICENSES.md` lists every file's source, the rule read and its SHA-256, and the
   standing rule: if a project's owner asks, its logo comes down the same day.
 

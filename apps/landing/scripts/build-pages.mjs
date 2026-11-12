@@ -72,11 +72,15 @@ const usedItem = ({ name, href, mark: [light, dark, width, height], shown, inset
   return `<li><a class="used" href="${href}">${picture}${wordmark ? '' : `<span${alt ? ' aria-hidden="true"' : ''}>${name}</span>`}</a></li>`
 }
 // The row is written twice: the second copy only fills the gap while the row drifts, and is
-// out of reach of the keyboard and of assistive technology.
+// out of reach of the keyboard and of assistive technology. Under it sits the pause switch, a
+// plain checkbox that needs no script: shown only while the row drifts, it holds the row
+// still for a visitor on a touch screen, who has no pointer to rest on it.
+const usedPause = `<label class="we-use-pause"><input type="checkbox"><svg class="when-moving" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path d="M4 2.5h2.6v11H4zM9.4 2.5H12v11H9.4z"/></svg><svg class="when-paused" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path d="M4.2 2.2 13 8l-8.8 5.8z"/></svg><span class="when-moving">Pause</span><span class="when-paused">Paused</span></label>`
 const usedRow = () => {
   const items = used.map(usedItem).join('')
   return `<section class="we-use" aria-labelledby="we-use-title"><h2 id="we-use-title" class="we-use-title">Things that made our stack possible</h2>
 <div class="we-use-track"><ul class="we-use-list">${items}</ul><ul class="we-use-list we-use-copy" aria-hidden="true" inert>${items}</ul></div>
+${usedPause}
 <p class="we-use-note wrap">${usedCredit}</p></section>`
 }
 const arrow = '<span aria-hidden="true">→</span>'
