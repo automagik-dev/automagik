@@ -56,17 +56,72 @@ a.detail-link:hover{text-decoration:underline}
 .unavailable span,.soon-pill,.tile-tag.soon{display:inline-block;padding:3px 10px;border-radius:999px;background:var(--st-lilac);color:var(--st-lilac-ink);font:800 .7rem/1.5 var(--head);letter-spacing:.12em;text-transform:uppercase}
 .soon-pill{font-size:.72rem}
 
-/* Header */
-.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 84%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
-.top-inner{display:flex;align-items:center;gap:28px;min-height:72px}
+/* Header: a real site's menus. Each button opens its panel through the browser's popover
+   (click, Enter or Space; Escape and a click outside close it and focus returns); hover opens
+   the same panel in CSS. The panel sits in one place under the header in both cases. */
+.top{--top-h:72px;position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 84%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
+.top-inner{display:flex;align-items:center;gap:clamp(12px,2.4vw,28px);min-height:var(--top-h)}
 .brand{display:block;flex-shrink:0}
 .brand img{width:150px}
-.main-nav{display:flex;gap:4px;align-items:center;margin-inline:auto;font:600 .94rem/1 var(--head)}
-.main-nav a{padding:10px 14px;border-radius:999px;text-decoration:none;color:color-mix(in srgb,var(--text) 82%,transparent)}
-.main-nav a:hover{background:var(--bt-hover);color:var(--text)}
-.main-nav a[aria-current="page"]{background:var(--bt-active);color:var(--text)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.main-nav{margin-right:auto;font:600 .94rem/1 var(--head)}
+.menus{display:flex;gap:2px}
+.menu{display:flex;align-items:center;min-height:var(--top-h)}
+.menu-button,.menu-open{appearance:none;display:inline-flex;align-items:center;gap:7px;border:0;border-radius:999px;background:none;color:color-mix(in srgb,var(--text) 86%,transparent);font:inherit;cursor:pointer}
+.menu-button{padding:10px 11px 10px 15px}
+.menu-button:hover,.menu-open:hover{background:var(--bt-hover);color:var(--text)}
+.menu-button[data-here]{background:var(--bt-active);color:var(--text)}
+.menu-here{padding-left:9px;border-left:1px solid var(--line-2);color:var(--accent)}
+.chev{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;opacity:.7;transition:rotate .16s ease}
+.menu:has(:popover-open) .menu-button{background:var(--bt-active);color:var(--text)}
+.menu:has(:popover-open) .chev{rotate:180deg}
+.menu-panel{display:none;position:fixed;inset:var(--top-h) auto auto 50%;translate:-50% 0;width:min(var(--max),calc(100vw - 2 * var(--gutter)));margin:0;padding:8px 0 0;border:0;background:none;color:var(--text);overflow:visible}
+.menu-panel:popover-open{display:block}
+.menu-card{max-height:calc(100dvh - var(--top-h) - 32px);overflow:auto;padding:14px;border-radius:24px;background:var(--paper);border:1px solid var(--line-2);box-shadow:var(--shadow-window)}
+.menu-list{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.menu-item{display:flex;align-items:flex-start;gap:14px;height:100%;padding:12px;border-radius:16px;text-decoration:none;color:var(--text)}
+.menu-item:hover{background:var(--bt-hover);color:var(--text)}
+.menu-item[aria-current="page"]{background:var(--bt-active)}
+.menu-icon{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:13px;background:var(--bg);border:1px solid var(--line)}
+.menu-art{width:32px;height:32px;object-fit:contain}
+.menu-icon .glyph{color:var(--accent)}
+.menu-text{min-width:0;font:400 .86rem/1.45 var(--body);color:var(--muted)}
+.menu-text strong{display:block;margin-bottom:2px;font:700 .98rem/1.35 var(--head);letter-spacing:-.01em;color:var(--text)}
+.menu-text>span{display:block}
+.menu-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px 28px;margin-top:10px;padding:14px 12px 4px;border-top:1px solid var(--line);font:400 .88rem/1.5 var(--body);color:var(--muted)}
+.menu-foot a{font:700 .9rem/1.4 var(--head);color:var(--accent)}
+.menu-foot span a{font:inherit;font-weight:600;color:var(--text)}
+@media (hover:hover){
+  .menu:hover>.menu-button{background:var(--bt-hover);color:var(--text)}
+  .menu:hover>.menu-panel{display:block}
+  /* One panel at a time: while one is open by click, hover does not lay another over it. */
+  .menus:has(:popover-open) .menu:hover>.menu-panel:not(:popover-open){display:none}
+}
 .top-cta{flex-shrink:0}
-.top-inner>a:last-child:not(.top-cta){margin-left:auto;font:600 .94rem/1 var(--head)}
+.top-inner>a:last-child:not(.top-cta):not(.menu-fallback){margin-left:auto;font:600 .94rem/1 var(--head)}
+.menu-open,.menu-fallback{display:none}
+.menu-open{min-height:44px;padding:8px 16px 8px 13px;background:var(--bt-hover);font:700 .92rem/1 var(--head)}
+.menu-glyph{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+/* The phone menu: one sheet under the header with the same three groups. The header stays,
+   and its Menu button closes the sheet again. While the sheet is open the page behind it is
+   hidden from the keyboard and from assistive technology. */
+.menu-glyph.cross,.top:has(.drawer:popover-open) .menu-glyph.bars{display:none}
+.top:has(.drawer:popover-open) .menu-glyph.cross{display:block}
+.top:has(.drawer:popover-open) .menu-open{background:var(--bt-active);color:var(--text)}
+.drawer{position:fixed;inset:var(--top-h) 0 0;width:100%;height:auto;max-width:none;max-height:none;margin:0;padding:6px calc(var(--gutter) - 12px) 40px;border:0;background:var(--bg);color:var(--text);overflow:auto;overscroll-behavior:contain}
+.drawer-label{margin:22px 12px 8px;font:800 .72rem/1.5 var(--head);letter-spacing:.18em;text-transform:uppercase;color:var(--ring)}
+.drawer .menu-list{grid-template-columns:minmax(0,1fr);gap:2px}
+.drawer .menu-item{align-items:center;padding:10px 12px}
+.drawer-foot{margin:26px 12px 0;padding-top:24px;border-top:1px solid var(--line)}
+.drawer-foot .button{width:100%}
+html:has(.drawer:popover-open){overflow:hidden}
+body:has(.drawer:popover-open) :is(main,.site-footer,.skip){visibility:hidden}
+/* A browser without popovers: the panels open on hover or focus, and the phone gets a link
+   to the footer's sitemap in place of the sheet. */
+@supports not selector(:popover-open){
+  .drawer,.menu-open{display:none !important}
+  .menu:hover>.menu-panel,.menu:focus-within>.menu-panel{display:block}
+}
 
 /* Stages and art */
 .constellation{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
@@ -132,18 +187,27 @@ a.detail-link:hover{text-decoration:underline}
 .wish-steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
 .wish-steps li{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.1);font:700 .78rem/1.4 var(--head);color:var(--on-plum)}
 .wish-steps li+li::before{content:"→";color:#ff9fd6;margin-left:-2px}
-[data-block="cloud"]{grid-column:span 6;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;background:var(--st-stage);border-color:transparent}
+[data-block="cloud"]{grid-column:span 4;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;background:var(--st-stage);border-color:transparent}
 [data-block="cloud"] .tile-art{padding-left:clamp(24px,4vw,56px)}
 .tile-pet{width:clamp(72px,9vw,112px);filter:drop-shadow(0 14px 18px rgba(60,48,73,.3))}
 [data-block="cloud"] .tile-copy{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;column-gap:32px}
 [data-block="cloud"] .tile-copy>*{grid-column:1;justify-self:start}
 [data-block="cloud"] .detail-link{grid-column:2;grid-row:1/span 3;align-self:center;margin:0;padding:12px 20px;border-radius:14px;background:var(--paper);color:var(--text);box-shadow:var(--st-lift)}
+/* Arca has no art of its own here: a plain text card on a quiet dotted ground. */
+[data-block="arca"]{grid-column:span 2;display:flex;flex-direction:column;justify-content:flex-end;background:radial-gradient(circle at 1.5px 1.5px,color-mix(in srgb,var(--text) 16%,transparent) 1.2px,transparent 1.7px) 0 0/18px 18px,var(--raised)}
+[data-block="arca"]::before{content:"";position:absolute;inset:0;z-index:0;background:linear-gradient(to top,var(--raised) 46%,transparent)}
 .also{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 36px;margin-top:22px;padding:18px 4px 0;border-top:1px solid var(--line)}
 .also-label{font:800 .7rem/1.5 var(--head);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .also .product-card{display:flex;align-items:baseline;gap:10px;background:none;border:0;border-radius:0;overflow:visible}
 .also .product-card h3{font-size:1.05rem}
 .also .product-card h3 a:hover{text-decoration:underline}
 .also .product-card p{margin:0;font-size:.92rem}
+
+/* Open Intelligence: the movement Automagik is part of, in its own words */
+.open{padding-block:clamp(36px,5vw,72px) clamp(28px,4vw,56px);text-align:center}
+.open-line{max-width:24ch;margin-inline:auto;font-size:clamp(1.7rem,1.05rem + 2.4vw,3.1rem);line-height:1.12}
+.open-part{margin-top:20px;color:var(--muted);font-size:1.05rem}
+.open-part a{color:var(--text);font-weight:600}
 
 /* Made by this team, with the film's quiet slot */
 .made{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.9fr);gap:clamp(28px,5vw,72px);align-items:center;padding-block:clamp(40px,5vw,72px) clamp(64px,8vw,112px)}
@@ -152,6 +216,15 @@ a.detail-link:hover{text-decoration:underline}
 .film-still img{width:100%;border-radius:22px;border:1px solid var(--line);box-shadow:var(--st-lift)}
 .film-still figcaption{margin-top:14px;font-size:.92rem;color:var(--muted)}
 .film-still strong{color:var(--text);font-weight:700}
+
+/* Where a product page is, and the way back */
+.crumbs{padding-top:20px;font:600 .88rem/1.4 var(--head);color:var(--muted)}
+.crumbs ol{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.crumbs li+li::before{content:"/";margin-right:10px;opacity:.55}
+.crumbs a{text-decoration:none}
+.crumbs a:hover{text-decoration:underline}
+.crumbs [aria-current]{color:var(--text)}
+.crumbs+.hero{padding-top:clamp(28px,3.6vw,52px)}
 
 /* Product page heroes */
 .split-hero{padding-block:clamp(44px,6vw,88px) clamp(40px,5vw,72px)}
@@ -286,10 +359,22 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .more-list a>span>span{display:block;font-size:.86rem;line-height:1.45;color:var(--muted);margin-top:2px}
 .more-art{flex:none;width:48px;height:48px;object-fit:contain}
 
+.pager{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px 20px;margin-top:28px}
+.pager-link{display:grid;gap:3px;padding:14px 20px;border-radius:20px;border:1px solid var(--line);background:var(--paper);text-decoration:none;transition:transform .16s ease,border-color .16s ease}
+.pager-link:hover{transform:translateY(-2px);border-color:var(--ring);color:var(--text)}
+.pager-link.next{text-align:right}
+.pager-link small{font:800 .7rem/1.5 var(--head);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.pager-link strong{font:800 1.12rem/1.3 var(--head);letter-spacing:-.015em}
+.pager-all{padding:10px 14px;font:700 .92rem/1.4 var(--head);color:var(--accent);text-decoration:none}
+.pager-all:hover{text-decoration:underline}
+
 /* Footer */
 .site-footer{background:var(--raised);border-top:1px solid var(--line)}
-.footer-grid{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(2,minmax(0,1fr));gap:32px 48px;padding-block:clamp(40px,5vw,64px) 36px}
+.footer-grid{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(3,minmax(0,1fr));gap:32px 48px;padding-block:clamp(40px,5vw,64px) 36px}
 .footer-brand p{margin-top:14px;color:var(--muted);font-size:.94rem;max-width:30ch}
+.footer-brand .footer-part{margin-top:10px;max-width:34ch}
+.footer-part a{color:var(--text);font-weight:600}
+.site-footer nav a[aria-current="page"]{font-weight:700}
 .site-footer nav{display:flex;flex-direction:column;align-items:flex-start;gap:10px;font-size:.94rem}
 .site-footer nav a{text-decoration:none}
 .site-footer nav a:hover{text-decoration:underline}
@@ -304,7 +389,9 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .qr svg{display:block;width:100%;height:auto;background:#fff;border-radius:12px;padding:10px}
 
 @media (max-width:1100px){
-  .main-nav a{padding-inline:10px}
+  .menu-list{grid-template-columns:repeat(3,minmax(0,1fr))}
+  [data-block="cloud"] .tile-copy{grid-template-columns:minmax(0,1fr)}
+  [data-block="cloud"] .detail-link{grid-column:1;grid-row:auto;justify-self:start;margin-top:18px}
   [data-block="desktop"]{grid-column:span 6}
   [data-block="mobile"]{grid-column:span 6;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr);min-height:340px}
   [data-block="mobile"] .tile-art{align-items:flex-end}
@@ -313,7 +400,13 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 }
 @media (max-width:860px){
   .main-nav{display:none}
-  .top-inner{justify-content:space-between}
+  .top{--top-h:64px}
+  .top-cta{margin-left:auto}
+  .menu-open{display:inline-flex}
+  @supports not selector(:popover-open){.menu-fallback{display:inline-flex;align-items:center;min-height:44px;padding:8px 16px;border-radius:999px;background:var(--bt-hover);font:700 .92rem/1 var(--head);text-decoration:none}}
+  .footer-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .footer-brand{grid-column:1/-1}
+  [data-block="cloud"],[data-block="arca"]{grid-column:span 6}
   .split,.pair-card,.close,.omni-story,.made,.form-section{grid-template-columns:minmax(0,1fr)}
   .pair-notes{padding:24px 0 0;border-left:0;border-top:1px solid var(--line)}
   .form-intro{position:static}
@@ -321,19 +414,15 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .channel-grid,.install-grid,.principles{grid-template-columns:minmax(0,1fr)}
   .flow-steps{grid-template-columns:minmax(0,1fr);max-width:560px}
   [data-block="omni"],[data-block="genie"]{grid-column:span 6;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr)}
-  [data-block="cloud"] .tile-copy{grid-template-columns:minmax(0,1fr)}
-  [data-block="cloud"] .detail-link{grid-column:1;grid-row:auto;justify-self:start;margin-top:18px}
 }
 @media (max-width:700px){
-  html{scroll-padding-top:24px}
+  html{scroll-padding-top:84px}
   body{font-size:1rem}
-  .top{position:static}
-  .top-inner{min-height:64px;gap:12px;padding-top:10px}
   .brand img{width:124px}
-  .main-nav{display:flex;order:3;width:100%;margin:0 calc(-1 * var(--gutter));padding:0 var(--gutter) 10px;overflow-x:auto;scrollbar-width:none;gap:6px}
-  .main-nav::-webkit-scrollbar{display:none}
-  .main-nav a{flex:none;padding:8px 14px;background:var(--bt-hover)}
-  .top-inner{flex-wrap:wrap}
+  .pager{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pager-all{grid-column:1/-1;grid-row:1;justify-self:start;padding-left:4px}
+  .pager-link{padding:12px 16px}
+  .crumbs{padding-top:16px}
   .home-hero{padding-top:44px}
   .home-hero{padding-bottom:56px}
   .scene{--band:104px;margin-top:6px}
@@ -369,11 +458,13 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .desktop-hero .unavailable,.mobile-hero .unavailable{flex:1 1 100%;justify-content:center}
   .mobile-hero .unavailable{justify-content:flex-start}
   .footer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .footer-brand{grid-column:1/-1}
   .channel-art{padding-inline:20px}
 }
+@media (max-width:480px){
+  .top-cta{display:none}
+  .menu-open{margin-left:auto}
+}
 @media (max-width:360px){
-  .top-cta{padding-inline:12px}
   .brand img{width:108px}
   .bubble{font-size:.74rem}
   .scene-omni{width:78px}

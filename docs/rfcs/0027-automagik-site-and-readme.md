@@ -58,7 +58,7 @@ No extra product pages are introduced. Nothing goes live before the owner's OKs.
 | `/omni/` | Omni connects chat apps to Automagik, with channels and canvases in the same window. |
 | `/genie/` | A wish becomes a branch, test run and report the person approves; `genie desktop` opens it on the team. |
 | `/cloud/` | Coming soon, private and paid, not live. The intent form, confirmation choices, consent, privacy note and removal form. |
-| `/arca` and `/arca/*` | Owned and served by Arca’s Worker, not Pages. The home card links to `/arca/` in the same tab. |
+| `/arca` and `/arca/*` | Owned and served by Arca’s Worker, not Pages. The home card links to `/arca/` in the same tab. Until Arca’s site is deployed, Pages carries one stand-in page at `/arca/` (see “Arca boundary and root discovery”). |
 | `/mykes/` | Coming soon. No invented features, download or licence claim. |
 
 There is no meter page or meter product card. A page that uses usagemeter may describe it
@@ -303,6 +303,27 @@ paths remain with Pages. The owner adds a zone Single Redirect with BOTH hostnam
 `automagik.si` AND URI path equal to `/arca`: 301 to `https://automagik.si/arca/`, preserving
 the query. A path-only redirect is wrong because `arca.automagik.si` is Arca's dashboard.
 No account routing or redirect is changed by this delivery.
+
+**Stand-in, 2026-11-12.** Arca's own site is not deployed yet and has no date. Until it is
+served at this address, Pages carries exactly one stand-in page at `/arca/` and nothing under
+it: Arca's name, one line taken from this repository's own text about Arca, a Get Arca button
+to `https://get.automagik.si/arca`, and the way back to all products. Arca is a product in
+the site's menus, the home blocks and the footer. The root `robots.txt`, `sitemap.xml` and
+`llms.txt` keep Arca's supplied lines unchanged. When Arca's Worker takes the routes above,
+the stand-in page is removed; nothing else changes.
+
+### A website's navigation, and we unfold, 2026-11-12
+
+The owner on the redesign's preview: it is the real website, not a landing page. The header
+has Products, Resources and Company menus with a one-line description per entry, a phone
+menu with the same groups, the active page in the header, a footer sitemap with the same
+groups, and on each product page the way back to all products and the previous and next
+product. The pages still carry no client JavaScript: the menus use the browser's popover.
+
+Automagik is part of we unfold, the home of the Open Intelligence movement. The link
+(`https://weunfold.ai/`) and both lines of wording live in one constant in
+`apps/landing/scripts/build-pages.mjs` and appear in the footer's brand line, the Company
+menu and once on the home page. The owner approves the two lines before the site goes live.
 
 Arca's supplied sitemap entries are included verbatim:
 

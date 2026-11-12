@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { waitlistForm, privacyNote } from '../waitlist/lib/ui.js'
 
-export const routes = ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/mykes/']
+export const routes = ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
 const repo = 'https://github.com/automagik-si/automagik'
 const mac = `${repo}/releases/latest/download/Automagik-Mac.dmg`
 const linux = `${repo}/releases/latest/download/Automagik-Linux.deb`
@@ -13,6 +13,22 @@ const dsh = `${repo}/tree/dev/apps/bots-dsh#install`
 const captures = `${repo}/blob/dev/apps/landing/assets/CAPTURES.md`
 const releases = JSON.parse(await readFile(new URL('../assets/releases.json', import.meta.url), 'utf8'))
 const artFiles = JSON.parse(await readFile(new URL('../assets/art/manifest.json', import.meta.url), 'utf8')).files
+// WE UNFOLD: the one place for its link and wording. The owner approves both lines before the
+// site goes live; change them here and regenerate. Rules from the we unfold team: "Open
+// Intelligence" always with both capitals and never shortened; "we unfold" in lower case in
+// running text; "part of" is the movement, not ownership; no logo, the text is the link.
+export const weUnfold = {
+  url: 'https://weunfold.ai/',
+  name: 'we unfold',
+  partOf: 'Automagik is part of we unfold, the home of the Open Intelligence movement.',
+  openIntelligence: 'Open Intelligence: a future more people can understand, question, and shape.',
+}
+// ARCA: a stand-in page until Arca's own site is served at /arca/. Its one line comes from
+// this repository's own text about Arca (RFC 0010 and RFC 0024), nothing more.
+export const arca = {
+  line: 'A kernel for Linux hosts, built on Incus.',
+  get: 'https://get.automagik.si/arca',
+}
 const licensing = 'This repository, Genie and Omni: free and open source, Apache-2.0. Cloud: a private, paid service; its contracts are public.'
 const arrow = '<span aria-hidden="true">→</span>'
 const down = '<span aria-hidden="true">↓</span>'
@@ -49,37 +65,96 @@ function constellation() {
   return `<svg class="constellation" viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false"><defs>${ball('c', '#a6ecf8', '#1aa9cc')}${ball('p', '#ffb3d8', '#d63384')}${ball('v', '#d9c2ff', '#8457e0')}</defs><g class="threads">${links.map(line).join('')}</g><path class="arc" d="M200 40 Q300 120 290 220"/><path class="arc" d="M1000 420 Q930 470 900 560"/>${nodes.map(dot).join('')}</svg>`
 }
 
-const nav = [['/desktop/', 'Desktop'], ['/mobile/', 'Mobile'], ['/omni/', 'Omni'], ['/genie/', 'Genie'], ['/cloud/', 'Cloud']]
-const blocks = [
-  ['/desktop/', 'Desktop', 'app-icon', 'Your agent team, in your chats.'],
-  ['/mobile/', 'Mobile', 'app-icon', 'Your agents on your Android phone.'],
-  ['/omni/', 'Omni', 'omni', 'Your chat apps, connected.'],
-  ['/genie/', 'Genie', 'genie', 'A wish, a branch, a report.'],
-  ['/cloud/', 'Cloud', 'pet', 'Coming soon. Register your interest.'],
+// The site's navigation: three groups, the same in the header menus, the phone menu and the
+// footer. Products keep one order everywhere, which is also the previous/next order.
+const products = [
+  { href: '/desktop/', name: 'Desktop', image: 'app-icon', line: 'Your agent team, in your chats.' },
+  { href: '/mobile/', name: 'Mobile', image: 'app-icon', line: 'Your agents on your Android phone.' },
+  { href: '/omni/', name: 'Omni', image: 'omni', line: 'Your chat apps, connected.' },
+  { href: '/genie/', name: 'Genie', image: 'genie', line: 'A wish, a branch, a report.' },
+  { href: '/cloud/', name: 'Cloud', image: 'pet', line: 'Coming soon. Register your interest.' },
+  { href: '/arca/', name: 'Arca', image: 'mark', line: arca.line },
+  { href: '/mykes/', name: 'Mykes', image: 'mark', line: 'Coming soon.' },
 ]
-const brand = '<a class="brand" href="/" aria-label="Automagik home"><img src="/assets/brand/lockup.webp" width="170" height="36" alt="Automagik"></a>'
-function frame(route, title, body) {
-  const links = nav.map(([href, label]) => `<a href="${href}"${href === route ? ' aria-current="page"' : ''}>${label}</a>`).join('')
-  const footerBlocks = [...nav, ['/arca/', 'Arca'], ['/mykes/', 'Mykes']].map(([href, label]) => `<a href="${href}">${label}</a>`).join('')
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${title} · Automagik</title><meta name="description" content="Automagik: open building blocks of superintelligence. Explore Desktop, Mobile, Omni, Genie, Cloud, Arca and Mykes."><meta name="robots" content="noindex, nofollow"><meta name="theme-color" content="#f6eee2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1e1923" media="(prefers-color-scheme: dark)"><link rel="canonical" href="https://automagik.si${route}"><link rel="icon" type="image/png" href="/assets/brand/app-icon.png"><link rel="preload" href="/assets/brand/manrope-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/styles.css"></head>
-<body><a class="skip" href="#main">Skip to content</a><header class="top"><div class="wrap top-inner">${brand}<nav class="main-nav" aria-label="Main navigation">${links}</nav><a class="button primary small top-cta" href="/desktop/#install">Get the app</a></div></header>
-<main id="main">${body}</main>
-<footer class="site-footer"><div class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p></div><nav aria-label="All building blocks"><p class="footer-head">Building blocks</p>${footerBlocks}</nav><nav aria-label="Project"><p class="footer-head">Project</p><a href="${repo}">Repository ${out}</a></nav><p class="footer-license">${licensing}</p></div></footer></body></html>\n`
+const resources = [
+  { href: `${repo}/tree/dev/apps/desktop`, name: 'Desktop guide', glyph: 'book', line: 'How the app, its Bots and their permissions work.', external: true },
+  { href: `${repo}/tree/dev/apps/pocket`, name: 'Mobile guide', glyph: 'phone', line: 'Install the Android app and pair it with your machines.', external: true },
+  { href: repo, name: 'GitHub', glyph: 'code', line: 'The code, the releases and the issues.', external: true },
+  { href: captures, name: 'How the screens were captured', glyph: 'camera', line: 'The real app, a fictional team, scripted replies.', external: true, header: true },
+]
+const company = [
+  { href: weUnfold.url, name: weUnfold.name, glyph: 'globe', line: weUnfold.openIntelligence, external: true },
+  { href: `${repo}/issues`, name: 'Support', glyph: 'chat', line: 'Ask a question or report a problem on GitHub.', external: true },
+  { href: '/cloud/#privacy', name: 'Privacy', glyph: 'ask', line: 'What we keep, and how to remove your details.' },
+]
+const blocks = products.slice(0, 5).map(({ href, name, image, line }) => [href, name, image, line])
+const partOf = () => {
+  assert.equal(weUnfold.partOf.split(weUnfold.name).length, 2, 'the part-of line names we unfold once')
+  return weUnfold.partOf.replace(weUnfold.name, `<a href="${weUnfold.url}">${weUnfold.name}</a>`)
 }
-// The other blocks, each with its own art: the way on from every page.
-function more(route) {
-  const items = blocks.filter(([href]) => href !== route).map(([href, label, image, line]) => `<li><a href="${href}">${art(image, '', { cls: `more-art more-${image}` })}<span><strong>${label}</strong><span>${line}</span></span></a></li>`).join('')
-  return `<section class="more wrap" aria-labelledby="more-title"><h2 id="more-title" class="more-title">More building blocks</h2><ul class="more-list">${items}</ul></section>`
-}
-const heading = (eyebrow, title, intro) => `<p class="eyebrow">${eyebrow}</p><h1>${title}</h1><p class="intro">${intro}</p>`
 const icon = {
   ai: '<path d="M12 3l1.8 4.6L18.5 9l-4.7 1.6L12 15l-1.8-4.4L5.5 9l4.7-1.4z"/><path d="M18 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>',
   files: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
   secret: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/><circle cx="12" cy="15.5" r="1.4"/>',
   ask: '<path d="M12 3.5l7 3v5.2c0 4.3-3 7.6-7 8.8-4-1.2-7-4.5-7-8.8V6.5z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
+  book: '<path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v15H7.5A2.5 2.5 0 0 0 5 20.5z"/><path d="M5 20.5A2.5 2.5 0 0 0 7.5 21H19v-3"/><path d="M9 7.5h6"/>',
+  phone: '<rect x="7" y="2.8" width="10" height="18.4" rx="2.6"/><path d="M10.8 18h2.4"/>',
+  code: '<path d="M8.5 8l-4.5 4 4.5 4"/><path d="M15.5 8l4.5 4-4.5 4"/><path d="M13.4 5.5l-2.8 13"/>',
+  camera: '<path d="M3.5 9a2 2 0 0 1 2-2h2.2l1.5-2.2h5.6L16.3 7h2.2a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.4"/>',
+  globe: '<circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/><path d="M12 3.4c2.7 2.5 2.7 14.7 0 17.2"/><path d="M12 3.4c-2.7 2.5-2.7 14.7 0 17.2"/>',
+  chat: '<path d="M4.5 6.5A2.5 2.5 0 0 1 7 4h10a2.5 2.5 0 0 1 2.5 2.5v6.5a2.5 2.5 0 0 1-2.5 2.5h-5.2L7.5 19.5v-4H7a2.5 2.5 0 0 1-2.5-2.5z"/>',
+  menu: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>',
+  close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
+  chevron: '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
 }
-const glyph = name => `<svg class="glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon[name]}</svg>`
+const glyph = (name, cls = 'glyph') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon[name]}</svg>`
+const brand = '<a class="brand" href="/" aria-label="Automagik home"><img src="/assets/brand/lockup.webp" width="170" height="36" alt="Automagik"></a>'
+const entry = route => ({ href, name, line, image, glyph: mark, external }) => `<li><a class="menu-item" href="${href}"${href === route ? ' aria-current="page"' : ''}><span class="menu-icon">${image ? art(image, '', { cls: 'menu-art' }) : glyph(mark)}</span><span class="menu-text"><strong>${name}${external ? ` ${out}` : ''}</strong><span>${line}</span></span></a></li>`
+// Menus without client scripting: each button opens its panel through the browser's own
+// popover. The browser keeps the button's expanded state, closes the panel on Escape or a
+// click outside, and returns focus to the button. Hover opens the same panel in CSS. On a
+// phone the Menu button opens one sheet under the header with the same three groups.
+function header(route) {
+  const here = products.find(({ href }) => href === route)
+  const groups = [
+    ['products', 'Products', products, `<span>Use one, or bring them together.</span><a href="/#blocks">All products ${arrow}</a>`],
+    ['resources', 'Resources', resources, `<span>${licensing}</span>`],
+    ['company', 'Company', company, `<span>${partOf()}</span>`],
+  ]
+  const menus = groups.map(([id, label, items, foot]) => {
+    const current = id === 'products' && here
+    return `<li class="menu"><button class="menu-button" type="button" popovertarget="menu-${id}"${current ? ' data-here' : ''}>${label}${current ? `<span class="menu-here"><span class="sr">, current page: </span>${here.name}</span>` : ''}${glyph('chevron', 'chev')}</button><div class="menu-panel" id="menu-${id}" popover><div class="menu-card"><ul class="menu-list">${items.map(entry(route)).join('')}</ul><p class="menu-foot">${foot}</p></div></div></li>`
+  }).join('')
+  const sheet = groups.map(([id, label, items]) => `<section class="drawer-group" aria-labelledby="drawer-${id}"><h2 id="drawer-${id}" class="drawer-label">${label}</h2><ul class="menu-list">${items.map(entry(route)).join('')}</ul></section>`).join('')
+  return `<header class="top"><div class="wrap top-inner">${brand}<nav class="main-nav" aria-label="Main navigation"><ul class="menus">${menus}</ul></nav><a class="button primary small top-cta" href="/desktop/#install">Get the app</a><button class="menu-open" type="button" popovertarget="site-menu">${glyph('menu', 'menu-glyph bars')}${glyph('close', 'menu-glyph cross')}Menu</button><a class="menu-fallback" href="#sitemap">Menu</a></div>
+<nav class="drawer" id="site-menu" popover aria-label="All pages">${sheet}<div class="drawer-foot"><a class="button primary" href="/desktop/#install">Get the app ${arrow}</a><p class="fine">${partOf()}</p></div></nav></header>`
+}
+function footer(route) {
+  const column = (label, items) => `<nav aria-label="${label}"><p class="footer-head">${label}</p>${items.map(({ href, name, external }) => `<a href="${href}"${href === route ? ' aria-current="page"' : ''}>${name}${external ? ` ${out}` : ''}</a>`).join('')}</nav>`
+  // The capture notes are linked from the header's Resources menu, not from the footer.
+  return `<footer class="site-footer"><div id="sitemap" class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p><p class="footer-part">${partOf()}</p></div>${column('Products', products)}${column('Resources', resources.filter(item => !item.header))}${column('Company', company)}<p class="footer-license">${licensing}</p></div></footer>`
+}
+// Every product page says where it is and leads back to all products.
+function crumbs(route) {
+  const here = products.find(({ href }) => href === route)
+  return `<nav class="crumbs wrap" aria-label="Breadcrumb"><ol><li><a href="/#blocks">All products</a></li><li><span aria-current="page">${here.name}</span></li></ol></nav>`
+}
+function frame(route, title, body) {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${title} · Automagik</title><meta name="description" content="Automagik: open building blocks of superintelligence. Explore Desktop, Mobile, Omni, Genie, Cloud, Arca and Mykes."><meta name="robots" content="noindex, nofollow"><meta name="theme-color" content="#f6eee2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1e1923" media="(prefers-color-scheme: dark)"><link rel="canonical" href="https://automagik.si${route}"><link rel="icon" type="image/png" href="/assets/brand/app-icon.png"><link rel="preload" href="/assets/brand/manrope-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/styles.css"></head>
+<body><a class="skip" href="#main">Skip to content</a>${header(route)}
+<main id="main">${route === '/' ? '' : crumbs(route)}${body}</main>
+${footer(route)}</body></html>\n`
+}
+// The other blocks, each with its own art: the way on from every page.
+function more(route) {
+  const items = blocks.filter(([href]) => href !== route).map(([href, label, image, line]) => `<li><a href="${href}">${art(image, '', { cls: `more-art more-${image}` })}<span><strong>${label}</strong><span>${line}</span></span></a></li>`).join('')
+  const at = products.findIndex(({ href }) => href === route), step = by => products[(at + by + products.length) % products.length]
+  const previous = step(-1), next = step(1)
+  const pager = `<nav class="pager" aria-label="Previous and next product"><a class="pager-link" rel="prev" href="${previous.href}"><small><span aria-hidden="true">←</span> Previous</small><strong>${previous.name}</strong></a><a class="pager-all" href="/#blocks">All products</a><a class="pager-link next" rel="next" href="${next.href}"><small>Next ${arrow}</small><strong>${next.name}</strong></a></nav>`
+  return `<section class="more wrap" aria-labelledby="more-title"><h2 id="more-title" class="more-title">More building blocks</h2><ul class="more-list">${items}</ul>${pager}</section>`
+}
+const heading = (eyebrow, title, intro) => `<p class="eyebrow">${eyebrow}</p><h1>${title}</h1><p class="intro">${intro}</p>`
 
 export function pages() {
   const preview = 'Automagik Mobile, in the app’s own interface preview with sample data'
@@ -88,6 +163,9 @@ export function pages() {
     chat: `${preview}: a Bot’s chat asks for approval to run the tests, with No and Yes buttons.`,
     code: `${preview}: the Code tab, with three projects and their Bots.`,
   }
+  const [term, rest] = weUnfold.openIntelligence.split(/(?<=:) /)
+  assert.ok(rest, 'the Open Intelligence line starts with its name and a colon')
+  const openLine = `<span class="ink-grad">${term}</span> ${rest}`
   const phone = (screen, cls, eager = false) => `<div class="phone ${cls}">${art(`pocket-${screen}`, phoneAlt[screen], { dark: true, sizes: '(max-width: 700px) 220px, 300px', eager })}</div>`
 
   const home = `<section class="hero home-hero">${constellation()}<div class="wrap home-hero-inner"><div class="hero-heading center">${heading('Automagik', 'Open building blocks of <span class="ink-grad">superintelligence.</span>', 'Use one, or bring them together. Explore the tools that put your own agents to work.')}<div class="actions center"><a class="button primary" href="#blocks">Find your starting point ${down}</a><a class="button secondary" href="/desktop/">Get Automagik Desktop ${arrow}</a></div></div>
@@ -99,8 +177,10 @@ export function pages() {
 <article class="product-card" data-block="omni"><div class="tile-copy"><p class="tile-tag">Chat apps</p><h3><a href="/omni/">Omni</a></h3><p>Connect your chat apps to Automagik, with channels and canvases in the same window.</p><span class="detail-link" aria-hidden="true">Meet Omni →</span></div><div class="tile-art">${art('omni', 'Omni, the clay octopus.', { cls: 'tile-omni' })}</div></article>
 <article class="product-card" data-block="genie"><div class="tile-copy"><p class="tile-tag">Wishes</p><h3><a href="/genie/">Genie</a></h3><p>Turn a wish into a branch, a test run and a report you approve.</p><ol class="wish-steps" aria-label="What a wish becomes"><li>Wish</li><li>Branch</li><li>Test run</li><li>Report</li></ol><span class="detail-link" aria-hidden="true">Meet Genie →</span></div><div class="tile-art">${art('genie', 'Genie, the clay character with magenta hair.', { cls: 'tile-genie' })}${art('lamp', '', { cls: 'tile-lamp' })}</div></article>
 <article class="product-card" data-block="cloud"><div class="tile-art">${art('pet', 'The Automagik triskelion as a clay character with a small face.', { cls: 'tile-pet' })}</div><div class="tile-copy"><p class="tile-tag soon">Coming soon</p><h3><a href="/cloud/">Cloud</a></h3><p>One sign-in, organisations and hosted workspaces. Coming soon; register your interest.</p><span class="detail-link" aria-hidden="true">Explore Cloud →</span></div></article>
+<article class="product-card" data-block="arca"><div class="tile-copy"><p class="tile-tag">Linux hosts</p><h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span></div></article>
 </div>
-<div class="also"><p class="also-label">Also on the way</p><article class="product-card"><h3><a href="/arca/">Arca</a></h3><p>Coming soon.</p></article><article class="product-card"><h3><a href="/mykes/">Mykes</a></h3><p>Coming soon.</p></article></div></section>
+<div class="also"><p class="also-label">Also on the way</p><article class="product-card"><h3><a href="/mykes/">Mykes</a></h3><p>Coming soon.</p></article></div></section>
+<section class="wrap open" aria-labelledby="open-title"><h2 id="open-title" class="open-line">${openLine}</h2><p class="open-part">${partOf()}</p></section>
 <section id="film" class="made wrap" aria-labelledby="made-title"><div class="made-copy"><p class="eyebrow">Made by this team</p><h2 id="made-title">From inside Automagik.</h2><p>This page started as a Genie’s draft, in a group chat with the rest of the launch team, inside Automagik.</p></div><figure class="film-still" data-film="placeholder">${art('team-step', 'The Automagik app’s team step, recorded: Pip leads, Omni sleeps until powered on, and Genie is ready for a wish.', { dark: true })}<figcaption><strong>A short film is coming.</strong> It shows our launch team at work.</figcaption></figure></section>`
 
   const desktop = `<section class="hero split-hero desktop-hero"><div class="wrap split"><div class="hero-heading">${art('app-icon', '', { cls: 'hero-icon', eager: true })}${heading('Your team, at your desk', 'Automagik Desktop', 'Long-lived Bots with their own name, role, model and memory. Talk together, hand work over, and keep the decisions that matter.')}<div id="install" class="distribution"><a class="button primary" href="${mac}">Download for Mac ${down}</a><a class="button secondary" href="${linux}">Download for Linux ${down}</a><div class="unavailable"><strong>Download for Windows</strong><span>Soon</span></div></div><p class="fine">Mac with Apple silicon, macOS 13 or newer. Linux on a 64-bit PC.</p></div></div>
@@ -125,11 +205,14 @@ export function pages() {
 
   const coming = name => `<section class="hero coming"><div class="wrap"><div class="coming-card">${constellation()}<div class="hero-heading center">${art('mark', '', { cls: 'coming-mark', eager: true })}${heading('An Automagik building block', name, 'Coming soon.')}<p class="lede">More about ${name} will live here.</p></div></div></div></section>${more('/mykes/')}`
 
+  // Arca: one stand-in page until Arca's own site is served at this address.
+  const arcaPage = `<section class="hero coming"><div class="wrap"><div class="coming-card">${constellation()}<div class="hero-heading center">${art('mark', '', { cls: 'coming-mark', eager: true })}${heading('An Automagik building block', 'Arca', arca.line)}<div class="actions center"><a class="button primary" href="${arca.get}">Get Arca ${out}</a><a class="button secondary" href="/#blocks">All products ${arrow}</a></div></div></div></div></section>${more('/arca/')}`
+
   return new Map([
     ['/', frame('/', 'Open building blocks of superintelligence', home)],
     ['/desktop/', frame('/desktop/', 'Desktop', desktop)], ['/mobile/', frame('/mobile/', 'Mobile', mobile)],
     ['/omni/', frame('/omni/', 'Omni', omni)], ['/genie/', frame('/genie/', 'Genie', genie)],
-    ['/cloud/', frame('/cloud/', 'Cloud', cloud)], ['/mykes/', frame('/mykes/', 'Mykes', coming('Mykes'))],
+    ['/cloud/', frame('/cloud/', 'Cloud', cloud)], ['/arca/', frame('/arca/', 'Arca', arcaPage)], ['/mykes/', frame('/mykes/', 'Mykes', coming('Mykes'))],
   ])
 }
 export function rootFiles() {
@@ -138,7 +221,7 @@ export function rootFiles() {
     ['robots.txt', 'User-agent: *\nAllow: /\nAllow: /arca\nSitemap: https://automagik.si/sitemap.xml\n'],
     ['sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${routes.map(route => `<url><loc>https://automagik.si${route}</loc></url>`).join('\n')}
+${routes.filter(route => route !== '/arca/').map(route => `<url><loc>https://automagik.si${route}</loc></url>`).join('\n')}
 ${arcaSitemap}
 </urlset>
 `],

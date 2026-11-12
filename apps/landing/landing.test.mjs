@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca } from './scripts/build-pages.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const read = path => readFileSync(resolve(root, path), 'utf8')
@@ -27,7 +27,11 @@ const allowed = new Set([
   `${repo}/tree/dev/herdr#install`, `${repo}/tree/dev/apps/bots-dsh#install`, `${repo}/tree/dev/apps/pocket`,
   `${repo}/tree/dev/herdr/mods/pocket-link`, `${repo}/tree/dev/apps/desktop`,
   `${repo}/blob/dev/docs/rfcs/0024-automagik-cloud.md`, `${repo}/blob/dev/apps/landing/assets/CAPTURES.md`, release.url,
+  `${repo}/issues`, weUnfold.url, arca.get,
 ])
+// Text as a reader gets it: inline tags vanish, block tags become a space.
+const plain = html => html.replace(/<\/?(?:a|span|strong)\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+const productOrder = ['/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
 const local = path => {
   const full = resolve(root, path.replace(/^\//, ''))
   assert.ok(full.startsWith(root + sep) || full === root.slice(0, -1), path)
@@ -35,7 +39,7 @@ const local = path => {
 }
 
 test('approved umbrella map, one h1 per page, generated sources current, no client scripting', () => {
-  assert.deepEqual(routes, ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/mykes/'])
+  assert.deepEqual(routes, ['/', ...productOrder])
   for (const route of routes) {
     const html = htmlAt(route)
     assert.equal(html, generated.get(route), `Regenerate ${route}`)
@@ -80,8 +84,6 @@ test('every href/action points locally or to an exact reviewed destination', () 
         const url = new URL(href, `https://automagik.si${route}`)
         if (routes.includes(url.pathname)) {
           if (url.hash) assert.ok(htmlAt(url.pathname).includes(`id="${url.hash.slice(1)}"`), href)
-        } else if (url.pathname === '/arca/') {
-          assert.equal(url.hash, ''); assert.equal(href, '/arca/')
         } else local(url.pathname)
       }
     }
@@ -191,12 +193,93 @@ test('all landing files pass privacy; no tracking or preview URL is committed', 
 })
 
 
-test('Arca is delegated to its Worker; home links to its same-tab canonical path', () => {
-  assert.ok(!existsSync(resolve(root, 'arca')), 'Pages must own no /arca content')
-  assert.ok(!routes.includes('/arca/'))
-  const card = htmlAt('/').match(/<article class="product-card"><h3><a href="\/arca\/">Arca[\s\S]*?<\/article>/)?.[0]
-  assert.ok(card)
-  assert.doesNotMatch(card, /target=/)
+test('Arca has exactly one stand-in page here; home links to its same-tab canonical path', () => {
+  // Arca's own site takes this address over later. Until then Pages carries this one page
+  // and nothing under it; the root discovery files keep Arca's own lines (next test).
+  assert.deepEqual(readdirSync(resolve(root, 'arca')), ['index.html'])
+  assert.deepEqual(routes.filter(route => route.startsWith('/arca')), ['/arca/'])
+  const page = htmlAt('/arca/')
+  assert.match(page, /<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)
+  assert.equal(page.match(/<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)[1], arca.line)
+  assert.equal(arca.get, 'https://get.automagik.si/arca')
+  assert.ok(page.includes(`<a class="button primary" href="${arca.get}">Get Arca `))
+  assert.match(page, /<a class="button secondary" href="\/#blocks">All products /)
+  assert.doesNotMatch(page, /Coming soon\.<\/p><p class="lede">/)
+  const card = htmlAt('/').match(/<article class="product-card" data-block="arca">[\s\S]*?<\/article>/)?.[0]
+  assert.ok(card?.includes('<h3><a href="/arca/">Arca</a></h3>'))
+  for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
+  // The root sitemap lists Arca only through Arca's own supplied line.
+  assert.equal(read('sitemap.xml').split('https://automagik.si/arca/</loc>').length, 2)
+})
+
+test('we unfold and Open Intelligence: the approved wording, from one constant, on every page', () => {
+  assert.equal(weUnfold.url, 'https://weunfold.ai/')
+  assert.equal(weUnfold.partOf, 'Automagik is part of we unfold, the home of the Open Intelligence movement.')
+  assert.equal(weUnfold.openIntelligence, 'Open Intelligence: a future more people can understand, question, and shape.')
+  for (const [route, html] of generated) {
+    const text = plain(html)
+    // The footer's brand line and the Company menu carry the part-of line on every page.
+    assert.ok(plain(html.slice(html.indexOf('<footer'))).includes(weUnfold.partOf), route)
+    assert.ok(plain(html.match(/id="menu-company"[\s\S]*?<\/div><\/div>/)[0]).includes(weUnfold.partOf), route)
+    assert.ok(html.includes(`<a href="${weUnfold.url}">we unfold</a>`), route)
+    // Open Intelligence keeps both capitals and is never shortened; we unfold is lower case
+    // in running text and one word only in its address; it is a movement, not an owner.
+    for (const [found] of text.matchAll(/open intelligence/gi)) assert.equal(found, 'Open Intelligence', route)
+    for (const [found] of html.matchAll(/we ?unfold/gi)) assert.ok(found === 'we unfold' || found === 'weunfold', `${route}: ${found}`)
+    assert.equal(html.split('weunfold').length, html.split('https://weunfold.ai/').length, route)
+    assert.doesNotMatch(text, /\bby we unfold\b|\bwe unfold (?:product|company)\b|\bOI\b/i, route)
+    assert.doesNotMatch(html, /<img[^>]*unfold/i, route)
+  }
+  const home = plain(htmlAt('/').match(/<main[\s\S]*<\/main>/)[0])
+  assert.ok(home.includes(weUnfold.openIntelligence) && home.includes(weUnfold.partOf))
+})
+
+test('navigation: menus, phone menu, footer sitemap, breadcrumb and previous/next on every page', () => {
+  const hrefs = html => [...html.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(match => match[1])
+  for (const [route, html] of generated) {
+    // Three header menus: a button that opens a popover panel, no scripting.
+    const buttons = [...html.matchAll(/<button class="menu-button" type="button" popovertarget="(menu-[a-z]+)"/g)].map(match => match[1])
+    assert.deepEqual(buttons, ['menu-products', 'menu-resources', 'menu-company'], route)
+    for (const id of [...buttons, 'site-menu']) assert.match(html, new RegExp(`id="${id}" popover`), `${route} ${id}`)
+    assert.match(html, /<button class="menu-open" type="button" popovertarget="site-menu">/, route)
+    // The browser owns the expanded state of a popover's button; a written one would go stale.
+    assert.doesNotMatch(html, /aria-expanded=/, route)
+    const panel = id => html.match(new RegExp(`id="menu-${id}" popover>([\\s\\S]*?)</div></div></li>`))[1]
+    const sheet = html.match(/<nav class="drawer"[\s\S]*?<\/nav>/)[0], footer = html.slice(html.indexOf('<footer'))
+    const group = (source, label, end) => source.slice(source.indexOf(`>${label}</`), end ? source.indexOf(`>${end}</`) : undefined)
+    // Products: the seven, in one order, in the menu, the phone menu and the footer.
+    assert.deepEqual(hrefs(panel('products')).slice(0, 7), productOrder, route)
+    assert.deepEqual(hrefs(group(sheet, 'Products', 'Resources')), productOrder, route)
+    assert.deepEqual(hrefs(group(footer, 'Products', 'Resources')), productOrder, route)
+    // Resources and Company: the same links in the menu and the phone menu; the footer has
+    // the same groups without the capture notes.
+    const resources = hrefs(panel('resources')), company = hrefs(panel('company')).slice(0, 3)
+    assert.equal(resources.length, 4, route); assert.ok(resources.at(-1).endsWith('/CAPTURES.md'), route)
+    assert.deepEqual(company, [weUnfold.url, `${repo}/issues`, '/cloud/#privacy'], route)
+    assert.deepEqual(hrefs(group(sheet, 'Resources', 'Company')), resources, route)
+    assert.deepEqual(hrefs(group(sheet, 'Company')).slice(0, 3), company, route)
+    assert.deepEqual(hrefs(group(footer, 'Resources', 'Company')), resources.slice(0, 3), route)
+    assert.deepEqual(hrefs(group(footer, 'Company')), company, route)
+    // Every menu entry has a one-line description and its character, mark or glyph.
+    for (const source of [panel('products'), panel('resources'), panel('company'), sheet]) {
+      for (const [item] of source.matchAll(/<a class="menu-item"[\s\S]*?<\/a>/g)) assert.match(item, /<span class="menu-icon">(?:<img|<svg)[\s\S]*<strong>[^<]+[\s\S]*<\/strong><span>[^<]{8,}<\/span>/, `${route} ${item.slice(0, 80)}`)
+    }
+    // The active page: marked in the header button, the menu, the phone menu and the footer.
+    const current = (html.match(/aria-current="page"/g) ?? []).length
+    if (route === '/') {
+      assert.equal(current, 0); assert.doesNotMatch(html, /class="crumbs|class="pager/)
+      continue
+    }
+    const name = html.match(/<span aria-current="page">([^<]+)<\/span>/)[1]
+    assert.ok(html.includes(`data-here>Products<span class="menu-here"><span class="sr">, current page: </span>${name}</span>`), route)
+    for (const source of [panel('products'), sheet, footer]) assert.ok(source.includes(`href="${route}" aria-current="page"`), route)
+    assert.equal(current, 4, route)
+    // The way back, and the neighbours in the product order.
+    assert.ok(html.includes(`<nav class="crumbs wrap" aria-label="Breadcrumb"><ol><li><a href="/#blocks">All products</a></li><li><span aria-current="page">${name}</span></li></ol></nav>`), route)
+    const at = productOrder.indexOf(route), step = by => productOrder[(at + by + productOrder.length) % productOrder.length]
+    assert.ok(html.includes(`rel="prev" href="${step(-1)}"`) && html.includes(`rel="next" href="${step(1)}"`), route)
+    assert.match(html, /<a class="pager-all" href="\/#blocks">All products<\/a>/, route)
+  }
 })
 
 test('root discovery files allow every crawler including training and preserve Arca lines', () => {
@@ -206,6 +289,7 @@ test('root discovery files allow every crawler including training and preserve A
   assert.doesNotMatch(robots, /Disallow|ai-train=no|ai-input=no/i)
   const sitemap = read('sitemap.xml')
   for (const route of routes) assert.ok(sitemap.includes(`<url><loc>https://automagik.si${route}</loc></url>`))
+  assert.ok(!existsSync(resolve(root, 'arca/llms.txt')) && !existsSync(resolve(root, 'arca/index.md')))
   assert.ok(sitemap.includes('<url><loc>https://automagik.si/arca/</loc></url> <url><loc>https://automagik.si/arca/llms.txt</loc></url> <url><loc>https://automagik.si/arca/index.md</loc></url>'))
   for (const line of ['- [Automagik Arca, the page](https://automagik.si/arca/)', '- [Automagik Arca, for an assistant](https://automagik.si/arca/llms.txt)']) assert.ok(read('llms.txt').split('\n').includes(line))
   assert.match(read('_headers'), /X-Robots-Tag: noindex, nofollow/)

@@ -1,7 +1,8 @@
 # automagik.si preview
 
 RFC 0027, revised by the owner on 2026-11-11: the umbrella home plus Desktop, Mobile,
-Omni, Genie, Cloud and Mykes pages, plus the Arca card linking to its separate Worker. The app's current default Stage theme supplies
+Omni, Genie, Cloud and Mykes pages, plus one stand-in page for Arca until Arca's own site is
+served at `/arca/`. The app's current default Stage theme supplies
 the colours, type and component treatment. Every product screen is a provenance-backed
 capture; brand/font licences are in `assets/brand/LICENSES.md`.
 
@@ -17,7 +18,34 @@ The committed HTML needs no Pages build step and contains no client JavaScript. 
 has one small film slot: a real still with one quiet line until the film exists. Cloud is coming soon and carries intent, consent and removal
 forms, with email or inbound-first WhatsApp confirmation. No launch or marketing email.
 The meter is not a product or page. Herdr and DSH are Desktop installation channels.
-Pages serves no `/arca` content; Arca owns `/arca` and `/arca/*` in its own Worker.
+Pages carries exactly one Arca page, the stand-in at `/arca/` (name, one line, Get Arca, the
+way back), and nothing under it; Arca's own site takes that address over later.
+
+## Navigation
+
+It is a website, not one landing page. The header has three menus (Products, Resources,
+Company); each entry has a one-line description and its character, mark or glyph. With no
+client JavaScript, each menu button opens its panel through the browser's popover: click,
+Enter or Space open it, Escape or a click outside close it and return the focus, and the
+browser keeps the button's expanded state for assistive technology (so the HTML carries no
+`aria-expanded` of its own). Hover opens the same panel in CSS, in the same place. Below
+860 px one Menu button opens a sheet under the header with the same three groups; while it
+is open the page behind it is hidden from the keyboard and from assistive technology. A
+browser without popovers opens the panels on hover or focus and gets a link to the footer's
+sitemap on a phone. The footer is the sitemap with the same groups (without the capture
+notes). Every product page shows where it is (the header's Products button and a breadcrumb
+back to all products) and links to the previous and next product. Products keep one order
+everywhere; it is the `products` list in `scripts/build-pages.mjs`.
+
+## we unfold and Open Intelligence
+
+Automagik is part of we unfold. The link and both lines of wording are one constant,
+`weUnfold` in `scripts/build-pages.mjs`: change them there and regenerate. They appear in the
+footer's brand line, in the Company menu and once on the home page. The contract test holds
+the rules from the we unfold team: Open Intelligence keeps both capitals and is never
+shortened; we unfold is lower case in running text; "part of" means the movement, never
+ownership; no logo, the text is the link. The owner approves both lines before the site
+goes live.
 
 ## Source and checks
 
@@ -41,7 +69,12 @@ than the page's main picture and keyboard focus shows. It checks that a dark pag
 the dark captures (and a light page the light ones), that the home's speech bubble stays
 off the app window, and that the hero's app capture is shown near its real size. It checks
 images/fonts, overflow, failed/external loads and native form 503/200 responses against an
-isolated SQLite fixture. It writes full-page images and a JSON report to ignored
+isolated SQLite fixture. It drives the menus with real clicks and keys in both themes: open
+and close by click, Enter and Space, Escape with the focus returning to the button, the
+expanded state in the accessibility tree, hover in the same place as click, one panel at a
+time, the active page, every menu and footer link answering, and the phone sheet (it fills
+the screen under the header, the keyboard never lands behind it, Escape and the Menu button
+close it, a link in it goes to its page). It writes full-page images and a JSON report to ignored
 `.cache/landing-evidence/`; set `LANDING_EVIDENCE` to another absolute report directory.
 At 1440 and 390 it also renders equal-width side-by-side site/app comparisons in each theme.
 The `landing` CI job runs the same gates and retains the images/report as an artifact.
@@ -96,8 +129,9 @@ HTML. The owner allows all crawlers, including AI training crawlers: `User-agent
 `Allow: /`, and explicit `Allow: /arca`. This crawling rule does not remove preview noindex
 headers/meta; production becomes indexable only after the owner's preview OK.
 
-The root sitemap and assistant index include Arca's supplied lines verbatim. The home card
-links to `/arca/` in the same tab. The owner configures Worker routes **exactly**
+The root sitemap and assistant index include Arca's supplied lines verbatim. The home card,
+the Products menu and the footer link to `/arca/` in the same tab. Until Arca's own site is
+deployed, Pages serves the one stand-in page there. For Arca's site, the owner configures Worker routes **exactly**
 `automagik.si/arca` and `automagik.si/arca/*`. A zone Single Redirect matches hostname equal
 to `automagik.si` AND URI path equal to `/arca`, returning 301 to
 `https://automagik.si/arca/` with the query preserved. Do not match the path alone:

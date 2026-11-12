@@ -1,7 +1,10 @@
 export const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
-export function waitlistForm() {
+// products: a product choice for later. The endpoint and the schema do not take one yet, so no
+// page passes any and nothing is rendered; when they do, pass [[value, label], ...] here.
+export function waitlistForm({ products = [] } = {}) {
+  const product = products.length ? `\n    <label>Which product is this about?<select name="product">${products.map(([value, label]) => `<option value="${escape(value)}">${escape(label)}</option>`).join('')}</select></label>` : ''
   return `<form class="waitlist-form" method="post" action="/api/waitlist">
-    <input type="hidden" name="action" value="add">
+    <input type="hidden" name="action" value="add">${product}
     <label>What would you like to do?<textarea name="goal" required maxlength="1000" rows="3" placeholder="Tell us the work you want your agents to take on."></textarea></label>
     <div class="field-row"><label>Where would you use it?<select name="platform" required><option value="android">Android</option><option value="linux">Linux</option><option value="both">Android and Linux</option></select></label><label>Apps or tools <span class="muted">(optional)</span><input name="apps" maxlength="200" placeholder="The tools involved in your work"></label></div>
     <label>What would a good result look like?<textarea name="expected_result" required maxlength="500" rows="2" placeholder="Describe the outcome you would like."></textarea></label>

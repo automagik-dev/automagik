@@ -169,6 +169,137 @@ try {
       console.log(`PASS ${label}: no overflow; images and fonts loaded; local requests`)
     } finally { await context.close() }
   }
+  // The menus, with real clicks and keys. No script runs on the page: the browser's popover
+  // opens and closes each panel, keeps the button's expanded state and returns the focus.
+  const panelState = (page, id) => page.evaluate(id => {
+    const panel = document.getElementById(id), box = panel.getBoundingClientRect(), active = document.activeElement
+    return {
+      open: panel.matches(':popover-open'), shown: getComputedStyle(panel).display !== 'none' && box.height > 0, box: box.toJSON(),
+      focusButton: active?.getAttribute('popovertarget') ?? null, focusInside: panel.contains(active), focusHref: active?.getAttribute('href') ?? null,
+      overflow: document.documentElement.scrollWidth - innerWidth,
+    }
+  }, id)
+  // What assistive technology is told: the button's expanded state in the accessibility tree.
+  const expanded = async (cdp, name) => {
+    const { nodes } = await cdp.send('Accessibility.getFullAXTree')
+    const button = nodes.find(node => node.role?.value === 'button' && (node.name?.value ?? '').startsWith(name))
+    return button?.properties?.find(property => property.name === 'expanded')?.value.value
+  }
+  const linkCheck = async page => {
+    const links = await page.evaluate(() => [...document.querySelectorAll('.menu-panel a, .drawer a, .site-footer a, .crumbs a, .pager a')].map(link => link.getAttribute('href')))
+    assert.ok(links.length >= 40, 'menus, phone menu and footer carry their links')
+    for (const href of new Set(links)) {
+      const url = new URL(href, origin)
+      if (url.origin !== origin) { assert.equal(url.protocol, 'https:', href); continue }
+      const response = await fetch(url)
+      assert.equal(response.status, 200, `menu link answers 200: ${href}`)
+      if (url.hash) assert.ok((await response.text()).includes(`id="${url.hash.slice(1)}"`), `menu link target exists: ${href}`)
+    }
+  }
+  for (const colorScheme of ['light', 'dark']) for (const route of ['/', '/genie/', '/arca/']) {
+    const label = `${route} ${colorScheme}`, slug = route === '/' ? 'home' : route.split('/')[1]
+    const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(desk), page = await desk.newPage(), cdp = await desk.newCDPSession(page)
+      await page.goto(origin + route, { waitUntil: 'load' })
+      const button = id => page.locator(`[popovertarget="menu-${id}"]`)
+      for (const name of ['Products', 'Resources', 'Company']) assert.equal(await expanded(cdp, name), false, `${name} starts collapsed: ${label}`)
+      // Click opens and closes; the panel sits under the header, inside the page's width.
+      await button('products').click()
+      let state = await panelState(page, 'menu-products')
+      const header = await page.locator('.top').boundingBox()
+      assert.ok(state.open && state.shown, `Click opens Products: ${label}`)
+      assert.equal(await expanded(cdp, 'Products'), true, `Products is announced expanded: ${label}`)
+      assert.ok(state.box.left >= 0 && state.box.right <= 1440 && Math.abs(state.box.top - (header.y + header.height)) <= 2 && state.overflow === 0, `Products panel sits under the header: ${label} ${JSON.stringify(state.box)}`)
+      assert.equal(await page.locator('#menu-products .menu-item').count(), 7)
+      await page.screenshot({ path: join(evidence, `menu-products-${slug}-${colorScheme}.png`) })
+      await button('products').click()
+      assert.ok(!(await panelState(page, 'menu-products')).open && await expanded(cdp, 'Products') === false, `A second click closes Products: ${label}`)
+      // Keyboard: Enter and Space open, Tab goes into the panel, Escape closes and the focus
+      // returns to the button.
+      for (const key of ['Enter', 'Space']) {
+        await button('resources').focus(); await page.keyboard.press(key)
+        assert.ok((await panelState(page, 'menu-resources')).open, `${key} opens Resources: ${label}`)
+        await page.keyboard.press('Tab')
+        state = await panelState(page, 'menu-resources')
+        assert.ok(state.focusInside && state.focusHref, `Tab moves into the open panel: ${label}`)
+        assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none', `Menu links show keyboard focus: ${label}`)
+        await page.keyboard.press('Escape')
+        state = await panelState(page, 'menu-resources')
+        assert.ok(!state.open && !state.shown && state.focusButton === 'menu-resources', `Escape closes Resources and returns focus: ${label} ${JSON.stringify(state)}`)
+      }
+      // One panel at a time, and a click outside closes it.
+      await button('products').click(); await button('company').click()
+      assert.ok(!(await panelState(page, 'menu-products')).open && (await panelState(page, 'menu-company')).open, `Opening Company closes Products: ${label}`)
+      await page.screenshot({ path: join(evidence, `menu-company-${slug}-${colorScheme}.png`) })
+      await page.mouse.click(720, 760)
+      assert.ok(!(await panelState(page, 'menu-company')).shown, `A click outside closes the panel: ${label}`)
+      // Hover opens the same panel in the same place, and it stays while the pointer is in it.
+      await page.mouse.move(720, 760); await button('resources').hover()
+      state = await panelState(page, 'menu-resources')
+      assert.ok(state.shown && !state.open, `Hover shows Resources: ${label}`)
+      const hovered = state.box
+      await page.locator('#menu-resources .menu-item').last().hover()
+      assert.ok((await panelState(page, 'menu-resources')).shown, `The panel stays while the pointer is in it: ${label}`)
+      await button('resources').click()
+      state = await panelState(page, 'menu-resources')
+      assert.ok(state.open && Math.abs(state.box.top - hovered.top) < 1 && Math.abs(state.box.left - hovered.left) < 1, `Hover and click show the panel in one place: ${label}`)
+      await page.keyboard.press('Escape'); await page.mouse.move(720, 760)
+      assert.ok(!(await panelState(page, 'menu-resources')).shown, `The panel goes when the pointer leaves: ${label}`)
+      // The active page in the header, and a menu link that takes you there.
+      const here = await page.evaluate(() => ({ button: document.querySelector('.menu-button[data-here] .menu-here')?.lastChild.textContent ?? null, current: document.querySelector('#menu-products [aria-current="page"]')?.getAttribute('href') ?? null, crumb: document.querySelector('.crumbs [aria-current="page"]')?.textContent ?? null }))
+      if (route === '/') assert.deepEqual(here, { button: null, current: null, crumb: null })
+      else assert.ok(here.button && here.button === here.crumb && here.current === route, `The header shows the active page: ${label} ${JSON.stringify(here)}`)
+      await linkCheck(page)
+      await button('products').click(); await page.locator('#menu-products .menu-item[href="/omni/"]').click()
+      await page.waitForURL(origin + '/omni/')
+      assert.equal(await page.locator('.menu-button[data-here] .menu-here').evaluate(node => node.lastChild.textContent), 'Omni')
+      assert.deepEqual(outside, [], `No external request from the menus: ${label}`)
+    } finally { await desk.close() }
+    // The phone menu: one sheet under the header with the same groups.
+    for (const width of [390, 320]) {
+      const phone = await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+      try {
+        const page = await phone.newPage(), cdp = await phone.newCDPSession(page)
+        await page.goto(origin + route, { waitUntil: 'load' })
+        const menu = page.locator('.menu-open')
+        assert.ok(await menu.isVisible() && !(await page.locator('.main-nav').isVisible()), `The phone header shows one Menu button: ${label} ${width}px`)
+        assert.equal(await expanded(cdp, 'Menu'), false)
+        await menu.click()
+        let state = await panelState(page, 'site-menu')
+        const header = await page.locator('.top').boundingBox()
+        const behind = () => page.evaluate(() => ({ main: getComputedStyle(document.querySelector('main')).visibility, footer: getComputedStyle(document.querySelector('.site-footer')).visibility, scroll: getComputedStyle(document.documentElement).overflowY }))
+        assert.ok(state.open && state.shown && state.overflow === 0, `Menu opens the sheet: ${label} ${width}px`)
+        assert.equal(await expanded(cdp, 'Menu'), true, `Menu is announced expanded: ${label} ${width}px`)
+        assert.ok(state.box.left === 0 && state.box.width === width && Math.abs(state.box.top - (header.y + header.height)) <= 1 && Math.abs(state.box.bottom - 844) <= 1, `The sheet fills the screen under the header: ${label} ${width}px ${JSON.stringify(state.box)}`)
+        assert.deepEqual(await behind(), { main: 'hidden', footer: 'hidden', scroll: 'hidden' }, `The page behind the sheet is out of reach: ${label} ${width}px`)
+        assert.deepEqual(await page.locator('#site-menu .drawer-label').allInnerTexts().then(labels => labels.map(text => text.toLowerCase())), ['products', 'resources', 'company'])
+        assert.equal(await page.locator('#site-menu .menu-item').count(), 14)
+        if (route !== '/') assert.equal(await page.locator('#site-menu [aria-current="page"]').getAttribute('href'), route, `The sheet marks the active page: ${label}`)
+        if (width === 390) await page.screenshot({ path: join(evidence, `menu-phone-${slug}-${colorScheme}.png`) })
+        // The keyboard stays in the header and the sheet, and reaches every link of the sheet.
+        const stops = new Set()
+        for (let press = 0; press < 40; press++) {
+          await page.keyboard.press('Tab')
+          stops.add(await page.evaluate(() => { const active = document.activeElement; return active === document.body ? 'page' : active.closest('#site-menu') ? `sheet:${active.getAttribute('href')}` : active.closest('.top') ? 'header' : `behind:${active.outerHTML.slice(0, 60)}` }))
+        }
+        assert.deepEqual([...stops].filter(stop => stop.startsWith('behind:')), [], `Tab never lands behind the sheet: ${label} ${width}px`)
+        assert.equal([...stops].filter(stop => stop.startsWith('sheet:')).length, 15, `Tab reaches every link of the sheet: ${label} ${width}px`)
+        await page.keyboard.press('Escape')
+        state = await panelState(page, 'site-menu')
+        assert.ok(!state.open && state.focusButton === 'site-menu', `Escape closes the sheet and returns focus to Menu: ${label} ${width}px`)
+        assert.deepEqual(await behind(), { main: 'visible', footer: 'visible', scroll: 'visible' })
+        // Menu toggles the sheet, and a link in it goes to its page.
+        await menu.click(); await menu.click()
+        assert.ok(!(await panelState(page, 'site-menu')).open, `Menu closes the sheet again: ${label} ${width}px`)
+        await menu.click(); await page.locator('#site-menu .menu-item[href="/mobile/"]').click()
+        await page.waitForURL(origin + '/mobile/')
+        assert.ok(!(await panelState(page, 'site-menu')).open)
+        assert.equal(await page.locator('.crumbs [aria-current="page"]').innerText(), 'Mobile')
+      } finally { await phone.close() }
+    }
+    console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links, phone sheet`)
+  }
   // Native form submissions against the actual function, with no real binding/provider.
   const context = await browser.newContext({ viewport: { width: 390, height: 900 } })
   const outside = await guard(context)
