@@ -39,7 +39,6 @@ It is documentation. No build, app or release reads this folder.
 | Genie or Omni | the same four files, starting `genie-` or `omni-` |
 | The mark alone, 100px or more | `logo/svg/triskle-three-colours.svg` |
 | The mark alone at about 64, 32 or 16px | `logo/svg/triskle-three-colours-64.svg`, `-32.svg`, `-16.svg` |
-| The mark inside a ring or a round button, at about 32 or 24px | `logo/svg/triskle-three-colours-32-ring.svg`, `-24-ring.svg` |
 | A browser tab | `favicon/favicon.ico` and `favicon/favicon.svg` |
 | A phone's home screen, a web manifest | `favicon/apple-touch-icon.png`, `favicon/icon-192.png`, `favicon/icon-512.png` |
 | The name without the mark | `logo/wordmark/automagik-wordmark-ink.svg` or `-cream.svg` |

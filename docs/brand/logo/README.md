@@ -8,7 +8,6 @@ The triskle is the mark for Automagik, Genie and Omni. It is the owner's clay re
 - `svg/triskle-<colour>.svg`: the large drawing, from about 100px up. `-64`, `-32`, `-16`: the drawings for those sizes, with a wider line.
 - `png/triskle-<colour>-1024.png` and `-512.png`: clear ground. Other sizes: `../export-png.mjs`.
 - All files share one square frame, so they line up when swapped.
-- `svg/triskle-three-colours-32-ring.svg` and `-24-ring.svg`: the mark for a ring or a round button. The same pieces and seam, centred by the mark's weight and not by its box, so the top point stands on the ring's middle. Put it in the square box the mark would take, with the box centred in the ring. The mark is 95% of its usual size there. For a circle only.
 - These are pictures, not single-ink shapes: CSS `color` does not change them. Pick the colour by file.
 
 ## Lockups: `lockups/`
