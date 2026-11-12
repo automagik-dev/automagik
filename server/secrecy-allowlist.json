@@ -30,10 +30,11 @@
     "reason": "a type-comment example path in DSH's workspace-path library"
   },
   {
-    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-BgUyXZcc.js",
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-ghOpC9uV.js",
     "rule": "private-name",
     "sha256": "00d060262511fc0834412cf60b2b362861c7255f2d18937c477a2554454a1203",
-    "reason": "a minified identifier that coincides with a deny-list short machine name; not this repository's code or build environment"
+    "reason": "The already-reviewed minified identifier in the rc.2 frontend asset, not a host name; exact asset and complete-file digest are pinned",
+    "fileSha256": "061de8cefa15e1fbb87d301463ad4ebb79259b197ca08e83406f6997c1af8bb8"
   },
   {
     "file": "opt/automagik/runtime/node_modules/@eslint-community/regexpp/index.js",
@@ -51,13 +52,15 @@
     "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/dsoffice.cjs",
     "rule": "home-path",
     "match": "/home/web_user",
-    "reason": "the Emscripten LibreOffice runtime's default user, not a host account"
+    "reason": "the Emscripten LibreOffice runtime's default user, not a host account",
+    "fileSha256": "c9248ef54385015475b15ae2baca41d9f7a8bd0b8538904da6a1fcd16c5305a1"
   },
   {
     "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/dsoffice.data",
     "rule": "home-path",
     "match": "/home/eric",
-    "reason": "a LibreOffice fixture path embedded in its data asset, not a host account"
+    "reason": "a LibreOffice fixture path embedded in its data asset, not a host account",
+    "fileSha256": "0bea03629341de18dc90bdfc1e67a2f3b791e31ef9fe22888c288226e8bd5b15"
   },
   {
     "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/experimental_attributes.cjs",
@@ -288,5 +291,26 @@
     "sha256": "6600e9264f9f11ce58bd63caf7a2ae1f56bee1cda6f13410faf84bf30a80ae3e",
     "fileSha256": "009c84353012c953e7dfb1970a9a48830918278cee7fff21c397391368190879",
     "reason": "Byte-identical offline cache of ACP SDK 2.5.0 dist/v2/schema/zod.gen.js: the reviewed AbsolutePath example, not a host account. Exact cache path, matched bytes and complete module digest are pinned."
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-app-boot/src/config-schema/document.ts",
+    "rule": "home-path",
+    "sha256": "e60abf6d4fb6d751084c567c804fbf8d6cdb20de66f0999231a0fffd9f4edf88",
+    "fileSha256": "9507b66d6e93ecc79d79597e442d09c385312faf492dfd5c1aa7e19942e30395",
+    "reason": "The published schema-layer description repeats the already-reviewed compiled app-boot example; exact exported source and complete-file digest are pinned"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-client-ui-plugin-manager/src/client/locales.ts",
+    "rule": "home-path",
+    "sha256": "550bc0f6847e76d51ce076b13f840f2b9e7da6962d1e978e260d11425243abb2",
+    "fileSha256": "92fb58326cc32e249e7925352d45008fd7d9e3536ed1a03fdabf6152cc8f2c63",
+    "reason": "The published plugin-manager local-path placeholder repeats the already-reviewed compiled UI example; exact exported source and complete-file digest are pinned"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-util-workspace-path/src/file-address.ts",
+    "rule": "home-path",
+    "sha256": "f6c081a569f361e865ef08e1da7e4c610ee859e6f34cb9441588531be66ac649",
+    "fileSha256": "e54979d7970c09a777d9917a098ab0de8768c60dd198a97167480ffde9bc8f7c",
+    "reason": "The published resource-URI grammar repeats the already-reviewed generated type-comment example; exact exported source and complete-file digest are pinned"
   }
 ]
