@@ -110,6 +110,14 @@ export function isClaude(row, get) {
     || base(get?.foreground?.argv?.[0]) === "claude";
 }
 
+/**
+ * Herdr-core's status object: `hc get`'s `status` or a terminals() row's `report`.
+ * Another kind, no kind, a kind under another state, a plain word or nothing is false.
+ */
+export function waitsOnPermission(status) {
+  return status?.state === "blocked" && status?.kind === "permission";
+}
+
 /** Of several `hc get` answers for one bot's label, the newest by created_ms counts. */
 export function newest(gets) {
   return gets.reduce((a, b) => ((b?.created_ms ?? -1) > (a?.created_ms ?? -1) ? b : a), null);

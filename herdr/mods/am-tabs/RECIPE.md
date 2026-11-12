@@ -11,7 +11,9 @@ when active, `chrome` otherwise, `hover` under the pointer — holding the progr
 for glyph icons, `image` for pictures), the tab's name (`max_w 280`, truncating; an unnamed tab reads
 its program's name, else "Terminal"), `Z` when the tab is zoomed, a spinner while the tab's agent is
 `working`, a small **Needs you** chip when it is `blocked` (the sidebar's language, in `blocked` on a
-13% tint) or a 6 px dot when it is `done`, and a close ✕. The ✕ is on the active tab always and on
+13% tint) or a 6 px dot when it is `done`, and a close ✕. The chip reads **Needs you: permission**
+while one of the tab's terminals waits on a permission (herdr-core's report, from `terminals()`).
+The ✕ is on the active tab always and on
 any other tab while the pointer is over it — it is drawn absolutely inside 22 px of right padding
 the pill always reserves, so showing it never changes the pill's size. When the space has settled tabs, one dim `N settled`
 pill sits before `+`.
@@ -46,7 +48,7 @@ list allows them, and on platforms that draw no window buttons, `−`, `□`, `�
 ## Built from
 
 `mods/am-tabs/main.js` (bar, pills, presses, panel memory), `names.js` (title parsing and naming),
-`mod.json` (`place: none`). Herdr API: `spaces`, `panes`, `run`, `openOverlay`, `theme`, `window`,
+`mod.json` (`place: none`). Herdr API: `spaces`, `panes`, `terminals`, `run`, `openOverlay`, `theme`, `window`,
 `shared`, `layout`, `settings`, `setShared`. Layout: the `tabs` block's `content.mod` is `am-tabs`,
 `size.px` 42. Programs opened: `am-new-menu` (the `+` popup) and `menu` (right press).
 

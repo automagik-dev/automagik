@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
   secondLine, modelDefaultsFrom, modelTextsUpdate, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf, heldTerminalOf, liveOf, paneCounts, listedKeyOf, parentMarkOf, parentMarkText,
-  programForApp,
+  programForApp, needsYouText, NEEDS_YOU, NEEDS_YOU_PERMISSION,
 } from "../mods/am-sidebar/rows.js";
+import { waitsOnPermission } from "../mods/am-sidebar/launchArgs.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
 const look = { character: "star", colour: "blue" };
@@ -28,6 +29,20 @@ const file = parseBots(JSON.stringify(FILE)).file;
 const KEY = "/repo/proj";
 const T = (address, more = {}) => ({ address, state: "live", labels: {}, parent: null, status: null, status_ms: null, created_ms: 1, program: { key: "claude", name: "Claude Code", agent: true }, ...more });
 const NOW = 1_800_000_000_000;
+
+test("a blocked chip names a permission only when herdr-core's report says blocked with kind permission", () => {
+  const permission = { app: "claude-code", state: "blocked", kind: "permission", msg: "x" };
+  assert.equal(NEEDS_YOU, "Needs you");
+  assert.equal(NEEDS_YOU_PERMISSION, "Needs you: permission");
+  assert.equal(waitsOnPermission(permission), true);
+  assert.equal(needsYouText(permission), NEEDS_YOU_PERMISSION);
+  for (const report of [null, undefined, "blocked", {}, { state: "blocked" },
+    ...["question", "auth", "Permission"].map((kind) => ({ state: "blocked", kind })),
+    ...["working", "done"].map((state) => ({ state, kind: "permission" }))]) {
+    assert.equal(waitsOnPermission(report), false, JSON.stringify(report));
+    assert.equal(needsYouText(report), NEEDS_YOU, JSON.stringify(report));
+  }
+});
 
 test("liveFrom: label + live + agent in front; newest holder wins and is flagged; remote counts", () => {
   const terms = [

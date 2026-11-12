@@ -5,7 +5,7 @@
 // Pure: no `herdr`, `gpui-kit` or `gpui-base`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, RANKS, cleanProjectPath, crossMemberWarnings, mainBotOf, effectiveLead } from "./model.js";
-import { agentInForeground, rowIsAgent } from "./launchArgs.js";
+import { agentInForeground, rowIsAgent, waitsOnPermission } from "./launchArgs.js";
 import { AGENTS, detectModel, defaultModelFrom, resolveAgent } from "./models.js";
 import { workerBranch, workerTaskId } from "./workers.js";
 
@@ -172,6 +172,11 @@ export function poseOf(live, now) {
     default: return "idle";
   }
 }
+
+// The blocked chip's words, drawn by main.js status().
+export const NEEDS_YOU = "Needs you";
+export const NEEDS_YOU_PERMISSION = "Needs you: permission";
+export const needsYouText = (report) => (waitsOnPermission(report) ? NEEDS_YOU_PERMISSION : NEEDS_YOU);
 
 /** When the next idle bot turns asleep (ms since the epoch), or null: the view's one wake-up. */
 export function nextWake(live, now) {

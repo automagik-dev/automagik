@@ -18,9 +18,9 @@ import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
   botOfBriefingFile, briefDecision, briefedPath, briefingFilePath, launchBriefingText, textHash, GUARD_LINE, WORKER_LINE,
-  amPartEntryPath, amPartHookCommand, amPartRunnerPath, hookTargetOf, installHook, isAmPartEntry, scriptOf,
+  amPartEntryPath, amPartHookCommand, amPartRunnerPath, hookTargetOf, installHook, isAmPartEntry, scriptOf, statusWord, PERMISSION_WORD,
 } from "../mods/am-sidebar/briefingText.mjs";
-import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
+import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale, gatherBriefing } from "../mods/am-sidebar/briefing.mjs";
 import { assertSafeTmpdir, scratchProject, scratchRoot } from "./scratch-project.mjs";
 const { afterBind } = await import("../mods/am-sidebar/launch.js");
 
@@ -57,6 +57,58 @@ const team = () => ({
 const byId = (f, id) => f.bots.find((b) => b.id === id);
 
 // ---- pure ----
+
+test("statusWord: a pane blocked on a permission says so; nothing else changes", () => {
+  assert.equal(PERMISSION_WORD, "stuck (waiting for a permission answer)");
+  assert.equal(statusWord("blocked", true, false, true), PERMISSION_WORD);
+  assert.equal(statusWord("blocked", true), "stuck (blocked: needs a person)");
+  assert.equal(statusWord("blocked", true, false, "permission"), "stuck (blocked: needs a person)");
+  assert.equal(statusWord("working", true, false, true), "working");
+  assert.equal(statusWord("blocked", false, false, true), "not running");
+  assert.match(statusWord("blocked", true, true, true), /^unreachable/);
+});
+
+test("a lead's briefing names the member, its lead and a helper waiting on a permission", () => {
+  const f = team();
+  const text = briefingText({
+    self: byId(f, ID.cap), file: f,
+    lead: { bot: byId(f, ID.main), terminal: "t1", status: "blocked", permission: true },
+    members: [
+      { bot: byId(f, ID.dev), terminal: "t3", status: "blocked", permission: true },
+      { bot: byId(f, ID.tester), terminal: "t4", status: "blocked" },
+    ],
+    helpers: [{ status: "blocked", permission: true }, { status: "blocked" }, { status: "working" }],
+  });
+  assert.match(text, /^- Dev .*: stuck \(waiting for a permission answer\) at t3\.$/m);
+  assert.match(text, /^- Tester .*: stuck \(blocked: needs a person\) at t4\.$/m);
+  assert.match(text, /^Your lead: Genie .*stuck \(waiting for a permission answer\)\.$/m);
+  assert.match(text, /^Your helpers .*: 3: 1 stuck \(waiting for a permission answer\), 1 stuck \(blocked: needs a person\), 1 working\.$/m);
+});
+
+test("gatherBriefing: a helper's permission wait comes from its own hc get, state and kind together", async () => {
+  const file = team();
+  const main = { ...byId(file, ID.main), name: "ada" };
+  file.bots = [main];
+  for (const [rowState, getState, word] of [
+    ["working", "blocked", "stuck (waiting for a permission answer)"],
+    ["blocked", "working", "stuck (blocked: needs a person)"],
+  ]) {
+    const calls = [];
+    const text = await gatherBriefing({
+      file, bot: main, address: "t1",
+      locate: async () => assert.fail("no member or lead to locate"),
+      ask: async (args) => {
+        calls.push(args);
+        if (args[0] === "ls") return { terminals: [{ address: "t5", parent: "t1", state: "live", status: rowState }] };
+        assert.deepEqual(args, ["get", "t5"]);
+        return { address: "t5", labels: {}, status: { state: getState, kind: "permission" } };
+      },
+    });
+    assert.equal(text.split("\n").find((line) => line.startsWith("Your helpers")),
+      `Your helpers (terminals you started that are not bots): 1: 1 ${word}.`);
+    assert.deepEqual(calls, [["ls"], ["get", "t5"]]);
+  }
+});
 
 test("direct members: by effective lead, planned skipped, a fallen-back lead counts under the main bot", () => {
   const f = team();
@@ -702,6 +754,25 @@ test("briefing.mjs: the main bot, from a worktree session, reads the main checko
   assert.match(stdout, /Solo \(bot b-ffffffffff, Docs\): finished \(done\) at t4\.\n {2}<untrusted-report from="Solo">\n {4}Wrote docs\/guide\.md\n {4}All done\.\n {2}<\/untrusted-report>/);
   assert.doesNotMatch(stdout, /Dev|Tester|Studio/); // the captain's members, and the planned one
   assert.ok(stdout.length < 10000);
+});
+
+test("briefing.mjs: a member, a lead and a helper herdr-core reports blocked on a permission read 'stuck (waiting for a permission answer)'", async (t) => {
+  const { root, main, brief } = await scratch(t);
+  const fixture = join(root, "hc.json");
+  const fx = JSON.parse(readFileSync(fixture, "utf8"));
+  fx.terminals.t3.status = { state: "blocked", kind: "permission" };
+  writeFileSync(fixture, JSON.stringify(fx));
+  const captain = await brief({ HC_TERMINAL_ID: "t2", CLAUDE_PROJECT_DIR: main });
+  const dev = captain.stdout.split("\n").find((line) => line.startsWith("- Dev "));
+  assert.match(dev, /stuck \(waiting for a permission answer\) at t3\.$/);
+  assert.doesNotMatch(dev, /needs a person/);
+
+  fx.terminals.t2.status = { state: "blocked", kind: "permission" };
+  fx.terminals.t5.status = { state: "blocked", kind: "permission" };
+  writeFileSync(fixture, JSON.stringify(fx));
+  const member = await brief({ HC_TERMINAL_ID: "t3", CLAUDE_PROJECT_DIR: join(main, ".herdr") });
+  assert.match(member.stdout, /^Your lead: Captain \(bot b-bbbbbbbbbb\), stuck \(waiting for a permission answer\)\.$/m);
+  assert.match(member.stdout, /^Your helpers \(terminals you started that are not bots\): 1: 1 stuck \(waiting for a permission answer\)\.$/m);
 });
 
 test("briefing.mjs: the captain sees its lead's address, its members (a stuck one's screen tail), never its old pane", async (t) => {
