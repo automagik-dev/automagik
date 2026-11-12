@@ -8,7 +8,7 @@
 // are watched only to know when to ask again.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar } from "gpui-base";
 import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents } from "herdr";
 import { offeredAgents, RETIRED } from "./agents.js";
 import { addressWarning, argsText, autoArgs, envText, modeOf, parseArgs, parseEnv, splitPermission, templateMode, withoutPermission } from "./modes.js";
@@ -353,6 +353,13 @@ export default class Automations extends View {
     const t = theme();
     const body = this.view.kind === "form" && this.form ? this.renderForm(t, cx)
       : this.view.kind === "detail" ? this.renderDetail(t, cx) : this.renderList(t, cx);
+    // The footer's Automations tab opens this panel as a popup (am-footer PANEL_POPUP), and a
+    // popup is as tall as its content, its height only the most. A body built with
+    // overflow_y_scrollbar measures 0 there (its wrapper is a share of nothing): the popup drew
+    // the header alone, light and dark, on Herdr 0.1.13 and 0.1.15 (#938). So the body is
+    // am-sidebar's bot-form shape (#239, #397): a flex column holding the scroll area as a flex
+    // item, which takes its rows' height, and a bar paired with it by name. In a layout block
+    // (a set height) both fill, as before.
     return v_flex().id("automations").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .child(this.header(t, cx))
@@ -360,7 +367,9 @@ export default class Automations extends View {
       .when(Boolean(this.list && !this.list.scheduler), (el) => el.child(this.banner(t, cx)))
       .when(this.list?.backend === "herdr" || this.list?.backend === "", (el) => el.child(this.backendNotice(t)))
       .when(Boolean(this.error || this.note), (el) => el.child(div().px(14).py(6).text_size(12).text_color(t.ansi1).child(this.error || this.note)))
-      .child(div().id("automations-body").flex_1().min_h(0).overflow_y_scrollbar().child(body));
+      .child(v_flex().relative().flex_1().min_h(0)
+        .child(div().id("automations-body").flex_1().min_h(0).overflow_y_scroll().child(body))
+        .child(Scrollbar.vertical("automations-body").absolute().inset_0()));
   }
 
   button(id, label, t, onClick, opts = {}) {
@@ -529,7 +538,8 @@ export default class Automations extends View {
           .child(kv("Permissions", this.modeLine(a))))
         // #938: a command runs as you, in its folder, with no agent; these are its own lines.
         .when(Boolean(a.command), (el) => el
-          .child(kv("Runs", "a command, as you: no agent, no model"))
+          // Short enough for the 320 px panel's value column (#938: "no agent, no model" was cut).
+          .child(kv("Runs", "a command, as you, no model"))
           .child(kv("Folder", tilde(a.command.cwd) || "your home folder"))
           .child(kv("Env", Object.keys(a.command.env ?? {}).join(", ")))
           .child(kv("Timeout", `${a.timeout_minutes} min`))

@@ -1,7 +1,7 @@
 // A small vertical layout model for gpui-stub trees (create.test.mjs): enough to tell whether
 // a popup that is as tall as its content (Herdr's openOverlay, its height only the most) shows
 // the rows of a scroll area. It reads each node's builder calls (h, size_full, flex_1, min_h,
-// p/py/pt/pb, gap, border_1/border_t/border_b, overflow_y_scroll, absolute) and lays out the
+// p/py/pt/pb, gap, border_1/border_t/border_b, overflow_y_scroll[bar], absolute) and lays out the
 // height axis only; widths, text wrapping and alignment are not modelled.
 //
 // The rule it is built on was seen in a live Herdr, not derived: in a box sized by its content
@@ -30,7 +30,8 @@ function style(node) {
     else if (name === "border_1") { s.bt = 1; s.bb = 1; }
     else if (name === "border_t") s.bt = a ?? 1;
     else if (name === "border_b") s.bb = a ?? 1;
-    else if (name === "overflow_y_scroll" || name === "overflow_y_scrollbar") s.scroll = true;
+    else if (name === "overflow_y_scroll") s.scroll = true;
+    else if (name === "overflow_y_scrollbar") { s.scroll = true; s.wrapped = true; }
     else if (name === "absolute") s.abs = true;
   }
   return s;
@@ -51,11 +52,16 @@ function contentOf(node) {
 }
 
 // Its height inside a box sized by its content: a set height, 0 for a percentage (the rule
-// above), else its content's.
+// above), 0 for an overflow_y_scrollbar box, else its content's. The scrollbar rule is what was
+// seen, nothing wider: #239's bot menu drew its title alone on a Mac, and in a scratch Herdr
+// 0.1.13 and 0.1.15 on Linux (#938) a control mod, a 42 px header over a
+// flex_1().min_h(0).overflow_y_scrollbar() body of 40 rows, drew its header alone as a popup
+// (height 0.6) and filled the same spec opened as a window. Only boxes sized by their content
+// take it; in a set height such a box is a flex item as any other (place() below).
 function outerInContentSized(node) {
   const s = style(node);
   if (s.h !== undefined) return clamp(s.h, s);
-  if (s.pct) return 0;
+  if (s.pct || s.wrapped) return 0;
   return clamp(contentOf(node), s);
 }
 
