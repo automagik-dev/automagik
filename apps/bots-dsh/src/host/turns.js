@@ -7,6 +7,16 @@ import { absoluteLinks } from './links.js'
 import { textOf } from './text.js'
 import { reminderText } from './schedules.js'
 
+// What a running tool call is about, for an approval card.
+export const detailOfArgs = raw => {
+  let args
+  try { args = JSON.parse(raw ?? '{}') } catch { args = {} }
+  const first = keys => keys.map(key => args?.[key]).find(value => typeof value === 'string' && value.trim() !== '')
+  const text = first(['description', 'justification'])
+  const code = first(['command', 'cmd', 'file_path', 'path', 'url', 'query'])
+  return { ...(text ? { text: text.trim().slice(0, 300) } : {}), ...(code ? { code: code.trim().slice(0, 400) } : {}) }
+}
+
 // Turns that open with no person or Bot asking: a goal round, which carries a reply the
 // person waits for. A Bot's request that lands inside one joins it rather than claiming it,
 // so its reply stays in the chat (issue #62).
@@ -339,16 +349,9 @@ export function install(rt) {
     return rooms
   }
 
-  // What a running tool call is about, for an approval card: its own description and
-  // the command, path or address it acts on.
-  const callDetail = (sessionId, callId) => {
-    let args
-    try { args = JSON.parse(live.get(sessionId)?.calls?.get(callId)?.args ?? '{}') } catch { args = {} }
-    const first = keys => keys.map(key => args?.[key]).find(value => typeof value === 'string' && value.trim() !== '')
-    const text = first(['description', 'justification'])
-    const code = first(['command', 'cmd', 'file_path', 'path', 'url', 'query'])
-    return { ...(text ? { text: text.trim().slice(0, 300) } : {}), ...(code ? { code: code.trim().slice(0, 400) } : {}) }
-  }
+  const callDetail = (sessionId, callId) => live.has(sessionId)
+    ? detailOfArgs(live.get(sessionId)?.calls?.get(callId)?.args)
+    : rt.childCallDetail?.(sessionId, callId) ?? {}
 
   // The Bots whose last turn failed, for their pets (a sad face until their next turn starts):
   // per Bot, when it failed and the short reason. Process-local, like activity.

@@ -469,6 +469,8 @@ const pack = createPack({
     "Profile updated": "Perfil atualizado",
     "Asked to make the tool call it wrote as text": "Pedido para fazer a chamada de ferramenta que veio escrita como texto",
     "A Bot": "Um Bot",
+    "A subagent is waiting for your approval": "Um subagente aguarda sua aprovação",
+    "A subagent wants to use {tool}": "Um subagente quer usar {tool}",
     "A step stopped on a permission": "Uma etapa parou por uma restrição de permissão",
     "{name} stopped on a permission": "{name} parou por uma restrição de permissão",
     "{name} stopped on a permission: {why}": "{name} parou por uma restrição de permissão: {why}",

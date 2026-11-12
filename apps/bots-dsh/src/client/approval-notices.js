@@ -23,12 +23,12 @@ export function noticeApprovals({ work, roster, shownSession, openSession, since
       told.add(entry.id)
       // Waiting before this window opened is no news: the sidebar shows it.
       if ((entry.at ?? 0) < since) continue
-      const place = entry.roomId ?? entry.sessionId
+      const place = entry.roomId ?? entry.ownerSessionId ?? entry.sessionId
       if (document.visibilityState === 'visible' && shownSession() === place) continue
       const { byId, roomsById } = roster.getSnapshot()
       const room = entry.roomId ? roomsById[entry.roomId] : undefined
       const note = new Notification(t('{name} is waiting for your approval', { name: byId[entry.botId]?.name ?? t('A Bot') }), {
-        body: [room?.name, entry.tool].filter(Boolean).join(' · '),
+        body: [room?.name, entry.child ? t('A subagent wants to use {tool}', { tool: entry.tool }) : entry.tool].filter(Boolean).join(' · '),
         tag: `omni-ui-approval-${entry.id}`,
       })
       note.onclick = () => {

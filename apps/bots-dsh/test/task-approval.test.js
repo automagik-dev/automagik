@@ -140,3 +140,16 @@ test('a working task shows its newest open stop, then its own words when closed'
   assert.match(text(tree), /someone/)
   assert.doesNotMatch(text(tree), /did not run/)
 })
+
+test('a task child opens its task for the full ask, without inline approval buttons', () => {
+  hookState.length = 0
+  let opened = 0
+  const work = { approvals: [{ id: 'x', child: true, taskId: 'x', botId: 'ada', tool: 'bash', answerable: true }] }
+  const tree = render(props('x', undefined, work, { task: { from: 'ada', status: 'working', title: 'x', at: 1 }, onOpen: () => { opened++ } }))
+  assert.match(text(tree), /Waiting for you/)
+  assert.match(text(tree), /It asks for your OK. Open it to answer./)
+  assert.equal(button(tree, 'Allow once'), undefined)
+  assert.equal(button(tree, 'Reject'), undefined)
+  button(tree, 'Answer it').props.onClick()
+  assert.equal(opened, 1)
+})

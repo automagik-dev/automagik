@@ -35,7 +35,7 @@ import { PET_CSS } from './pet.js'
 import { CHARACTER_SELECT_CSS } from './character-select.js'
 import { VOICE_SETTINGS_CSS } from './voice-settings.js'
 import { IMAGE_CELL_CSS } from './image-cell.js'
-import { TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
+import { ChildApprovalDock, TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
 import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
 import { HandoffDock, HANDOFF_CSS } from './handoff-card.js'
 import { headerNavigation, installHeaderNavigation } from './header-navigation.js'
@@ -1096,6 +1096,7 @@ export function apply(ctx) {
     () => shadow('conversation.input.dock', { id: 'bot-permission', order: -108, inject: face }, PermissionChoiceDock),
     // Draws nothing in the dock: it seats a Bot's sign-in row in its transcript (cli-login.js).
     () => shadow('conversation.input.dock', { id: 'bot-cli-login', order: -109, inject: face }, CliLoginConversation),
+    () => shadow('conversation.input.dock', { id: 'bot-child-approval', order: -102, inject: face }, ChildApprovalDock),
     () => shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),
     () => shadow('conversation.input.dock', { id: 'bot-view', order: -95, inject: face }, WidgetDock),
     () => shadow('conversation.input.dock', { id: 'bot-secret', order: -90, inject: face }, SecretDock),

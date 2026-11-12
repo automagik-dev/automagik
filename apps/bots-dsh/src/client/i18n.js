@@ -1021,6 +1021,8 @@ const ZH = {
   '{first} and {second} are waiting for your approval': '{first}、{second} 等你批准',
   '{first}, {second} and {count} more are waiting for your approval': '{first}、{second} 等 {total} 个等你批准',
   'Waiting for your approval': '等你批准',
+  "A subagent is waiting for your approval": "一个子代理在等你批准",
+  "A subagent wants to use {tool}": "一个子代理想要使用 {tool}",
   "A step stopped on a permission": "一个步骤因权限限制而停止",
   "{name} stopped on a permission": "{name} 因权限限制而停止",
   "{name} stopped on a permission: {why}": "{name} 因权限限制而停止：{why}",
