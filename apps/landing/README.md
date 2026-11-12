@@ -115,8 +115,9 @@ copied unchanged, and `LICENSES.md` pins each one's SHA-256 (`landing.test.mjs` 
   triskle is 222, and the g's tail hangs under the triskle. The triskle is 32 px tall in the
   header (26 on a phone, 23 under 360 px) and 40 px in the footer (34 on a phone).
   The browser gate reads the name's drawn colour in both themes, not only the file's name:
-  it must stand clear of the page (a contrast of 7 or more), so the two files cannot be
-  swapped unseen. No colour is named there.
+  it must stand clear of the ground the logo itself stands on, the header's or the footer's
+  (a contrast of 7 or more), so the two files cannot be swapped unseen. No colour is named
+  there.
 - The official lockup with the tag (above) is built from the kit's large lockup.
 - The triskle alone (the Mykes entry in the menus, the Cloud and Mykes heroes) is the kit's
   drawing for the size shown: `triskle-three-colours-32.svg` in a menu,
