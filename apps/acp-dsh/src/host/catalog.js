@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileS
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { AgentRun, valuesOf } from './acp.js'
+import { isAuthRequired } from './names.js'
 
 /** DSH's model for "whatever the agent's own settings choose"; Sessions saved before models came from the agent use it. */
 export const DEFAULT_MODEL = 'default'
@@ -20,6 +21,9 @@ const RETRY_MS = 10 * 60 * 1000
 // A kept catalog older than this is read again in the background (the picker answers from it
 // meanwhile): it carries the person's own effort settings, which they may have changed.
 export const STALE_MS = 24 * 60 * 60 * 1000
+// How long a sign-in question waits on the probe that answers it (`signedIn`): an agent's first
+// start can take a while (Hermes loads its whole toolset).
+export const ACCESS_WAIT_MS = 30_000
 
 /**
  * The CLI as a catalog key, with no process spawned: the file it resolves to and when that file
@@ -127,6 +131,9 @@ export class Catalog {
     this.failedAt = undefined
     this.run = undefined
     this.disposed = false
+    // What the agent's own session last said of its sign-in: true once a probe opened a
+    // session, false when the agent refused one with ACP's auth_required, undefined until then.
+    this.access = undefined
   }
 
   // A kept file that is not wholly what a probe writes is not used: the stand-ins answer until
@@ -177,9 +184,13 @@ export class Catalog {
     const timer = setTimeout(() => run?.dispose(), PROBE_TIMEOUT_MS)
     timer.unref?.()
     try {
-      run = new AgentRun({ ...(await this.spec.spawn()), cwd: homedir(), name: this.spec.name })
+      const launch = await this.spec.spawn()
+      if (this.disposed) return
+      run = new AgentRun({ ...launch,
+        cwd: launch.env?.AUTOMAGIK_BOT_CLI_HOME ?? homedir(), name: this.spec.name })
       this.run = run
       await run.start()
+      this.access = true
       const state = await readCatalog(run, {
         defaultName: this.spec.defaultName,
         stopped: () => this.disposed || !run.alive,
@@ -194,6 +205,8 @@ export class Catalog {
       this.write(key, state.models)
     } catch (error) {
       this.failedAt = this.now()
+      // Signed out is the agent's own word; any other failure says nothing of the sign-in.
+      if (isAuthRequired(error)) this.access = false
       if (!this.disposed) this.spec.log?.(`could not read ${this.spec.name}'s models, offering its usual ones: ${error?.message ?? error}`)
     } finally {
       clearTimeout(timer)
@@ -235,6 +248,37 @@ export class Catalog {
     const live = this.live?.models.find(model => model.id === id)
     if (live?.probed) return live.reasoning?.defaultEffort
     return this.saved?.models.find(model => model.id === id)?.reasoning?.defaultEffort
+  }
+
+  /**
+   * Whether the agent is signed in, as its own ACP session says, for an agent whose CLI has no
+   * status command (the native agents, agents.js): true when a probe opened a session (or the
+   * kept catalog was read from this same CLI), false when the agent answered auth_required,
+   * undefined when nothing says. It opens no session of its own: the answer is the catalog
+   * probe's, which runs when the CLI changes and once a day, so no empty session is left in the
+   * agent's history per check. `fresh` (the person asked to check again) runs the probe again
+   * unless the last one opened a session; a signed-out agent refuses before it makes one.
+   */
+  async signedIn({ fresh = false, waitMs = ACCESS_WAIT_MS } = {}) {
+    if (this.disposed) return undefined
+    if (fresh && this.access !== true && this.probing === undefined) {
+      this.probedKey = undefined
+      this.failedAt = undefined
+    }
+    this.kick()
+    if (this.probing !== undefined && this.access !== true) {
+      let timer
+      await Promise.race([this.listed, new Promise((resolve) => { timer = setTimeout(resolve, waitMs); timer.unref?.() })])
+      clearTimeout(timer)
+    }
+    if (this.access !== undefined || this.probing !== undefined || this.failedAt !== undefined) return this.access
+    return this.saved !== undefined && this.saved.key === this.spec.key() ? true : undefined
+  }
+
+  /** The agent said it is signed out in a turn (ACP auth_required): the next check probes again. */
+  signedOut() {
+    this.access = false
+    if (this.probing === undefined) this.probedKey = undefined
   }
 
   /** One model by id, or undefined when the agent does not offer it. */

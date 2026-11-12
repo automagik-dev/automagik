@@ -14,7 +14,11 @@
 //!   session is the ownership map's M3 row ("Bots and lead association"). Ledger rows are re-read
 //!   each sync; these tables keep what only a sync can see (the hc snapshot: unlogged launches, the
 //!   session labels, the live folder and harness, a terminal gone between two syncs) and what each
-//!   sync derived, so a later recompute replays the same answer.
+//!   sync derived, so a later recompute replays the same answer. A dsh-tui session's links (RFC
+//!   0026 (d): its header's terminal, a `session` row, its pane's session label) are all kept at
+//!   `session` basis and read back ([`session_links`]); `seen_first` is set only on a link a
+//!   session label made, which is how a replay tells the second witness from a row's or a
+//!   header's link without another column.
 //! - `ev_dirty`: sessions and start folders whose links or launches changed, waiting for their
 //!   calls' attribution to be recomputed (a durable queue: a run stopped by its budget resumes).
 //! - `ledgers`: the project app homes found so far, read again on every sync.
@@ -308,15 +312,22 @@ impl Actor {
 
 /// Why an unlinked call has no bot, the first that holds (RFC 0021 delivery 2, D5): a dsh-tui
 /// fork's copy is `no_record` (its own session is unknown); a session that another machine's
-/// records name is `other_machine` (Decided 6); a dsh-tui session nothing claims is
-/// `dsh_tui_seat`, since dsh-tui calls are found by their worker's worktree alone and a seat has no
-/// session-to-terminal record yet (Decided 5); anything else is `no_record`.
-pub fn unlinked_reason(harness: &str, copied: bool, elsewhere: bool) -> &'static str {
+/// records name is `other_machine` (Decided 6); a dsh-tui session no start-time record names
+/// (`witnessed` false: no header terminal, no `session` row, no session label) is `dsh_tui_seat`,
+/// since dsh-tui calls are otherwise found by their worker's worktree alone (RFC 0026 (d));
+/// anything else is `no_record`, a witnessed dsh-tui session included: its record names a
+/// terminal or a launch, and no launch there names a bot.
+pub fn unlinked_reason(
+    harness: &str,
+    copied: bool,
+    elsewhere: bool,
+    witnessed: bool,
+) -> &'static str {
     if copied {
         "no_record"
     } else if elsewhere {
         "other_machine"
-    } else if harness == "dsh-tui" {
+    } else if harness == "dsh-tui" && !witnessed {
         "dsh_tui_seat"
     } else {
         "no_record"
@@ -901,6 +912,9 @@ pub struct LinkRecord {
     pub basis: String,
     pub valid_from: Option<i64>,
     pub valid_to: Option<i64>,
+    /// A session label a snapshot showed made this link (every `label` link, and a dsh-tui
+    /// session's label link, kept at `session` basis): its row carries `seen_first`.
+    pub sighted: bool,
 }
 
 /// What the snapshot showed of one launch at this sync.
@@ -925,13 +939,19 @@ pub struct History {
     pub seen_last: Option<i64>,
     pub live_cwd: Option<String>,
     pub live_agent: Option<String>,
+    /// A launch with no start row keeps the tag its snapshot's labels supplied (RFC 0026 (c)).
+    pub kind: Option<String>,
+    pub bot: Option<String>,
+    pub role: Option<String>,
+    /// Its `bound` timeline: the attach bindings, and the label sightings earlier syncs saw.
+    pub bound: Option<String>,
 }
 
 /// Stored launches with a key: their ends, and what earlier snapshots saw of them.
 pub fn history(c: &Connection) -> rusqlite::Result<Vec<History>> {
     let mut st = c.prepare(
         "SELECT lkey, core, terminal, created_ms, valid_to, end_basis, source, worktree, seen_last,
-                live_cwd, live_agent
+                live_cwd, live_agent, kind, bot, role, bound
          FROM launch WHERE terminal IS NOT NULL AND created_ms IS NOT NULL
          ORDER BY lkey",
     )?;
@@ -948,6 +968,10 @@ pub fn history(c: &Connection) -> rusqlite::Result<Vec<History>> {
             seen_last: r.get(8)?,
             live_cwd: r.get(9)?,
             live_agent: r.get(10)?,
+            kind: r.get(11)?,
+            bot: r.get(12)?,
+            role: r.get(13)?,
+            bound: r.get(14)?,
         })
     })?
     .collect()
@@ -964,6 +988,27 @@ pub fn label_history(c: &Connection) -> rusqlite::Result<Vec<(String, String, St
             crate::event::hex(&r.get::<_, Vec<u8>>(1)?),
             r.get::<_, String>(2)?,
         ))
+    })?
+    .collect()
+}
+
+/// The dsh-tui session links earlier syncs kept (RFC 0026 (d)): each active `session` link of a
+/// dsh-tui session, with whether a session label made it (`seen_first` set). Other harnesses'
+/// `session` links come from ledger rows, read again each sync, so they are not replayed.
+pub fn session_links(c: &Connection) -> rusqlite::Result<Vec<crate::ledger::SessionLink>> {
+    let mut st = c.prepare(
+        "SELECT harness, session, lkey, valid_from, valid_to, seen_first IS NOT NULL FROM link
+         WHERE basis = 'session' AND harness = 'dsh-tui' AND superseded_by IS NULL ORDER BY id",
+    )?;
+    st.query_map([], |r| {
+        Ok(crate::ledger::SessionLink {
+            agent: r.get(0)?,
+            session: crate::event::hex(&r.get::<_, Vec<u8>>(1)?),
+            lkey: r.get(2)?,
+            valid_from: r.get(3)?,
+            valid_to: r.get(4)?,
+            sighted: r.get(5)?,
+        })
     })?
     .collect()
 }
@@ -1154,16 +1199,17 @@ pub fn persist(
     }
     // Links: a new or changed one is written (the old row kept, superseded), and its session is
     // dirty; so is every session linked to a launch that changed.
-    let mut active: HashMap<LinkKey, (i64, Option<i64>, Option<i64>)> = HashMap::new();
+    let mut active: HashMap<LinkKey, (i64, Option<i64>, Option<i64>, bool)> = HashMap::new();
     {
         let mut st = tx.prepare(
-            "SELECT id, harness, session, lkey, basis, valid_from, valid_to FROM link
+            "SELECT id, harness, session, lkey, basis, valid_from, valid_to,
+                    seen_first IS NOT NULL FROM link
              WHERE superseded_by IS NULL",
         )?;
         let rows = st.query_map([], |r| {
             Ok((
                 (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?),
-                (r.get(0)?, r.get(5)?, r.get(6)?),
+                (r.get(0)?, r.get(5)?, r.get(6)?, r.get(7)?),
             ))
         })?;
         for row in rows {
@@ -1181,9 +1227,23 @@ pub fn persist(
             l.lkey.clone(),
             l.basis.clone(),
         );
-        let label_seen = l.basis == "label" && seen_by.contains_key(l.lkey.as_str());
+        let label_seen = l.sighted && seen_by.contains_key(l.lkey.as_str());
+        // A `session` link's `seen_first` says a session label made it (a dsh-tui session's):
+        // it is set when the link is written, whether or not its terminal is live now, and
+        // cleared when a row or header takes the link over.
+        let marked = l.basis == "session";
         let id = match active.get(&k) {
-            Some(&(id, from, to)) if from == l.valid_from && to == l.valid_to => Some(id),
+            Some(&(id, from, to, sighted)) if from == l.valid_from && to == l.valid_to => {
+                if marked && sighted && !l.sighted {
+                    tx.execute(
+                        "UPDATE link SET seen_first = NULL, seen_last = NULL WHERE id = ?1",
+                        [id],
+                    )?;
+                    out.links += 1;
+                    dirty.insert(format!("s:{}", l.session));
+                }
+                Some(id)
+            }
             old => {
                 tx.prepare_cached(
                     "INSERT INTO link(harness, session, lkey, basis, valid_from, valid_to)
@@ -1198,16 +1258,19 @@ pub fn persist(
                     l.valid_to
                 ])?;
                 let new = tx.last_insert_rowid();
-                if let Some(&(old, _, _)) = old {
+                if let Some(&(old, _, _, _)) = old {
                     tx.execute(
                         "UPDATE link SET superseded_by = ?2 WHERE id = ?1",
                         params![old, new],
                     )?;
-                    tx.execute(
-                        "UPDATE link SET seen_first = (SELECT seen_first FROM link WHERE id = ?1),
-                           seen_last = (SELECT seen_last FROM link WHERE id = ?1) WHERE id = ?2",
-                        params![old, new],
-                    )?;
+                    // The sightings follow the link only while a label still makes it.
+                    if l.sighted {
+                        tx.execute(
+                            "UPDATE link SET seen_first = (SELECT seen_first FROM link WHERE id = ?1),
+                               seen_last = (SELECT seen_last FROM link WHERE id = ?1) WHERE id = ?2",
+                            params![old, new],
+                        )?;
+                    }
                 }
                 out.links += 1;
                 dirty.insert(format!("s:{}", l.session));
@@ -1218,6 +1281,11 @@ pub fn persist(
             tx.execute(
                 "UPDATE link SET seen_first = coalesce(seen_first, ?2), seen_last = ?2
                  WHERE id = ?1",
+                params![id, now_ms],
+            )?;
+        } else if let (true, true, Some(id)) = (marked, l.sighted, id) {
+            tx.execute(
+                "UPDATE link SET seen_first = coalesce(seen_first, ?2) WHERE id = ?1",
                 params![id, now_ms],
             )?;
         }
@@ -1605,6 +1673,7 @@ mod tests {
     fn a_filled_branch_comes_only_from_a_worker_of_a_harness_that_logs_none() {
         use crate::ledger::Tag;
         let tag = |bot: &str, kind: Kind| Tag {
+            label: false,
             bot: bot.into(),
             kind,
             role: None,

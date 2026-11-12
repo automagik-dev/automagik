@@ -3,7 +3,7 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { agentKeyOfArgv, agyModeArgs, agyModeProblem, agySettingsArgs, agySettingsDir, agySettingsPlan, canResume, effortArgs, modelArgs, ownsSession,
+import { agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeProblem, agySettingsArgs, agySettingsDir, agySettingsPlan, canResume, effortArgs, launchRun, modelArgs, ownsSession,
   resumeArgs, resumesById, sessionIdArgs, withoutAgySettings, withoutBriefing, withoutResume } from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
@@ -191,12 +191,12 @@ const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
  */
 const NO_VALUE = Object.fromEntries(Object.entries({
   claude: ["-c", "--continue", "--dangerously-skip-permissions"],
-  codex: ["--yolo"],
+  codex: ["--yolo", "--approve-for-me"],
   hermes: ["--tui", "--yolo"],
   omp: ["--auto-approve", "-c", "--continue"],
   pi: ["-c", "--continue"],
   kimi: ["-c", "--continue"],
-  antigravity: ["-c", "--continue"],
+  antigravity: ["-c", "--continue", "--dangerously-skip-permissions"],
   "dsh-tui": ["-c", "--continue"],
 }).map(([key, flags]) => [key, new Set(flags)]));
 
@@ -491,21 +491,24 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
  * realpath, homeDir } when an Antigravity helper's permission list (#823) may be written here
  * (the bot it serves), null when the caller doesn't write one. `realpath` is the caller's
  * `(path) => string` (fs.realpathSync): the helper's folder is resolved to its canonical path
- * first (#884). `homeDir` is the person's home folder, never trusted (#884 Low A).
+ * first (#884). `homeDir` is the person's home folder, never trusted (#884 Low A). `bot` is the
+ * bot a rebuilt worker's command comes from: its automatic mode is the definition's (#946, #955).
  * A worker's command is rebuilt from its row (its task, the last word hc was given, isn't sent
  * twice) unless a template owns it;
  * any other helper's is its own launch command (paneCommand). Returns { name, replaced, cwd,
  * labels, agent, session, mode: "resume" | "fresh", resume, argv, agySettings (the file to write
  * first, or null), note }, or { name, replaced, error } when there is nothing to run.
  */
-export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null }) {
+export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null, bot = null, launchAgent = false }) {
   const name = typeof get?.name === "string" && get.name ? get.name : null;
   const replaced = get?.address ?? null;
   // A worker's worktree first (the ledger's), then the pane's folder, then its program's,
   // resolved to its canonical path when the caller gave a realpath (a symlinked folder, #884).
   const cwd = realPathOf(agy?.realpath, worker?.worktree ?? get?.cwd ?? get?.foreground?.cwd ?? null);
   const labels = { ...(get?.labels ?? {}) };
-  const agent = agentKeyOfArgv(get?.foreground?.argv, agents) ?? (worker?.agent && agents[worker.agent] ? worker.agent : null);
+  // `launchAgent` (#939, revive: the pane is a bare shell hc kept): its agent by its launch command.
+  const agent = agentKeyOfArgv(get?.foreground?.argv, agents) ?? (worker?.agent && agents[worker.agent] ? worker.agent : null)
+    ?? (launchAgent ? agentKeyOfArgv(paneCommand(get)?.argv, agents) : null);
   const template = worker?.template ?? labels[WORKER_TEMPLATE_LABEL] ?? get?.template ?? null;
   const isWorker = Boolean(worker || labels[WORKER_OF_LABEL]);
   let command = null;
@@ -517,7 +520,7 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
     const agyMode = labels[WORKER_AGY_MODE_LABEL] ?? null;
     const modeWhy = agent === "antigravity" ? agyModeProblem(agyMode) : null;
     if (modeWhy) return { name, replaced, error: `${name ?? replaced} can't be run again: ${modeWhy}` };
-    command = { argv: [...agents[agent].run, ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)] };
+    command = { argv: [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)] };
   } else {
     const launch = paneCommand(get);
     if (launch?.shell !== undefined) command = launch;
@@ -545,6 +548,9 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
     settings = null;
     argv = commandArgv(command);
   }
+  // #955: with no permission file (no bot to write one for, or a command that takes no words),
+  // an Antigravity helper never runs on skip-permissions.
+  argv = agyGuarded(agent, argv);
   return { name, replaced, cwd, labels, agent, session: resume && resumesById(agent) ? id : null, mode: resume ? "resume" : "fresh",
     resume: resume ?? [], argv, agySettings: settings, note };
 }

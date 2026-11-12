@@ -14,7 +14,8 @@ WhatsApp, Telegram, Slack and more, in one window, with helpers that act the mom
 </p>
 
 <p align="center"><sub>Mac with Apple silicon (M1 or newer), macOS 13 or newer · Linux on a 64-bit PC · Windows is not supported yet<br>
-Free and open source. <a href="https://github.com/automagik-si/automagik/releases/latest">All downloads and what's new</a></sub></p>
+Free and open source, Apache-2.0. <a href="https://github.com/automagik-si/automagik/releases/latest">All downloads and what's new</a><br>
+This app is Team mode, the flagship of <a href="../../README.md">Automagik's building blocks</a>. Code mode needs Herdr and <a href="../../herdr/README.md#install">the Automagik pack</a>; this download alone does not set it up.</sub></p>
 
 ---
 
@@ -24,19 +25,19 @@ Automagik puts all your conversations in one place, and gives you **Bots**: AI h
 
 - **One window for every chat.** Your WhatsApp, Telegram, Slack and other channels, side by side.
 - **Bots that don't wait to be asked.** A message arrives, a group gets busy, a customer writes at 3 AM: the Bot you put on it acts. Ask for *"a summary of this group every morning at 8"* and it simply happens.
-- **You stay in charge.** A Bot only reads the chats you allow. The first time it wants a new one, it asks you, and you answer **Once**, **Always** or **No**. Before it sends anything as you, deletes something or disconnects a channel, it shows you exactly what it will do and asks first, every time.
-- **Answers you can use.** Bots can reply with lists, boards and forms that keep themselves up to date.
+- **You stay in charge.** Before a Bot sends a message as you to a person, deletes something or disconnects a channel, it shows you exactly what it will do and asks first. The exceptions: your Main Bot and an Omni Bot read your chats and post to a group, a WhatsApp channel or your own chat with yourself without asking. Any other Bot reads and posts only where you allow: the first time it wants a chat it asks, and you answer **Once**, **Always** or **No**; after **Always** it posts to that group without asking again.
+- **Answers you can use.** In a Main Bot's canvas, replies can be lists, boards and forms that keep themselves up to date.
 
 ## Before you start
 
-You need two things. The app walks you through both, and you can skip either and come back later.
+Two things to connect when you are ready. The app walks you through both, and you can skip either and come back later.
 
 1. **An Omni to connect to.** Omni is the service that links your chat apps to Automagik. If your team or company runs one, ask for its address (it looks like a web address). You'll approve this computer from your phone; there are no passwords or keys to copy.
 2. **An AI account.** Any one of: DeepSeek, OpenAI (Codex), Anthropic (Claude), Kimi, Z.ai, OpenCode, or an API key from a provider you already use.
 
 ## Install on a Mac
 
-1. **[Download Automagik for Mac](https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Mac.dmg)**. It's about 330 MB.
+1. **[Download Automagik for Mac](https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Mac.dmg)**.
 2. Open the file you downloaded (**Automagik-Mac.dmg**, in your Downloads folder).
 3. In the window that opens, **drag the Automagik icon onto the Applications folder**.
 4. Open **Automagik** from your Applications folder (or press ⌘ Space and type *Automagik*).

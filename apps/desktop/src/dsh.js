@@ -610,6 +610,7 @@ export function freePort() {
 // and compiled again on every start, and the page's origin (its localStorage: the composer's
 // unsent drafts) changed with it. Only the port is reused, never a server: dsh still binds it
 // itself, and the page still signs in with the launch URL its own output carries.
+// When the port is taken the origin still moves: the drafts follow it through drafts.js (#141).
 export const portFileOf = home => join(home, 'dsh-port')
 
 /** The port in `file`, or null when there is none or it is not an unprivileged port. */
@@ -694,15 +695,20 @@ export async function startDshOnPort({ port, fresh = freePort, onPort, stopped =
  * The dsh a start runs, whichever process that is now: `track` takes each one as it spawns (the
  * first, then a retry's). `stop` stops the current one, and any spawned after it was called is
  * stopped at once, so a quit between the first dsh's exit and the retry leaves none behind.
+ * `since` is when the current one was spawned: a busy file older than that is not its own
+ * (quit-guard.js liveBusy).
  */
-export function dshRun() {
+export function dshRun({ now = Date.now } = {}) {
   let child = null
+  let since = null
   let stopped = false
   return {
     get child() { return child },
+    get since() { return since },
     get stopped() { return stopped },
     track(next) {
       child = next
+      since = now()
       // Just spawned, it has started nothing yet: it ends at once, before it can say it is ready
       // (taskkill, on Windows, would come too late).
       if (stopped) void stopDsh(next, undefined, { tree: false })

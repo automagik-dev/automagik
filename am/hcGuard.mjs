@@ -10,6 +10,11 @@
 // writable by the bot; the team check is a
 // guardrail over that data, never a boundary. Apache-2.0.
 //
+// `hc kill` is for the seat of a project's main bot only (#955): a member's seat and every
+// worker are refused, and end their own workers with `automagik-herdr worker kill <pane>`.
+// Every other agent's pane gets the kill shim instead (`hc-kill/hc`, runKillGuard below): that
+// one rule and nothing else, every other hc call passed to the real hc untouched.
+//
 // The caller comes from the attach ledger (attach.js), the authority: a worker pane has no
 // ledger row, so its `worker.of` label names its bot and its cwd's project is the team's
 // project. The target is resolved with the real hc: `hc ls` rows carry no labels, `hc get`
@@ -31,7 +36,7 @@ import { fileURLToPath } from "node:url";
 import { readApprovedRecord } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { cleanProjectPath, crossMembersOf, descendantsOf, effectiveLead, inferProjectOf, mainBotOf, parseBots, projectEntriesOf, projectFileOf, RANKS } from "./model.js";
-import { ENV, WORKER_OF_LABEL } from "./workers.js";
+import { ENV, KILL_GUARD_NAME, WORKER_OF_LABEL, isKillGuardWord } from "./workers.js";
 
 /** The commands a sandboxed bot may call unchanged. */
 export const ALLOWED_VERBS = new Set([
@@ -111,6 +116,11 @@ export async function runGuard(argv, env = process.env) {
       if (why) return refused(`label: ${why}`);
       return passthrough(real, args, env);
     }
+    if (verb === "kill") {
+      const why = killProblem(real, env, terminal);
+      if (why) return refused(`kill: ${why}`);
+      return passthrough(real, args, env);
+    }
     return passthrough(real, args, env);
   } catch (e) {
     return failedClosed(e?.message ?? e);
@@ -124,6 +134,73 @@ function docOnly(args) {
 
 function terminalOf(env) {
   return typeof env.HC_TERMINAL_ID === "string" ? env.HC_TERMINAL_ID.trim() : "";
+}
+
+// ---- the kill shim: the one rule every other agent's pane gets (#955) ----
+
+/** The kill shim's own folder, beside this module (workers.js KILL_GUARD_DIR). */
+export const KILL_GUARD_DIR = join(dirname(SELF_MODULE), KILL_GUARD_NAME);
+
+/** The command of an hc call: its first word that is no option (`hc --json kill` is a kill). */
+export const hcVerbOf = (args) => (Array.isArray(args) ? args.map(String).find((word) => !word.startsWith("-")) ?? "" : "");
+
+const killRefused = (reason) => {
+  say(`hc kill shim: refused ${oneLine(reason)} (#955). This shim is a guardrail on the pane's PATH, not a boundary.`);
+  return 2;
+};
+const killFailed = (reason) => {
+  say(`hc kill shim: ${oneLine(reason)} (#955).`);
+  return 1;
+};
+
+/**
+ * The `hc kill` shim for a pane of any agent other than dsh-tui (Claude Code, Codex,
+ * Antigravity and the rest): `argv` as the pane's shell gave it. A call whose command is
+ * `kill`, in any flag order (`hc kill --json t1`, `hc --json kill t1`), is checked by the
+ * guard's own rule (killProblem: the seat of a `kind: "main"` bot only) and refused to every
+ * worker and every other seat, with the verb that ends a bot's own worker. Every other call,
+ * `hc kill --help` included, goes to the real hc with the same words, stdio and exit code; the
+ * shim reads nothing for it. A kill it cannot check (no HC_TERMINAL_ID, an unreadable ledger)
+ * is refused; a call it cannot pass on says so and exits 127. It stops the honest path only:
+ * the real hc by its full path, a raw socket or `hc connect` skips it.
+ */
+export async function runKillGuard(argv, env = process.env) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  let real = null;
+  try { real = hcPastGuards(env); } catch { /* reported below */ }
+  if (!real) {
+    say("hc kill shim: the real hc is not on PATH (#955).");
+    return 127;
+  }
+  const asksHelp = args.includes("--help") || args.includes("-h");
+  if (hcVerbOf(args) !== "kill" || asksHelp) return passthrough(real, args, env, { plain: true });
+  try {
+    const terminal = terminalOf(env);
+    if (!terminal) return killRefused("kill: a call without HC_TERMINAL_ID cannot be checked");
+    const why = killProblem(real, env, terminal);
+    if (why) return killRefused(`kill: ${why}`);
+  } catch (e) {
+    return killRefused(`kill: the caller could not be checked (${oneLine(e?.message ?? e)})`);
+  }
+  return passthrough(real, args, env, { plain: true });
+}
+
+/**
+ * The real hc for the kill shim: the first executable `hc` on PATH outside every folder that
+ * looks like a guard (an hcGuard.mjs beside it), of this version or another. The shim guards
+ * one command, so it never hands a call to another guard and never sets the re-entry marker.
+ */
+function hcPastGuards(env) {
+  const self = new Set([realOrNull(join(KILL_GUARD_DIR, "hc")), realOrNull(SELF_ENTRY), realOrNull(process.argv[1])].filter(Boolean));
+  for (const dir of String(env.PATH ?? "").split(delimiter)) {
+    if (!dir || looksLikeGuardFolder(dir)) continue;
+    const candidate = join(dir, "hc");
+    if (!executable(candidate)) continue;
+    const real = realOrNull(candidate);
+    if (!real || self.has(real)) continue;
+    return real;
+  }
+  return null;
 }
 
 /** A guard already ran for this call (#643): the marker stops re-entry, never allows. */
@@ -145,11 +222,12 @@ const realOrNull = (path) => { try { return realpathSync(path); } catch { return
 const SELF_BYTES = (() => { try { return readFileSync(SELF_MODULE); } catch { return null; } })();
 const SELF_GUARD_DIR = realOrNull(GUARD_DIR);
 /**
- * A guard folder this guard can vouch for (#643): its real path is this guard's own folder, or
- * the hcGuard.mjs beside its `hc` entry is byte-equal to this module (the installed am copy).
- * A planted hcGuard.mjs no longer makes a folder a guard.
+ * A guard folder this copy can vouch for (#643): its real path is this module's own guard
+ * folder, or the hcGuard.mjs beside its `hc` entry is byte-equal to this module (the installed
+ * am copy). A planted hcGuard.mjs no longer makes a folder a guard. The one byte-equal rule
+ * (#721): the guard uses it here, and the CLI imports it for realHcPath, so the two cannot drift.
  */
-function isGuardFolder(dir) {
+export function isGuardFolder(dir) {
   if (typeof dir !== "string" || dir === "") return false;
   const real = realOrNull(dir);
   if (!real) return false;
@@ -186,10 +264,16 @@ function findRealHc(env) {
   return null;
 }
 
-/** Run the real hc with the pane's stdio and return its exit code (a signal is re-raised). */
-function passthrough(real, args, env) {
-  const r = spawnSync(real, args, { env: spawnEnv(real, env), stdio: "inherit" });
-  if (r.error) return failedClosed(`the real hc at ${real} did not run: ${r.error.message}`);
+/**
+ * Run the real hc with the pane's stdio and return its exit code (a signal is re-raised).
+ * `plain`: the kill shim's call, with the pane's environment as it is and its own failure line.
+ */
+function passthrough(real, args, env, { plain = false } = {}) {
+  const r = spawnSync(real, args, { env: plain ? env : spawnEnv(real, env), stdio: "inherit" });
+  if (r.error) {
+    const why = `the real hc at ${real} did not run: ${r.error.message}`;
+    return plain ? killFailed(why) : failedClosed(why);
+  }
   if (typeof r.status === "number") return r.status;
   if (r.signal) {
     try { process.kill(process.pid, r.signal); } catch { /* the caller sees a failure */ }
@@ -546,6 +630,28 @@ function labelProblem(real, args, env, terminal, on) {
   return null;
 }
 
+// ---- kill: a project's main bot only (#955, the owner's rule) ----
+
+/**
+ * `hc kill` is for the seat of a project's main bot (`kind: "main"` in bots.json) and no one
+ * else: a member's seat, a lead that isn't the main bot, and every worker are refused, whatever
+ * the target. The kind is the bots.json entry's, read through the attach ledger's binding of the
+ * caller's pane, never a label. A bot ends a worker it started with `automagik-herdr worker
+ * kill <pane>`, which checks the worker is its own. `hc --json kill` and any other flag before
+ * the command never get here: the guard refuses a call whose first word is an option.
+ */
+function killProblem(real, env, terminal) {
+  const caller = callerOf(real, env, terminal);
+  if (typeof caller === "string") return caller;
+  const own = "end a worker you started with automagik-herdr worker kill <pane>";
+  if (caller.worker) return `hc kill is for a project's main bot only, never a worker; ${own}`;
+  const file = readBots(caller.project);
+  const bot = file?.bots?.find((row) => row.id === caller.bot) ?? null;
+  if (!bot) return "the caller's bot is not in its project's bots.json";
+  if (bot.kind !== "main") return `hc kill is for a project's main bot only; ${own}`;
+  return null;
+}
+
 // ---- run: exactly the worker start workers.js emits for dsh-tui ----
 
 /** Canonical `cwd` under the project's .claude/worktrees/; false for a link or a path outside it. */
@@ -625,7 +731,7 @@ function runProblem(args, env, terminal) {
   if (rest[0] !== ENV) return `the program is not ${ENV}`;
   if (!rest[1] || !rest[1].startsWith("PATH=")) return "no PATH word after the program";
   const first = rest[1].slice("PATH=".length).split(delimiter)[0];
-  if (!isGuardFolder(first)) return "the PATH word does not start with a guard";
+  if (!isGuardFolder(first) || isKillGuardWord(first)) return "the PATH word does not start with a guard";
   if (rest[2] !== "dsh-tui") return "the program is not dsh-tui";
   if (rest.length !== 5 || rest[3] !== "--" || typeof rest[4] !== "string") return "the task is not the one -- <task> word";
   return null;

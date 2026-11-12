@@ -275,6 +275,11 @@ export function install(rt) {
   // Whether the route a restore goes back to still answers: registered, and DSH still holds its
   // sign-in grant (the description only). Unreadable is no.
   async function sourceAnswers(spec) {
+    // Isolation migration/sign-out deliberately pauses the Bot on its chosen CLI route.
+    // Restoring a legacy plan here would silently bill a different account.
+    try {
+      if (ctx.get?.('acpAgents')?.authScope !== 'shared') return false
+    } catch { return false }
     if (!registered(spec.from)) return false
     try {
       const credentials = ctx.get?.('credentials')

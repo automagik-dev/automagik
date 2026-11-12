@@ -177,3 +177,18 @@ test('Advanced releases actual native dock, turn actions and process header CSS 
   dom.window.document.body.removeAttribute('data-bt-advanced')
   for (const target of targets) assert.equal(dom.window.getComputedStyle(target).display, 'none')
 })
+
+
+test('Details permission popup rules belong to the shell even on a plain Session', async () => {
+  const bundle = await build({ entryPoints: [fileURLToPath(new URL('../src/client/styles.js', import.meta.url))], bundle: true, format: 'cjs', platform: 'node', write: false, external: ['react'] })
+  const module = { exports: {} }
+  runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports, require: () => ({}), URL, URLSearchParams })
+  assert.deepEqual(module.exports.SHELL_CSS.split('\n').filter(line => line.trim()).slice(-5), [
+    '.bt-permission-menu{min-width:min(380px,calc(100vw - 24px));max-height:min(460px,60vh);overflow-y:auto;padding:8px}',
+    '.bt-permission-menu .bt-q-list{margin:0;gap:2px}',
+    '.bt-permission-menu .bt-q-opt{padding:8px 10px;border-radius:8px}',
+    '.bt-permission-menu .bt-q-desc{font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:normal}',
+    '.bt-permission-menu .bt-perm-confirm{padding:4px 2px 2px}',
+  ])
+  assert.equal(module.exports.CONVERSATION_CSS.includes('.bt-permission-menu'), false)
+})

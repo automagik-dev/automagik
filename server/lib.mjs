@@ -6,6 +6,7 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -15,11 +16,28 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { cp } from 'node:fs/promises'
+import { markSeed } from './profile-state.mjs'
 
 export const PROFILE = 'automagik-web'
 export const PORT = 3081
 /** The store pnpm uses for its major version, as the desktop app records it (`v10` for pnpm 10). */
 export const STORE_LAYOUT = 'v10'
+
+/** The proxy's advertised HTTPS root and the exact authority dsh must accept. */
+export function publicUrlArgs(value) {
+  if (value === undefined) return []
+  const invalid = () => new Error('AUTOMAGIK_PUBLIC_URL must be an absolute https:// URL with a host and no credentials, query, fragment, whitespace or backslashes')
+  if (!/^https:\/\//i.test(value) || /[\u0000-\u0020\u007f\\?#]/u.test(value)) throw invalid()
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw invalid()
+  }
+  const authority = value.slice(value.indexOf('://') + 3).split('/')[0]
+  if (!authority || authority.includes('@') || !url.hostname || url.hostname.includes('*')) throw invalid()
+  return ['--public-url', value, '--trusted-host', url.host]
+}
 
 // The errors that mean "this directory is not ours to write", so the entrypoint leaves it and
 // the preflight refuses with the uid message. EBUSY is one: removing an empty workspace that is
@@ -94,7 +112,7 @@ export function prepareWorkspace(dir, { uid = process.getuid?.() ?? 1000 } = {})
 export const redactTokens = (text) => String(text).replace(/(?<![A-Za-z0-9_])token=[^\s&"'<>]+/g, 'token=<redacted>')
 
 /** The launch URL (with dsh's per-launch token) in a line of dsh's output, or null. */
-export const launchUrlOf = (text) => /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\S*token=\S+)/.exec(String(text))?.[1] ?? null
+export const launchUrlOf = (text) => /dsh web: (https?:\/\/\S*token=\S+)/.exec(String(text))?.[1] ?? null
 
 /** A key file must be 0400 or 0600: owner-only and not executable. */
 export const privateMode = (mode) => mode === 0o400 || mode === 0o600
@@ -107,16 +125,24 @@ export const profileDirOf = (dshHome) => join(dshHome, 'profiles', PROFILE)
  * The copy lands beside its place and is renamed in whole, so an interrupted first start never
  * leaves a profile that looks installed. An existing profile is the user's and is never touched.
  */
-export async function seedProfile({ dshHome, source, marker = 'automagik-server-profile' }) {
+export async function seedProfile({ dshHome, source, release = readVersion(source) }) {
   const target = profileDirOf(dshHome)
   if (existsSync(target)) return { target, seeded: false }
   mkdirSync(join(dshHome, 'profiles'), { recursive: true })
-  const fresh = `${target}.installing`
-  rmSync(fresh, { recursive: true, force: true })
-  await cp(source, fresh, { recursive: true, verbatimSymlinks: true })
-  writeFileSync(join(fresh, marker), `${readVersion(source)}\n`)
-  renameSync(fresh, target)
-  return { target, seeded: true }
+  const fresh = mkdtempSync(`${target}.installing-`)
+  try {
+    await cp(source, fresh, { recursive: true, verbatimSymlinks: true })
+    markSeed(fresh, release)
+    if (existsSync(target)) return { target, seeded: false }
+    try { renameSync(fresh, target) }
+    catch (error) {
+      if (['EEXIST', 'ENOTEMPTY'].includes(error.code) && existsSync(target)) return { target, seeded: false }
+      throw error
+    }
+    return { target, seeded: true }
+  } finally {
+    rmSync(fresh, { recursive: true, force: true })
+  }
 }
 
 function readVersion(source) {

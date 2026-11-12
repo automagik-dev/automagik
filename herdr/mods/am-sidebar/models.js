@@ -22,10 +22,12 @@ export const AGENTS = Object.freeze({
   copilot: { name: "Copilot", run: ["copilot"], match: ["github-copilot"] },
   amp: { name: "Amp", run: ["amp"] },
   grok: { name: "Grok", run: ["grok"] },
-  // agy 1.5.3 takes permission flags (--dangerously-skip-permissions, --mode
-  // accept-edits|auto|plan, --sandbox); this pack passes only --mode (agyModeArgs: auto unless
-  // the roster names another mode), never a skip-permissions flag, and never writes agy's own
-  // settings, so its trust list and saved settings stay the person's.
+  // agy takes permission flags (--dangerously-skip-permissions, --mode accept-edits|auto|plan,
+  // --sandbox). Its --mode auto is not available where its terminal sandbox or the account
+  // lacks it, and agy then continues in manual mode (#955), so this pack passes --mode
+  // (agyModeArgs) and --dangerously-skip-permissions (AUTO_MODE), the second only beside a
+  // --settings file whose deny list agy still enforces (agyGuarded). It never writes agy's own
+  // settings, so its saved trust list and settings stay the person's.
   antigravity: { name: "Antigravity", run: ["agy"], match: ["agy"] },
   kimi: { name: "Kimi", run: ["kimi"] },
   kiro: { name: "Kiro", run: ["kiro-cli"], match: ["kiro-cli"] },
@@ -383,7 +385,8 @@ export function effortArgs(agentKey, effort) {
 
 // agy 1.5.3's execution mode (`--mode accept-edits|auto|plan`): the pack names one on every
 // Antigravity launch, auto unless the roster's agyMode says otherwise, so a bot doesn't stop at
-// its first command. Never --dangerously-skip-permissions, and agy's own settings (its trust
+// its first command. Where agy can't run that mode it continues in manual mode, so the launch
+// also carries --dangerously-skip-permissions (AUTO_MODE, #955). agy's own settings (its trust
 // list included) stay the person's: the mode goes on the launch line only.
 export const AGY_MODES = Object.freeze(["accept-edits", "auto", "plan"]);
 /** The mode an Antigravity launch gets when the roster names none. */
@@ -403,6 +406,136 @@ export function agyModeArgs(agentKey, mode = null) {
   return agentKey === "antigravity" ? ["--mode", agyModeOf(mode)] : [];
 }
 
+// ---- Each agent's automatic mode (#955, #946) ----
+//
+// The pack starts every bot and worker in its agent's automatic mode, so an unattended pane
+// never stops at an approval prompt only a person can answer. The flags come from the definition
+// (launchRun), never from an old pane's command. herdr/README.md has the same table.
+
+// Codex's auto mode (codex-cli 0.167.0 `--approve-for-me`): an approval request goes to Codex's
+// own reviewer instead of a person, and the workspace-write sandbox stays. `--disable hooks`
+// (the same as `-c features.hooks=false`) turns its hooks off at launch (#1045): a hook in
+// ~/.codex/hooks.json or the worktree's .codex/hooks.json that is new or changed would otherwise
+// stop TUI startup at "Hooks need review" for a person to answer, and the pack never passes
+// --dangerously-bypass-hook-trust (it would run an untrusted hook's commands in a worktree).
+// The pack puts both on every Codex launch it makes, so an unattended bot or worker never stops
+// at an approval prompt or a hook review only a person can answer (#946). A bot's
+// `codexAuto: false` opts out, and an hc template owns a worker's command: neither flag reaches one.
+export const CODEX_AUTO_ARGS = Object.freeze(["--approve-for-me", "--disable", "hooks"]);
+
+/** Whether a launch of `agentKey` for `bot` passes Codex's auto mode: a Codex seat or worker, unless its bot opted out. */
+export const codexAutoOn = (agentKey, bot) => agentKey === "codex" && bot?.codexAuto !== false;
+
+/** The words Codex's auto mode adds, [] for every other agent and for a bot whose `codexAuto` is false. */
+export const codexAutoArgs = (agentKey, bot) => (codexAutoOn(agentKey, bot) ? [...CODEX_AUTO_ARGS] : []);
+
+/** agy's flag that answers every permission request itself; its --settings deny list still holds. */
+export const AGY_SKIP_PERMISSIONS = "--dangerously-skip-permissions";
+
+/**
+ * The automatic mode of each agent that has one this pack passes: `args` (the words added after
+ * the agent's run), `own` (the flags by which a run already picks its approvals: a programs.json
+ * override naming one is left as the person wrote it), `what` (one line for status and doctor).
+ * Checked against claude 2.1.322, codex-cli 0.167.0 and agy 1.5.4 on 2026-11-10.
+ * Antigravity is the one agent that gets a skip-all flag, on the owner's word (#955): agy's
+ * `--mode auto` falls back to manual mode where its sandbox or the account lacks it, while
+ * `--dangerously-skip-permissions` still refuses a command its --settings deny list names
+ * (AGY_FIXED_DENY), so the flag only ever goes beside that file (agyGuarded).
+ */
+export const AUTO_MODE = Object.freeze({
+  claude: Object.freeze({ args: Object.freeze(["--permission-mode", "auto"]),
+    own: Object.freeze(["--permission-mode", "--dangerously-skip-permissions"]),
+    what: "Claude Code's auto mode: its classifier answers permission requests" }),
+  codex: Object.freeze({ args: CODEX_AUTO_ARGS,
+    own: Object.freeze(["--approve-for-me", "-a", "--ask-for-approval", "--yolo", "--dangerously-bypass-approvals-and-sandbox"]),
+    what: "Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox, with hooks off" }),
+  antigravity: Object.freeze({ args: Object.freeze([AGY_SKIP_PERMISSIONS]),
+    own: Object.freeze([AGY_SKIP_PERMISSIONS]),
+    what: "no permission prompts; the launch's deny list still refuses what it names" }),
+});
+
+/**
+ * Why an agent gets no automatic-mode flag from this pack. No skip-all-approvals flag (`--yolo`,
+ * `--auto-approve` and the like) is passed for any of them: that needs the owner's word first
+ * (#955). "not checked" means the agent is on none of the hosts the flags were read on, so the
+ * pack adds nothing it has not seen that agent's own help name.
+ */
+export const AUTO_MODE_NONE = Object.freeze({
+  pi: "not checked: Pi isn't installed where the flags were read",
+  omp: "omp 18.14.2 has only skip-all flags (--auto-approve, --approval-mode=yolo)",
+  opencode: "not checked: OpenCode isn't installed where the flags were read",
+  cursor: "not checked: Cursor's CLI isn't installed where the flags were read",
+  copilot: "not checked: Copilot's CLI isn't installed where the flags were read",
+  amp: "not checked: Amp isn't installed where the flags were read",
+  grok: "not checked: Grok's CLI isn't installed where the flags were read",
+  kimi: "not checked: Kimi isn't installed where the flags were read",
+  kiro: "not checked: Kiro's CLI isn't installed where the flags were read",
+  hermes: "Hermes 0.22.5 has only a skip-all flag (--yolo)",
+  qoder: "not checked: Qoder's CLI isn't installed where the flags were read",
+  crush: "not checked: Crush isn't installed where the flags were read",
+  "dsh-tui": "its DSH profile on the machine it runs on sets the approval policy; dsh-tui takes no such flag",
+});
+
+/** Whether `run` already names one of `flags` (as a word or `--flag=value`), before any `--`. */
+function runNames(run, flags) {
+  for (const w of Array.isArray(run) ? run.map(String) : []) {
+    if (w === "--") return false;
+    if (flags.some((flag) => w === flag || w.startsWith(`${flag}=`))) return true;
+  }
+  return false;
+}
+
+/**
+ * The words `agentKey`'s automatic mode adds to `run` for `bot`: AUTO_MODE's, [] for an agent
+ * with none, for a Codex bot whose `codexAuto` is false, and for a run that already picks its
+ * own approvals (a programs.json override).
+ */
+export function autoModeArgs(agentKey, bot = null, run = []) {
+  const mode = AUTO_MODE[agentKey];
+  if (!mode || runNames(run, mode.own)) return [];
+  if (agentKey === "codex") return codexAutoArgs(agentKey, bot);
+  return [...mode.args];
+}
+
+/**
+ * The words `agentKey` starts with: the given run (Herdr's table, programs.json applied) and the
+ * flags this pack adds for that agent's automatic mode. They are added here, so a bot's start,
+ * its restart and its workers all take them from the definition, never from an old pane's command.
+ */
+export function launchRun(agentKey, run, bot) {
+  return [...run, ...autoModeArgs(agentKey, bot, run)];
+}
+
+/**
+ * `argv` (a launch) as it may run: an Antigravity launch with no `--settings` file loses
+ * `--dangerously-skip-permissions`, since the deny list in that file is the one thing the flag
+ * leaves standing. Any other agent's argv, or one that doesn't run agy directly (a shell
+ * template owns its command), is returned as it is.
+ */
+export function agyGuarded(agentKey, argv) {
+  const words = Array.isArray(argv) ? argv.map(String) : [];
+  if (agentKey !== "antigravity" || agentKeyOfArgv(words) !== agentKey) return words;
+  const end = words.indexOf("--");
+  const head = end < 0 ? words : words.slice(0, end);
+  const settings = head.findIndex((w) => w === "--settings" || w.startsWith("--settings="));
+  const named = settings >= 0 && (head[settings].length > "--settings=".length || (head[settings] === "--settings" && Boolean(head[settings + 1])));
+  if (named) return words;
+  return [...head.filter((w) => w !== AGY_SKIP_PERMISSIONS), ...(end < 0 ? [] : words.slice(end))];
+}
+
+/**
+ * The line a launch says when the roster itself names Antigravity's `auto` mode and this host
+ * can't run it, or null. agy prints its own warning only in print mode ("--mode auto is not
+ * available ..."); an interactive pane shows nothing and continues in its default mode, so the
+ * launcher says it. `explicit`: the roster's own value (a bot's `agyMode`, a worker's), absent
+ * for the default; `sandbox`: agySandbox's answer for the host the launch runs on.
+ */
+export function agyModeWarning({ name = "the bot", explicit = null, sandbox = null } = {}) {
+  if (explicit !== "auto" || sandbox?.state !== "missing") return null;
+  return `${name}: Antigravity's --mode auto is not available on this host (${sandbox.detail}); agy continues in its default mode `
+    + `and says so only in print mode. The launch still runs without prompts (${AGY_SKIP_PERMISSIONS}), under its deny list.`;
+}
+
 // ---- Antigravity's per-launch permission list (--settings, #823) ----
 //
 // agy 1.5.3 reads a permission list from a session's --settings file, never saving it: the file
@@ -414,14 +547,18 @@ export function agyModeArgs(agentKey, mode = null) {
 /**
  * The rules every Antigravity launch carries; a roster adds rules and can never drop one.
  *
- * This list is a guardrail against accidents, not a security boundary. A deny rule matches the
- * words' prefix only, so a quoted or reordered command, an absolute path or an interpreter call
- * can go around it. Two forms are not caught at all: a force refspec whose `+` is attached to
- * the ref (`git push origin +main`) and combined short flags (`git push -fu`). A reset form that
- * reaches `--hard` after other words (`git reset HEAD~1 --hard`) is not caught either; only the
- * leading-word form is. Allowing `node`, `bun` or `git` with any arguments already lets a
- * determined agent do anything. The real boundary is the sandbox (hcProxy). The list covers the
- * common ways a bot would lose work or land something it shouldn't.
+ * This list is a guardrail against accidents, not a security boundary. Every launch runs on
+ * --dangerously-skip-permissions (#955), so whatever no rule here names runs with no prompt and
+ * no classifier: inline code (python3 -c, node -e, bash -c), scripts, sh, env, curl, ssh, a
+ * plain push, a child agent, a write to the launch's own settings file. A rule matches whole
+ * words from the start of each part of a command line and takes no wildcard, so a reordered
+ * command, an absolute path, a wrapper or an interpreter call goes around it. Not caught at
+ * all: a force refspec whose `+` is attached to the ref (`git push origin +main`), combined
+ * short flags (`git push -fu`), a `--flag=value` spelling, a force flag after a ref the list
+ * doesn't name, `gh api <endpoint> -X ...` (only the flag-first forms are listed), and a reset
+ * that reaches `--hard` after other words (`git reset HEAD~1 --hard`). The real boundary is the
+ * sandbox (hcProxy). The list covers the common ways a bot would lose work or land something it
+ * shouldn't.
  */
 export const AGY_FIXED_DENY = Object.freeze([
   "command(git push --force)",
@@ -441,7 +578,68 @@ export const AGY_FIXED_DENY = Object.freeze([
   "command(rm -rf)",
   "command(gh pr merge)",
   "command(gh release)",
+  // #955: every launch runs with no permission prompt, so what used to stop at one is named
+  // here. gh api's writing forms, flag first only (`gh api <endpoint> -X PUT` is not caught):
+  "command(gh api -X)",
+  "command(gh api --method)",
+  "command(gh api -f)",
+  "command(gh api -F)",
+  // the roster and other bots' seats:
+  "command(automagik-herdr edit)",
+  "command(automagik-herdr restart)",
+  "command(automagik-herdr rm)",
+  "command(automagik-herdr create)",
+  // am runs the same CLI (am/bin/am.mjs), so the same four verbs under its name:
+  "command(am edit)",
+  "command(am restart)",
+  "command(am rm)",
+  "command(am create)",
+  // and another pane's keys and commands (its life is AGY_KILL_DENY's, by the bot's kind):
+  "command(hc keys)",
+  "command(hc interrupt)",
+  "command(hc exec)",
+  // More spellings of the same accidents (#998 review). A rule is whole words from the start of
+  // the command, with no wildcard (checked on agy 1.5.4: `command(echo * two)` doesn't match
+  // `echo one two`, and `--flag` doesn't match `--flag=value`), so each form is listed: a force
+  // flag after -u or after a protected branch name, the other ways to write rm -rf, a forced
+  // branch delete, git's own config and git-dir overrides, and a checkout or restore that
+  // throws work away. A force flag after any other ref is still not caught.
+  "command(git push -u --force)",
+  "command(git push -u -f)",
+  "command(git push -u --force-with-lease)",
+  "command(git push --set-upstream --force)",
+  "command(git push origin --force-with-lease)",
+  ...["main", "dev", "master", "HEAD"].flatMap((ref) => ["--force", "-f", "--force-with-lease"]
+    .map((flag) => `command(git push origin ${ref} ${flag})`)),
+  "command(git branch --delete --force)",
+  "command(git branch --delete -f)",
+  "command(git branch -d --force)",
+  "command(git branch -d -f)",
+  "command(rm -fr)",
+  "command(rm -r -f)",
+  "command(rm -f -r)",
+  "command(rm -Rf)",
+  "command(rm -fR)",
+  "command(rm -R -f)",
+  "command(rm --recursive)",
+  "command(git -c)",
+  "command(git --git-dir)",
+  "command(git restore .)",
+  "command(git checkout -f)",
+  "command(git checkout --force)",
 ]);
+
+/**
+ * `hc kill` is for the seat of a project's main bot only (the owner's rule, #955): every worker,
+ * and every seat whose bot is not `kind: "main"` in the roster, carries these two rules; a main
+ * bot's seat does not. The second names the usual flag-before-verb spelling; another global
+ * flag before `kill` is not caught (a rule is whole words, no wildcard). A bot ends a worker it
+ * started with `automagik-herdr worker kill <pane>`.
+ */
+export const AGY_KILL_DENY = Object.freeze(["command(hc kill)", "command(hc --json kill)"]);
+
+/** Whether a launch of `bot` in `scope` may run `hc kill` itself: a main bot's seat, nothing else. */
+export const mayHcKill = (bot, scope = "seat") => scope === "seat" && bot?.kind === "main";
 
 /** The rule types agy 1.5.3 takes: a command prefix, or a folder its files are written under. */
 export const AGY_RULE_TYPES = Object.freeze(["command", "write_file"]);
@@ -557,16 +755,19 @@ function agyCanonicalPath(path, realpath) {
 }
 
 /**
- * The folders a launch's `--settings` file lists in `trustedWorkspaces` (#879). agy trusts a
- * folder by exact path, so a new writer worktree would stop at its first-run question, "Do you
- * trust the contents of this project?". `realpath` (optional): a `(path) => string` callback
- * that resolves the folder to its canonical path, so a symlinked folder is trusted by the
- * folder it really is; null, or a callback that throws, keeps it as given. `homeDir` (optional):
- * the person's home folder, normalized and resolved the same way; a folder that resolves to it
- * lists nothing, so the home folder is never trusted. Only `folder` itself is listed, never a
- * parent folder; anything but a trimmed absolute path (the root included, a line-broken one, a
- * non-string) lists nothing. A read-only review launch never calls this (agyPermissionPlan gives
- * it no trusted folder). The pack never writes agy's saved settings.
+ * The folders a launch's `--settings` file lists in `trustedWorkspaces` (#879, #1046). agy trusts
+ * a folder by exact path, so a launch would stop at its first-run question, "Do you trust the
+ * contents of this project?". Every launch with a valid folder lists that launch's own folder,
+ * whatever its scope or role: the project folder for a seat, the worker's worktree for a worker
+ * (a review worker included) and the helper's folder for a helper. `realpath` (optional): a
+ * `(path) => string` callback that resolves the folder to its canonical path, so a symlinked
+ * folder is trusted by the folder it really is; null, or a callback that throws, keeps it as
+ * given. `homeDir` (optional): the person's home folder, normalized and resolved the same way; a
+ * folder that resolves to it lists nothing, so the home folder is never trusted, and a launch at
+ * the home folder omits `trustedWorkspaces` instead of writing an empty list. Only `folder`
+ * itself is listed, never a parent folder; anything but a trimmed absolute path (the root
+ * included, a line-broken one, a non-string) lists nothing. The pack never writes agy's saved
+ * settings.
  */
 export function agyTrustedWorkspaces(folder, realpath = null, homeDir = null) {
   if (typeof folder !== "string") return [];
@@ -584,21 +785,24 @@ export function agyTrustedWorkspaces(folder, realpath = null, homeDir = null) {
  * need, plus the roster's own additions (a bot's `agyPermissions` reaches its workers too).
  * `scope`: "seat" (a bot) or "worker"; `role`: a worker's role (models.js callers pass
  * workers.js's ROLES: only "review" is read-only); `folder`: the project or worktree that
- * `write_file` opens to a writer and that a writer launch's settings file trusts (#879);
+ * `write_file` opens to a writer and that every launch's settings file trusts (#879, #1046);
  * `realpath` (optional): a `(path) => string` callback that resolves `folder` to its canonical
  * path for both the `write_file` rule and `trustedWorkspaces`, so a symlinked folder is named
  * by the folder it really is. `homeDir` (optional): the person's home folder; a folder that
  * resolves to it lists nothing (agyTrustedWorkspaces). A read-only launch (a review worker, a
- * reviewer seat) is never auto-trusted (#884 M1): `trustedWorkspaces` is `[]`, so agy stops at
- * its trust question rather than loading a contributor's or fork's review tree's project
- * configuration. The fixed deny rules are always there; nothing drops them. These lists are a
- * guardrail against accidents, not a security boundary: a rule matches word prefixes only, and
- * allowing `node`, `bun` or `git` with any arguments lets a determined agent do anything.
+ * reviewer seat) keeps the read-only `allow` list: no `write_file`, no writer shell tools. It is
+ * still trusted for its own folder (#1046), so an unattended `--role review` worker never stops
+ * at agy's trust question; its read-only brief, not the allow list, is what bounds it, and the
+ * hc-proxy sandbox is the real boundary. The fixed deny rules are always there; nothing drops
+ * them. `hc kill` is denied (AGY_KILL_DENY) to every worker and to every seat but a main bot's
+ * (`bot.kind === "main"`). These lists are a guardrail against accidents, not a security
+ * boundary: a rule matches word prefixes only, and allowing `node`, `bun` or `git` with any
+ * arguments lets a determined agent do anything.
  * Returns { allow, deny, trustedWorkspaces, warnings }.
  */
 export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null, realpath = null, homeDir = null }) {
   const readOnly = scope === "worker" ? role === "review" : bot?.rank === "reviewer";
-  const trustedWorkspaces = readOnly ? [] : agyTrustedWorkspaces(folder, realpath, homeDir);
+  const trustedWorkspaces = agyTrustedWorkspaces(folder, realpath, homeDir);
   const allow = [...(readOnly ? AGY_READ_ALLOW : AGY_WRITE_ALLOW)];
   const warnings = [];
   if (!readOnly && typeof folder === "string" && folder) {
@@ -610,7 +814,7 @@ export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = n
   const roster = bot?.agyPermissions === undefined ? { allow: [], deny: [], problems: [] } : normalizeAgyPermissions(bot.agyPermissions);
   allow.push(...roster.allow);
   for (const why of roster.problems) warnings.push(`${bot?.name ?? bot?.id ?? "the bot"}: ${why}`);
-  const deny = [...AGY_FIXED_DENY, ...roster.deny];
+  const deny = [...AGY_FIXED_DENY, ...(mayHcKill(bot, scope) ? [] : AGY_KILL_DENY), ...roster.deny];
   return { allow: [...new Set(allow)], deny: [...new Set(deny)], trustedWorkspaces, warnings };
 }
 
@@ -652,11 +856,11 @@ export function agySettingsFile(dir, botId, scope = "seat", role = null, folder 
  * approved worker). `realpath` and `homeDir` (optional) are agyPermissionPlan's: the folder's
  * canonical path, and the home folder that is never trusted. `text` is the JSON agy reads from
  * `--settings`: permissions.allow and permissions.deny, both arrays in full (agy replaces its
- * saved lists field by field), and, only when there is one, trustedWorkspaces, the writer
- * launch's own folder (agy trusts folders by exact path, #879), so agy asks no first-run trust
- * question. A read-only review launch (and any launch with no trusted folder) omits the key
- * entirely (#884 M1): agy then asks, and a contributor's or fork's review tree is never loaded
- * as trusted project configuration, nor is a person's saved trust list overwritten with [].
+ * saved lists field by field), and, only when there is one, trustedWorkspaces, the launch's own
+ * folder (agy trusts folders by exact path, #879). Every launch with a valid folder lists it, a
+ * review launch included (#1046), so agy asks no first-run trust question. A launch at the home
+ * folder, or with no valid folder at all, omits the key entirely, so a person's saved trust list
+ * is never overwritten with [].
  */
 export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir, realpath = null, homeDir = null }) {
   if (!bot?.id || !settingsDir) return null;
@@ -743,9 +947,18 @@ export function agySandbox({ platform = process.platform, read = () => null } = 
 // How each agent takes a first prompt that starts an interactive session. Most read a bare
 // trailing argument; agy 1.5.3 only through `-i` / `--prompt-interactive` (a stray trailing
 // argument is an error).
+// kimi takes none on its command line (#1032). Read on 2026-11-10 from kimi 2.5.0
+// (@moonshot-ai/kimi-code; `kimi --version` prints 2.5.0), its --help: `Usage: kimi [options]
+// [command]`, and any other word is a command name: `unknown command '<word>'. See 'kimi
+// --help'.`, exit 1. Its one prompt option, `-p, --prompt <prompt>  Run one prompt
+// non-interactively and print the response.`, is a one-shot print mode: it ends after the answer
+// and refuses --yolo, --auto and --plan (`Cannot combine --prompt with --auto.`), and a worker
+// must stay interactive. So kimi starts bare, and its task is its first message, sent once it
+// says it is ready (it reports its status to hc; the CLI's worker verb: hc wait, then hc send).
 const PROMPT = {
   antigravity: (task) => ["-i", task],
   "dsh-tui": (task) => ["--", plainPrompt(task)],
+  kimi: () => [],
 };
 
 // dsh-tui's first prompt (a worker's task, a bot's briefing) goes after `--`, which DSH drops
@@ -759,6 +972,12 @@ export const plainPrompt = (text) => (/^\s*-/.test(String(text)) ? `${PROMPT_LAB
 export function promptArgs(agentKey, task) {
   return PROMPT[agentKey] ? PROMPT[agentKey](task) : [task];
 }
+
+/**
+ * Whether `agentKey` takes no first prompt on its command line (promptArgs gives it no word:
+ * kimi), so whoever starts it sends the task as its first message instead.
+ */
+export const promptByMessage = (agentKey) => promptArgs(agentKey, "x").length === 0;
 
 // How each agent picks up where it left off, for Restart: the words after its `run`. Each
 // was read from that agent's own --help on 2026-11-03 (claude, codex resume, pi, omp, kimi,

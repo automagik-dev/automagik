@@ -132,6 +132,9 @@ Herdr API: `spaces`, `machines`, `panes`, `agents`, `terminals`, `focused`, `run
   gets them from an entry under `programs` in `<app home>/programs.json`, e.g. the Hermes TUI:
   `{"programs": {"hermes": {"run": ["hermes", "--tui"]}}}` (beside any entries already there).
   Attach-ledger rows for those panes keep the bare `tN`, `machine` and that machine's core id.
+  A Claude bot started or restarted fresh there runs on a session id chosen here
+  (`--session-id`), set as the pane's `agent.session` label, as on this computer: that label is
+  the linked machine's own record of the seat's session.
 
 - **It is a clone of Herdr's `spaces`**: Herdr's later changes don't reach it, and every modified
   file must stay marked as changed (see `NOTICE` here).

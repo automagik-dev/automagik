@@ -57,8 +57,9 @@ a Friday digest — deserve better than you retyping the same prompt every morni
 
 ## What it isn't
 
-**An automation is one prompt on a clock.** Not a sequencer, not a workflow engine,
-not a place to put branching logic. One prompt, one schedule, one run.
+**An automation is one piece of work on a clock.** Not a sequencer, not a workflow engine,
+not a place to put branching logic. One prompt (or one plain command, with no
+model at all), one schedule, one run.
 
 **No store, no daemon to install, no state you can't read.** Two files: your
 `automations.yaml`, and `history.jsonl`. Uninstalling leaves both behind.
@@ -258,6 +259,7 @@ automations:
     model: sonnet                 # optional → --model; kinds without the flag are caught on load
     template: reviewer            # hc only, instead of agent + model: an hc template, prompt as its task
     prompt: "…"                   # OR workflow: <name>  (delegates to hwf run)
+                                  # OR command: {argv, cwd, env} — see "Run a plain command"
     mcp_config: ~/.config/mcp/github.json   # optional MCP servers JSON file; see below
     agent_args: ["--verbose"]               # optional, verbatim agent flags
     timeout_minutes: 60           # optional bound on the run
@@ -289,9 +291,60 @@ deadline wins. No signal is requested for this status mismatch.
 echoes that value back through `put` writes an explicit 2. A `put` that omits the
 key preserves the file's value; sending `0` removes the key and uses the default.
 
+A new automation written with `put` and no `agent_args` key starts on the same
+automatic mode as one made in the panel's form: `--dangerously-bypass-approvals-and-sandbox`
+for codex, `--dangerously-skip-permissions` for claude, nothing for any other agent,
+a template or a workflow. Send the key to choose your own flags (`[]` for the
+agent's own default). An edit (`--original`) never adds them.
+
 For Copilot, `mcp_config` becomes `--additional-mcp-config @<path>`; the `@`
 tells Copilot to read the file rather than parse its path as inline JSON.
 Other agents still receive `--mcp-config <path>`.
+
+### Run a plain command
+
+A job that is one script needs no agent. `command:` instead of `prompt:` has
+the scheduler start the program itself: no pane, no model, no workspace.
+
+```yaml
+automations:
+  - name: daily-check
+    cron: "0 7 * * *"
+    command:
+      argv: ["./check.sh", "--all"]   # the program first; no shell reads this
+      cwd: ~/checks                   # optional working folder; your home folder otherwise
+      env: { REGION: eu }             # optional, added to the scheduler's environment
+    timeout_minutes: 10               # optional, default 60
+    notify: b-xxxxxxxx                # optional: the bot told the result
+```
+
+- It runs as you, like a cron job: your network, your files. There is no
+  sandbox; only the folder, the environment and the timeout are the automation's.
+- Exit 0 is `done`. Any other exit, a signal, the timeout or a program that
+  would not start is `failed`. `history --json` carries `exit_code`, `stderr`
+  (its last ten lines) and `result`: the last line of stdout when it worked,
+  else the failure.
+- `argv` is not a shell line. For pipes, `&&` or redirects, put them in a
+  script and run the script. A relative program (`./check.sh`) is found from
+  `cwd`; a bare name is looked up in the scheduler's PATH, which under the
+  login service is the one captured at `service install`.
+- `notify:` sends the result line to a bot through herdr-core's `hc send`: the
+  terminal labelled `bot=<id>`, else a terminal by that name. A bot that is
+  blocked or not running gets nothing, and `history --json` says so in
+  `notified`. The run's status never depends on it.
+- A command entry takes no `repo`, `workspace`, `session`, `agent`, `model`,
+  `template`, `agent_args`, `mcp_config`, `blocked_grace_minutes` or
+  `close_workspace: on-success`: the loader refuses each by name.
+- At the timeout the program and everything it started get SIGTERM, then
+  SIGKILL ten seconds later if anything is left. A scheduler told to stop
+  (SIGINT, SIGTERM, a service stop) ends its running commands the same way and
+  records them `failed`.
+- There is no way to stop one running command yet: it ends when it exits or at
+  `timeout_minutes`, so give a command a timeout that fits it. A scheduler that
+  is killed outright, or a `herdr-automations run` interrupted by hand, leaves
+  its command running.
+
+Why this exists, and what was turned down: [ADR 0013](docs/adr/0013-a-command-is-a-run-the-scheduler-does-itself.md).
 
 ### Run in a shared workspace
 
@@ -419,7 +472,7 @@ checkout and refuses an unmerged branch, and those refusals are worth more than
 the tidiness. **It never runs on a schedule** — a reaper would delete the very
 signal that says which runs still want you.
 
-**What about multi-step chores?** An automation is one prompt on a clock. If your
+**What about multi-step chores?** An automation is one piece of work on a clock. If your
 chore is a sequence, put the sequence in a
 [herdr-workflows](https://github.com/aorumbayev/herdr-workflows) workflow and
 schedule it with `workflow: <name>` instead of `prompt:`. The run waits for the
@@ -440,7 +493,7 @@ cron automation that polls and does nothing when there is nothing new (`gh pr li
 `git fetch`) is one entry in this file. See [ADR 0008](docs/adr/0008-no-event-triggers.md)
 for the full reasoning.
 
-An automation is one prompt on a clock. That is the whole boundary.
+An automation is one piece of work on a clock: a prompt, or a plain command. That is the whole boundary.
 
 ## Development
 

@@ -531,3 +531,151 @@ func TestSessionIsRefusedUnderHC(t *testing.T) {
 		t.Fatalf("got %+v", cfg.Invalid)
 	}
 }
+
+// A command is the third kind of work (ADR 0013): the scheduler runs it
+// itself, so it has no repo, workspace or agent, and gets none by default.
+func TestACommandLoadsWithoutRepoWorkspaceOrAgent(t *testing.T) {
+	withConfig(t, `
+automations:
+  - name: daily-check
+    cron: "0 7 * * *"
+    command:
+      argv: ["./check.sh", "--all"]
+      cwd: ~/checks
+      env:
+        REGION: eu
+    timeout_minutes: 10
+    notify: b-captain
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Invalid) != 0 || len(cfg.Automations) != 1 {
+		t.Fatalf("did not load: %+v", cfg.Invalid)
+	}
+	a := cfg.Automations[0]
+	home, _ := os.UserHomeDir()
+	if a.Kind() != "command" || a.Command.Cwd != filepath.Join(home, "checks") || a.Command.Env["REGION"] != "eu" {
+		t.Fatalf("command = %+v", a.Command)
+	}
+	if strings.Join(a.Command.Argv, " ") != "./check.sh --all" || a.Notify != "b-captain" || a.TimeoutMinutes != 10 {
+		t.Fatalf("got %+v", a)
+	}
+	if a.Agent != "" || a.Workspace != "" || a.CloseWorkspace != "" || a.BlockedGraceMinutes != 0 {
+		t.Fatalf("a command was given agent defaults: %+v", a)
+	}
+	if a.CatchUpMinutes != 120 {
+		t.Fatalf("catch_up_minutes = %d, want the default every kind gets", a.CatchUpMinutes)
+	}
+}
+
+func TestACommandRunsUnderEitherBackend(t *testing.T) {
+	for _, backend := range []string{"herdr", "hc", "auto"} {
+		withConfig(t, "backend: "+backend+`
+automations:
+  - name: c
+    cron: "@daily"
+    command:
+      argv: [/bin/true]
+`)
+		cfg, err := Load()
+		if err != nil || len(cfg.Automations) != 1 {
+			t.Fatalf("backend %s: %v %+v", backend, err, cfg)
+		}
+		if cfg.Automations[0].TimeoutMinutes != 60 {
+			t.Fatalf("timeout default = %d", cfg.Automations[0].TimeoutMinutes)
+		}
+	}
+}
+
+func TestCommandEntriesThatDoNotLoad(t *testing.T) {
+	entry := func(body string) string {
+		return "automations:\n  - name: c\n    cron: \"@daily\"\n" + body
+	}
+	cases := []struct{ name, yaml, want string }{
+		{"with a prompt", entry("    prompt: p\n    repo: /x\n    command:\n      argv: [/bin/true]\n"), "exactly one of prompt, workflow or command"},
+		{"with a workflow", entry("    workflow: w\n    command:\n      argv: [/bin/true]\n"), "exactly one of prompt, workflow or command"},
+		{"nothing to do", entry("    repo: /x\n"), "exactly one of prompt, workflow or command"},
+		{"no argv", entry("    command:\n      cwd: /x\n"), "command needs argv"},
+		{"empty program", entry("    command:\n      argv: [\"\"]\n"), "command needs argv"},
+		{"relative cwd", entry("    command:\n      argv: [/bin/true]\n      cwd: checks\n"), "cwd must be an absolute path"},
+		{"bad env name", entry("    command:\n      argv: [/bin/true]\n      env:\n        \"A=B\": x\n"), "is not a variable name"},
+		{"repo", entry("    repo: /x\n    command:\n      argv: [/bin/true]\n"), "drop repo"},
+		{"agent", entry("    agent: claude\n    command:\n      argv: [/bin/true]\n"), "drop agent"},
+		{"model", entry("    model: sonnet\n    command:\n      argv: [/bin/true]\n"), "drop model"},
+		{"workspace", entry("    workspace: root\n    command:\n      argv: [/bin/true]\n"), "drop workspace"},
+		{"session", entry("    session: s\n    command:\n      argv: [/bin/true]\n"), "drop session"},
+		{"agent_args", entry("    agent_args: [-v]\n    command:\n      argv: [/bin/true]\n"), "drop agent_args"},
+		{"close_workspace", entry("    close_workspace: on-success\n    command:\n      argv: [/bin/true]\n"), "drop close_workspace"},
+		{"notify with spaces", entry("    notify: \"Herdr Captain\"\n    command:\n      argv: [/bin/true]\n"), "is not a bot id or a terminal name"},
+		{"notify as a flag", entry("    notify: --force\n    command:\n      argv: [/bin/true]\n"), "is not a bot id or a terminal name"},
+		{"notify on a prompt", entry("    repo: /x\n    prompt: p\n    notify: b-captain\n"), "notify sends a command's result"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			withConfig(t, c.yaml)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cfg.Automations) != 0 || len(cfg.Invalid) != 1 {
+				t.Fatalf("want one diagnostic, got %d loaded, %+v", len(cfg.Automations), cfg.Invalid)
+			}
+			if !strings.Contains(cfg.Invalid[0].Message, c.want) {
+				t.Fatalf("message %q does not say %q", cfg.Invalid[0].Message, c.want)
+			}
+		})
+	}
+}
+
+// close_workspace: never is the default spelled out; it asks for nothing.
+func TestACommandMaySpellOutCloseWorkspaceNever(t *testing.T) {
+	withConfig(t, "automations:\n  - name: c\n    cron: \"@daily\"\n    close_workspace: never\n    command:\n      argv: [/bin/true]\n")
+	cfg, err := Load()
+	if err != nil || len(cfg.Automations) != 1 {
+		t.Fatalf("%v %+v", err, cfg)
+	}
+}
+
+func TestPutWritesACommandAndSwitchesKinds(t *testing.T) {
+	withConfig(t, "automations:\n    # nightly\n    - name: check\n      cron: \"@daily\"\n      repo: /x\n      agent: claude\n      prompt: p\n      catch_up_minutes: 30\n")
+	cmd := Automation{Name: "check", Cron: "@daily", TimeoutMinutes: 5, Notify: "b-captain",
+		Command: &Command{Argv: []string{"./check.sh", "two words"}, Cwd: "/srv/checks", Env: map[string]string{"A": "1"}}}
+	// The form sends every key it owns; the agent's are sent empty, so they go.
+	given := []string{"name", "cron", "repo", "workspace", "workspace_id", "agent", "model", "template", "prompt",
+		"mcp_config", "agent_args", "timeout_minutes", "close_workspace", "command", "notify"}
+	res, err := Put("check", cmd, given, false)
+	if err != nil || res.Problem != "" {
+		t.Fatalf("put: %v %q", err, res.Problem)
+	}
+	cfg, err := Load()
+	if err != nil || len(cfg.Automations) != 1 {
+		t.Fatalf("%v %+v", err, cfg)
+	}
+	a := cfg.Automations[0]
+	if a.Kind() != "command" || a.Prompt != "" || a.Repo != "" || a.Agent != "" || a.Notify != "b-captain" {
+		t.Fatalf("got %+v", a)
+	}
+	if strings.Join(a.Command.Argv, "|") != "./check.sh|two words" || a.Command.Cwd != "/srv/checks" || a.Command.Env["A"] != "1" {
+		t.Fatalf("command %+v", a.Command)
+	}
+	if a.CatchUpMinutes != 30 {
+		t.Fatalf("a key the form did not send was lost: catch_up_minutes = %d", a.CatchUpMinutes)
+	}
+	raw, _ := os.ReadFile(Path())
+	if !strings.Contains(string(raw), "# nightly") {
+		t.Fatalf("the entry's comment was lost:\n%s", raw)
+	}
+
+	// And back: a prompt in, the command and its bot out.
+	back := Automation{Name: "check", Cron: "@daily", Repo: "/x", Agent: "claude", Prompt: "p"}
+	res, err = Put("check", back, given, false)
+	if err != nil || res.Problem != "" {
+		t.Fatalf("put back: %v %q", err, res.Problem)
+	}
+	cfg, _ = Load()
+	if a := cfg.Automations[0]; a.Kind() != "prompt" || a.Command != nil || a.Notify != "" {
+		t.Fatalf("got %+v", a)
+	}
+}

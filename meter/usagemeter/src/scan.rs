@@ -23,6 +23,7 @@ use std::time::Instant;
 use sha2::{Digest, Sha256};
 
 use crate::event::{UsageEvent, hex};
+use crate::sources::tool_error::{self, ToolError};
 use crate::sources::{FileCtx, Line, Source, dsh_tui};
 use crate::store::{FileState, Health};
 
@@ -401,8 +402,8 @@ pub struct ReadOutcome {
 }
 
 /// Reads `state.path` from `state.offset`. For every chunk of complete lines it calls `commit`
-/// with the events, the parser health and the file state to save (offset already advanced).
-/// `commit` must persist all three atomically.
+/// with the events, the tool failures the harness flagged, the parser health and the file state
+/// to save (offset already advanced). `commit` must persist all of them atomically.
 pub fn read_file<F>(
     state: &mut FileState,
     source: Source,
@@ -410,7 +411,7 @@ pub fn read_file<F>(
     mut commit: F,
 ) -> io::Result<ReadOutcome>
 where
-    F: FnMut(&FileState, Vec<UsageEvent>, Health) -> io::Result<()>,
+    F: FnMut(&FileState, Vec<UsageEvent>, Vec<ToolError>, Health) -> io::Result<()>,
 {
     if source == Source::Agy {
         return Err(io::Error::other(
@@ -465,6 +466,7 @@ where
         buf.truncate(filled);
         let mut health = Health::default();
         let mut events = Vec::new();
+        let mut errors: Vec<ToolError> = Vec::new();
         let mut consumed = 0usize;
         if skipping {
             // The rest of an over-long line: drop bytes up to its newline.
@@ -490,6 +492,9 @@ where
                         Line::Usage => health.usage_lines += 1,
                         Line::Bad => health.skipped_lines += 1,
                     }
+                    // The same bytes, read once: the tool failures the harness flagged (issue
+                    // 899). Only a harness with a pinned marker yields any.
+                    tool_error::scan_line(source, line, &ctx, &mut errors);
                 }
                 state.ctx = ctx;
                 consumed = end + 1;
@@ -502,7 +507,7 @@ where
         }
         if consumed > 0 {
             advance(state, &mut buf, consumed, &mut out);
-            commit(state, events, health)?;
+            commit(state, events, errors, health)?;
             limits.spend_chunk();
         }
         if eof {
@@ -713,7 +718,7 @@ fn read_frames<F>(
     mut commit: F,
 ) -> io::Result<ReadOutcome>
 where
-    F: FnMut(&FileState, Vec<UsageEvent>, Health) -> io::Result<()>,
+    F: FnMut(&FileState, Vec<UsageEvent>, Vec<ToolError>, Health) -> io::Result<()>,
 {
     let mut out = ReadOutcome::default();
     let mut buf: Vec<u8> = Vec::new();
@@ -794,7 +799,8 @@ where
         state.ctx = ctx;
         if consumed > 0 {
             advance(state, &mut buf, consumed, &mut out);
-            commit(state, events, health)?;
+            // dsh-tui has no pinned tool-failure marker: the report says so, never 0.
+            commit(state, events, Vec::new(), health)?;
             limits.spend_chunk();
         }
         if eof {

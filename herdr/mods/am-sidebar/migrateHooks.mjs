@@ -282,6 +282,12 @@ const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
  * project in `knownProjects` and `ledgerFolders` (#839). Never follows symlinks, never creates
  * missing files, never widens a stricter mode (0400/0000), and leaves unowned or owner-unreadable
  * files alone with a warning.
+ *
+ * Returns `{ tightened, warnings }`. Every warning is logged (`warn`), except one (#883): a ledger
+ * its owner cannot read (0070) is returned in `warnings` and logged nowhere. Nothing here can
+ * change it, so every install and update would say it again; the doctor reports it
+ * (`herdr-ledgers`, with the chmod to run). A ledger whose mode lets its owner read it but which
+ * still cannot be opened (an ACL, a file flag) is warned about with that reason, not as unreadable.
  */
 export function tightenLedgers(appHome, {
   extra = [], git = runGit, getuid = process.getuid,
@@ -309,6 +315,10 @@ export function tightenLedgers(appHome, {
   const noteWarn = (w) => {
     warnings.push(w);
     if (warn) log(`warning: ${w}`);
+  };
+  /** An owner-unreadable ledger: returned, never logged here (the doctor's to report). */
+  const noteUnreadable = (file, oct) => {
+    warnings.push(`${file} is not readable by its owner (mode ${oct}): left as it is; run chmod 600 ${shQuote(file)}`);
   };
   for (const home of homes) {
     for (const rel of HERDR_LEDGERS) {
@@ -340,7 +350,7 @@ export function tightenLedgers(appHome, {
       if ((mode & 0o177) !== 0) {
         const oct = `0${mode.toString(8).padStart(3, "0")}`;
         if ((mode & 0o400) === 0) {
-          noteWarn(`${file} is not readable by its owner (mode ${oct}): left as it is; run chmod 600 ${shQuote(file)}`);
+          noteUnreadable(file, oct);
           continue;
         }
         try {
@@ -353,7 +363,9 @@ export function tightenLedgers(appHome, {
               continue;
             }
             if (e?.code === "EACCES" || e?.code === "EPERM") {
-              noteWarn(`${file} is not readable by its owner (mode ${oct}): left as it is; run chmod 600 ${shQuote(file)}`);
+              // The mode lets the owner read it (checked above), so the mode is not the reason.
+              noteWarn(`${file} could not be opened (${e.code}) although its mode ${oct} lets its owner read it`
+                + " (an ACL, a file flag or its folder may refuse it): left as it is");
               continue;
             }
             throw e;
@@ -371,8 +383,7 @@ export function tightenLedgers(appHome, {
             }
             const fmode = fst.mode & 0o777;
             if ((fmode & 0o400) === 0) {
-              const foct = `0${fmode.toString(8).padStart(3, "0")}`;
-              noteWarn(`${file} is not readable by its owner (mode ${foct}): left as it is; run chmod 600 ${shQuote(file)}`);
+              noteUnreadable(file, `0${fmode.toString(8).padStart(3, "0")}`);
               continue;
             }
             if ((fmode & 0o177) !== 0) {

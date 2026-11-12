@@ -214,6 +214,9 @@ test("install copies the sandbox wrapper byte-equal and installs the managed dsh
   }
   assert.ok(readFileSync(join(stableRoot, "bin", "run.sh"), "utf8").includes(`# am-node: ${process.execPath}`));
   assert.ok(readFileSync(join(stableRoot, "guard", "hc")).equals(readFileSync(join(packRootOf(), "guard", "hc"))), "the guard is byte-equal");
+  // #955: the hc kill shim a sandboxed bot's worker of another agent gets, executable as the pack's.
+  assert.ok(readFileSync(join(stableRoot, "hc-kill", "hc")).equals(readFileSync(join(packRootOf(), "hc-kill", "hc"))), "the hc kill shim is byte-equal");
+  assert.ok(statSync(join(stableRoot, "hc-kill", "hc")).mode & 0o111, "and executable");
   assert.ok(patch.includes("runnerFailureSignatures: ['hc-socket-mask: ']"), patch);
   const state = sandboxState(s.env, { forbiddenRoots: rootsOf(s) });
   assert.equal(state.current, true);
@@ -361,6 +364,9 @@ test("the shim sources only a safe provider env file, and leaves the arguments a
   const s = scene(t);
   await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   const guide = join(s.home, ".dsh", "deepseek.env");
+  // The env file's folder is the owner's alone, set here rather than left to the umask: on a
+  // umask-002 host it would be 0775, and the shim rightly refuses a file in it (#578).
+  chmodSync(join(s.home, ".dsh"), 0o700);
   const boot = (args = [], extra = {}) => {
     const r = s.runShim(args, extra);
     assert.equal(r.status, 0, r.stderr);
@@ -429,7 +435,7 @@ test("the shim sources only a safe provider env file, and leaves the arguments a
   chmodSync(guide, 0o600);
   writeFileSync(guide, "AM_TEST_KEY=from-default\n");
   const alt = join(s.root, "alt-dsh");
-  mkdirSync(alt);
+  mkdirSync(alt, { mode: 0o700 });
   symlinkSync(join(s.home, ".dsh", "profiles"), join(alt, "profiles"));
   writeFileSync(join(alt, "deepseek.env"), "AM_TEST_KEY=from-alt\n");
   chmodSync(join(alt, "deepseek.env"), 0o600);
@@ -926,6 +932,22 @@ test("#839: doctorDshTui and cmdDshTui doctor report wide or unowned ledgers rea
 
   const text = await cmdDshTui({}, ["doctor"], io);
   assert.match(text, /FAIL herdr-ledgers: .* \(fix: chmod 600 /);
+
+  // #883: the exec bits count as wider than 0600, and an owner-unreadable ledger (0070), which
+  // install and update leave alone without a word, is reported here with the chmod to run.
+  chmodSync(globalWorkers, 0o700);
+  chmodSync(projAttach, 0o070);
+  try {
+    const odd = await cmdDshTui({ json: true, project }, ["doctor"], io);
+    const oddCheck = odd.checks.find((c) => c.check === "herdr-ledgers");
+    assert.equal(oddCheck.ok, false);
+    assert.match(oddCheck.detail, /workers\.jsonl is mode 0700, wider than 0600/);
+    assert.match(oddCheck.detail, /attach\.jsonl is mode 0070, wider than 0600/);
+    assert.equal(oddCheck.fix, `chmod 600 '${globalWorkers}' '${projAttach}'`);
+    assert.equal(lstatSync(projAttach).mode & 0o777, 0o070, "doctor is read-only");
+  } finally {
+    chmodSync(projAttach, 0o600);
+  }
 
   chmodSync(globalWorkers, 0o600);
   chmodSync(projAttach, 0o600);

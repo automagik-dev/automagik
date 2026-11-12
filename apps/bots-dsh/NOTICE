@@ -172,3 +172,30 @@ their ideas; it does not contain their code.
     (packages/experimental/client-ui-voice-input), MIT: the voice chat
     records with the same steps (record, resample to 16 kHz mono, PCM16 WAV)
     before it calls the plugin's speech service.
+
+==============================================================================
+Route selector marks (src/client/marks.js)
+==============================================================================
+
+DeepSeek Harness fish mark
+MIT License, Copyright (c) 2026 DeepSeek
+  The path and viewBox of @deepseek-ai/dsh-client-ui-primitives FishLogo, the
+  mark DSH's own @deepseek-ai/dsh-client-ui-brand-official package places in
+  its sidebar. The MIT text above applies.
+
+Herdr mark
+Apache License 2.0, Herdr (https://github.com/herdrdev/herdr)
+  The ram and terminal-prompt path of Herdr's own app icon
+  (herdr-app assets/icons/herdr-ui-icon-clean.svg, whose metadata cites
+  herdrdev/herdr assets/logo.svg). This product is Apache-2.0; see LICENSE.
+
+Claude Code, Codex, Hermes and Antigravity marks
+MIT License, Copyright (c) 2023 LobeHub
+  The icons Herdr's programs table ships for those agents
+  (herdr-app defaults/icons, LICENSE-LobeHub.txt). The MIT text above applies.
+
+omp mark
+MIT License, Copyright (c) 2025 Mario Zechner and 2025-2026 Can Bölük
+  Herdr ships no omp icon. The mark drawn for omp is the official mark of Pi,
+  the agent Oh My Pi forks (herdr-app defaults/icons/pi.svg). The MIT text
+  above applies.

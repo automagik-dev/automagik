@@ -240,3 +240,111 @@ test('alone on an app from before the check and the versions, the page is as tha
   assert.equal(page.sections.includes('Updates'), true)
   assert.equal(texts.includes('Update now'), true)
 })
+
+// #1029: an app from before `check` has only `open`, and its `open` puts staged plugins in at once,
+// restarting DSH without asking whether an agent is at work.
+const CHANGES = [{ name: '@automagik/bots-dsh', from: '3.117.4', to: '3.117.5' }]
+const stagedFor = plugins => ({ phase: 'ready', kind: 'plugins', version: '3.117.5', app: { phase: 'idle' }, plugins: { phase: 'ready', changes: CHANGES, ...plugins } })
+
+test('#1029: on an app from before the check, plugins it applies by itself are never put in by Check for updates', () => {
+  for (const [why, state] of [
+    ['auto-apply on', stagedFor({ auto: true })],
+    ['an app that does not say the setting', stagedFor({})],
+    // Staged as the whole says it, with no change named in the plugins' part.
+    ['staged at the top only', { phase: 'ready', kind: 'plugins', version: '3.117.5', app: { phase: 'idle' }, plugins: { phase: 'idle', changes: [], auto: true } }],
+    // Still coming: they are staged a moment later, perhaps before the app hears the click.
+    ['plugins downloading', { phase: 'downloading', kind: 'plugins', version: '3.117.5', percent: 40, app: { phase: 'idle' }, plugins: { phase: 'downloading', changes: CHANGES, percent: 40, auto: true } }],
+    ['downloading at the top only', { phase: 'downloading', kind: 'plugins', version: '3.117.5', percent: 40, app: { phase: 'idle' }, plugins: { phase: 'idle', changes: [], auto: true } }],
+    // The app has not said anything yet: what its `open` would do is not known.
+    ['no presentation yet', null],
+    ['a failed check beside them', { phase: 'ready', kind: 'plugins', version: '3.117.5', app: { phase: 'error', failure: 'check' }, plugins: { phase: 'ready', changes: CHANGES, auto: true } }],
+  ]) {
+    for (const source of ['app', 'unknown']) {
+      const bridge = bridgeOf({ check: false })
+      const page = draw({ update: { ...HOST_IN_APP, source }, bridge, state })
+      const [button] = page.buttons.Automagik
+      assert.equal(textOf(button), 'Check for updates', why)
+      assert.equal(button.props.disabled, true, why)
+      // The handler refuses by itself too: nothing is asked of the app.
+      button.props.onClick()
+      assert.deepEqual(bridge.asked, [], why)
+      assert.deepEqual(page.calls, [], why)
+    }
+  }
+})
+
+test('#1029: with nothing staged, an app from before the check is still asked through its `open`', () => {
+  for (const [why, state] of [
+    ['plugins idle', { phase: 'idle', app: { phase: 'idle' }, plugins: { phase: 'idle', changes: [], auto: true } }],
+    ['a failed check', { phase: 'error', failure: 'check', app: { phase: 'error', failure: 'check' }, plugins: { phase: 'idle', changes: [], auto: true } }],
+    ['an app that does not split its plugins', { phase: 'idle' }],
+    ['plugins going in', { phase: 'installing', kind: 'plugins', version: '3.117.5', app: { phase: 'idle' }, plugins: { phase: 'installing', changes: CHANGES, auto: true } }],
+    // With auto-apply off nothing is staged behind the person's back: downloading is not held.
+    ['plugins idle, auto-apply off', { phase: 'idle', app: { phase: 'idle' }, plugins: { phase: 'idle', changes: [], auto: false } }],
+  ]) {
+    const bridge = bridgeOf({ check: false })
+    const page = draw({ update: HOST_IN_APP, bridge, state })
+    const [button] = page.buttons.Automagik
+    assert.equal(textOf(button), 'Check for updates', why)
+    assert.notEqual(button.props.disabled, true, why)
+    button.props.onClick()
+    assert.deepEqual(bridge.asked, ['open'], why)
+  }
+})
+
+test('#1029: an app with its own check is never held: staged plugins or not, the button only checks', () => {
+  for (const state of [stagedFor({ auto: true }), stagedFor({}), stagedFor({ auto: false })]) {
+    const bridge = bridgeOf()
+    const page = draw({ update: HOST_IN_APP, bridge, state, versions: VERSIONS })
+    const [button] = page.buttons.Automagik
+    assert.equal(textOf(button), 'Check for updates')
+    assert.notEqual(button.props.disabled, true)
+    button.props.onClick()
+    assert.deepEqual(bridge.asked, ['check'])
+  }
+})
+
+test('#1029: the held button leaves the app\'s labelled buttons and the plugins\' own rows as they were', () => {
+  // An app update that is ready or out keeps its own button, which says what it does.
+  for (const [app, label] of [[{ phase: 'ready', version: '3.118.0' }, 'Restart to update to 3.118.0'], [{ phase: 'available', version: '3.118.0' }, 'Automagik 3.118.0 is out']]) {
+    const bridge = bridgeOf({ check: false })
+    const page = draw({ update: HOST_IN_APP, bridge, state: { ...app, app, plugins: { phase: 'ready', changes: CHANGES, auto: true } } })
+    const [button] = page.buttons.Automagik
+    assert.equal(textOf(button), label)
+    assert.notEqual(button.props.disabled, true)
+    button.props.onClick()
+    assert.deepEqual(bridge.asked, ['open'])
+  }
+  // The plugins' row says when they go in, and the switch that decides it is still offered.
+  const bridge = bridgeOf({ check: false })
+  const page = draw({ update: HOST_IN_APP, bridge, state: stagedFor({ auto: true }) })
+  assert.equal('Apply plugin updates automatically' in page.rows, true)
+  // The Bot team has two rows (its update, its version): read every row of the page as drawn.
+  states = [stagedFor({ auto: true }), null]
+  asked = 0
+  const hints = []
+  const texts = []
+  walk(AboutPage({ useUpdate: () => HOST_IN_APP, actions: { repoStars: () => Promise.resolve(null) }, run: () => Promise.resolve(true), Section, Row }), (node) => {
+    if (node.type === Row) hints.push(node.props.hint)
+    if (node.type === 'button') texts.push(textOf(node))
+  })
+  assert.equal(hints.includes('3.117.4 → 3.117.5 · Updates when no agent is at work'), true)
+  // Applying by itself, the app offers no "Update now" there.
+  assert.equal(texts.includes('Update now'), false)
+})
+
+test('#1029: the hold reads the app\'s own `check` and the plugins\' own part, each alone', () => {
+  // A bridge with `check` and nothing else newer is never held.
+  const checks = bridgeOf({ check: false })
+  checks.check = () => { checks.asked.push('check'); return Promise.resolve() }
+  const free = draw({ update: HOST_IN_APP, bridge: checks, state: stagedFor({ auto: true }) })
+  assert.notEqual(free.buttons.Automagik[0].props.disabled, true)
+  free.buttons.Automagik[0].props.onClick()
+  assert.deepEqual(checks.asked, ['check'])
+  // Staged only as the plugins' own part says it: held all the same.
+  const bridge = bridgeOf({ check: false })
+  const held = draw({ update: HOST_IN_APP, bridge, state: { phase: 'idle', app: { phase: 'idle' }, plugins: { phase: 'ready', changes: CHANGES, auto: true } } })
+  assert.equal(held.buttons.Automagik[0].props.disabled, true)
+  held.buttons.Automagik[0].props.onClick()
+  assert.deepEqual(bridge.asked, [])
+})

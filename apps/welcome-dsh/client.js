@@ -8975,16 +8975,8 @@ var PT_BR = {
   "Omni on this computer": "Omni neste computador",
   "Your Omni on this PC": "Seu Omni neste PC",
   "Omni on this PC": "Omni neste PC",
-  "Your Omni on your Linux server": "Seu Omni no seu servidor Linux",
-  "Omni on your Linux server": "Omni no seu servidor Linux",
-  "Your Omni on your Mac": "Seu Omni no seu Mac",
-  "Omni on your Mac": "Omni no seu Mac",
-  "Your Omni on your Windows PC": "Seu Omni no seu PC com Windows",
-  "Omni on your Windows PC": "Omni no seu PC com Windows",
-  "Your Omni on your server": "Seu Omni no seu servidor",
-  "Omni on your server": "Omni no seu servidor",
-  "Your Omni on DSH's computer": "Seu Omni no computador do DSH",
-  "Omni on DSH's computer": "Omni no computador do DSH",
+  "Your Omni on the computer this workspace runs on": "Seu Omni no computador onde este workspace funciona",
+  "Omni on the computer this workspace runs on": "Omni no computador onde este workspace funciona",
   "port {port}": "porta {port}",
   "saved in your Omni CLI": "salvo na sua CLI do Omni",
   "Not answering right now.": "Não está respondendo agora.",
@@ -8996,21 +8988,13 @@ var PT_BR = {
   "Already on this Mac": "Já está neste Mac",
   "Already on this computer": "Já está neste computador",
   "Already on this PC": "Já está neste PC",
-  "Already on your Linux server": "Já está no seu servidor Linux",
-  "Already on your Mac": "Já está no seu Mac",
-  "Already on your Windows PC": "Já está no seu PC com Windows",
-  "Already on your server": "Já está no seu servidor",
-  "Already on DSH's computer": "Já está no computador do DSH",
+  "Already on the computer this workspace runs on": "Já está no computador onde este workspace funciona",
   "Saved in your Omni CLI": "Salvo na sua CLI do Omni",
-  "Run Omni on this Mac": "Rodar o Omni neste Mac",
-  "Run Omni on this computer": "Rodar o Omni neste computador",
-  "Run Omni on this PC": "Rodar o Omni neste PC",
-  "Run Omni on your Linux server": "Rodar o Omni no seu servidor Linux",
-  "Run Omni on your Mac": "Rodar o Omni no seu Mac",
-  "Run Omni on your Windows PC": "Rodar o Omni no seu PC com Windows",
-  "Run Omni on your server": "Rodar o Omni no seu servidor",
-  "Run Omni on DSH's computer": "Rodar o Omni no computador do DSH",
-  "A private Omni of its own, set up for you": "Um Omni privado, só seu, configurado para você",
+  "Install Omni here": "Instalar o Omni aqui",
+  "On this Mac": "Neste Mac",
+  "On this PC": "Neste PC",
+  "On this computer": "Neste computador",
+  "On the computer this workspace runs on": "No computador onde este workspace funciona",
   "An Omni somewhere else": "Um Omni em outro lugar",
   "On a server, or the link Omni sent you": "Em um servidor, ou o link que o Omni enviou para você",
   "Where your Omni is": "Onde está seu Omni",
@@ -9244,6 +9228,8 @@ var PT_BR = {
   "Signed in to {name}.": "Login feito no {name}.",
   "Not signed in to {name}. Sign in from a Bot's chat.": "Sem login no {name}. Entre pelo chat de um Bot.",
   "Or run {command} in a terminal, then check again.": "Ou rode {command} em um terminal e verifique de novo.",
+  "Not signed in to {name}. Run {command} in a terminal, then check again.": "Sem login no {name}. Rode {command} em um terminal e verifique de novo.",
+  "Turning it on lets Automagik use the sign-in {name} already has on this computer.": "Ao ligar, o Automagik passa a usar o login que o {name} já tem neste computador.",
   "The sign-in to {name} has not been checked yet.": "O login no {name} ainda não foi verificado.",
   "Sign in": "Entrar",
   "No Bot chat to sign in from here. Run {command} in a terminal instead.": "Não há chat de Bot para entrar por aqui. Rode {command} em um terminal.",
@@ -10791,29 +10777,43 @@ var around = (text, name, node) => {
   return [before, node, after];
 };
 var titleIn = (omni, choice) => omni.source === "sandbox" ? choice.title.charAt(0).toLowerCase() + choice.title.slice(1) : choice.title;
-var HERE = { at: "here", os: "other" };
-function placeOf(where = HERE) {
-  const os2 = where?.os;
-  if (where?.at === "remote") {
-    switch (os2) {
-      case "linux":
-        return { sandbox: t("Your Omni on your Linux server"), local: t("Omni on your Linux server"), already: t("Already on your Linux server"), run: t("Run Omni on your Linux server") };
-      case "macos":
-        return { sandbox: t("Your Omni on your Mac"), local: t("Omni on your Mac"), already: t("Already on your Mac"), run: t("Run Omni on your Mac") };
-      case "windows":
-        return { sandbox: t("Your Omni on your Windows PC"), local: t("Omni on your Windows PC"), already: t("Already on your Windows PC"), run: t("Run Omni on your Windows PC") };
-      default:
-        return { sandbox: t("Your Omni on your server"), local: t("Omni on your server"), already: t("Already on your server"), run: t("Run Omni on your server") };
-    }
+var WORKSPACE = { at: "unknown" };
+function placeOf(where = WORKSPACE) {
+  const install = { run: t("Install Omni here") };
+  if (where?.at !== "here") {
+    return {
+      ...install,
+      sandbox: t("Your Omni on the computer this workspace runs on"),
+      local: t("Omni on the computer this workspace runs on"),
+      already: t("Already on the computer this workspace runs on"),
+      on: t("On the computer this workspace runs on")
+    };
   }
-  if (where?.at === "unknown") return { sandbox: t("Your Omni on DSH's computer"), local: t("Omni on DSH's computer"), already: t("Already on DSH's computer"), run: t("Run Omni on DSH's computer") };
-  switch (os2) {
+  switch (where.os) {
     case "macos":
-      return { sandbox: t("Your Omni on this Mac"), local: t("Omni on this Mac"), already: t("Already on this Mac"), run: t("Run Omni on this Mac") };
+      return {
+        ...install,
+        sandbox: t("Your Omni on this Mac"),
+        local: t("Omni on this Mac"),
+        already: t("Already on this Mac"),
+        on: t("On this Mac")
+      };
     case "windows":
-      return { sandbox: t("Your Omni on this PC"), local: t("Omni on this PC"), already: t("Already on this PC"), run: t("Run Omni on this PC") };
+      return {
+        ...install,
+        sandbox: t("Your Omni on this PC"),
+        local: t("Omni on this PC"),
+        already: t("Already on this PC"),
+        on: t("On this PC")
+      };
     default:
-      return { sandbox: t("Your Omni on this computer"), local: t("Omni on this computer"), already: t("Already on this computer"), run: t("Run Omni on this computer") };
+      return {
+        ...install,
+        sandbox: t("Your Omni on this computer"),
+        local: t("Omni on this computer"),
+        already: t("Already on this computer"),
+        on: t("On this computer")
+      };
   }
 }
 var hostOf = (url) => {
@@ -10830,7 +10830,7 @@ var portOf = (url) => {
     return "";
   }
 };
-function foundChoice(omni, { where = HERE } = {}) {
+function foundChoice(omni, { where = WORKSPACE } = {}) {
   const place = placeOf(where);
   const title = omni.source === "sandbox" ? place.sandbox : omni.local ? place.local : hostOf(omni.url);
   const port = omni.local ? portOf(omni.url) : "";
@@ -11089,7 +11089,7 @@ var ICONS = {
   remote: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2c1.1 1.4 2 3.8 2.2 7H9.8c.2-3.2 1.1-5.6 2.2-7M4.1 13h3.7c.1 2.4.7 4.6 1.6 6.1A8 8 0 0 1 4.1 13m12.1 0h3.7a8 8 0 0 1-5.3 6.1c.9-1.5 1.5-3.7 1.6-6.1M4.1 11a8 8 0 0 1 5.3-6.1C8.5 6.4 7.9 8.6 7.8 11zm12.1 0c-.1-2.4-.7-4.6-1.6-6.1a8 8 0 0 1 5.3 6.1zM9.8 13h4.4c-.2 3.2-1.1 5.6-2.2 7-1.1-1.4-2-3.8-2.2-7"
 };
 var Icon = ({ name }) => (0, import_react6.createElement)("svg", { viewBox: "0 0 24 24", "aria-hidden": true }, (0, import_react6.createElement)("path", { d: ICONS[name], fill: "currentColor" }));
-function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
+function destinyOf(omnis = [], { where = WORKSPACE, newOmni = true } = {}) {
   const place = placeOf(where);
   const rows = omnis.map((omni) => ({ omni, choice: foundChoice(omni, { where }) }));
   const tiles = rows.filter((row) => row.choice.action).map(({ omni, choice }) => ({
@@ -11099,7 +11099,9 @@ function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
     title: choice.action === "use" ? t("Use {omni}", { omni: titleIn(omni, choice) }) : t("Connect {omni}", { omni: titleIn(omni, choice) }),
     sub: choice.sub || (omni.local ? place.already : t("Saved in your Omni CLI"))
   }));
-  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) tiles.push({ id: "local", icon: "sandbox", title: place.run, sub: t("A private Omni of its own, set up for you") });
+  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) {
+    tiles.push({ id: "local", icon: "sandbox", title: place.run, sub: place.on });
+  }
   tiles.push({ id: "remote", icon: "remote", title: t("An Omni somewhere else"), sub: t("On a server, or the link Omni sent you") });
   return { tiles, waiting: rows.filter((row) => !row.choice.action).map((row) => row.choice) };
 }
@@ -11971,12 +11973,14 @@ function redactorFor(ctx) {
 
 // src/client/acp-agents.js
 var import_react8 = require("react");
-var CLI_OF = { "acp-claude": "claude", "acp-codex": "codex" };
-var LOGO_OF = { "acp-claude": "CC", "acp-codex": "CX" };
+var CLI_OF = { "acp-claude": "claude", "acp-codex": "codex", "acp-hermes": "hermes", "acp-antigravity": "agy", "acp-omp": "omp" };
+var LOGO_OF = { "acp-claude": "CC", "acp-codex": "CX", "acp-hermes": "HM", "acp-antigravity": "AG", "acp-omp": "OM" };
+var isNative = (agent) => agent?.connector?.native === true;
+var signInCommand = (agent) => agent.cli?.signInHint ?? SIGN_IN_OF[agent.id] ?? CLI_OF[agent.id] ?? agent.key;
 var SIGN_IN_OF = { "acp-claude": "claude auth login", "acp-codex": "codex login" };
 var CHAT_LOGIN = /* @__PURE__ */ Symbol.for("automagik.cli-login");
 function openChatLogin(provider, scope = globalThis) {
-  if (!Object.hasOwn(CLI_OF, provider)) return false;
+  if (!Object.hasOwn(SIGN_IN_OF, provider)) return false;
   try {
     return scope[CHAT_LOGIN]?.open?.(provider) === true;
   } catch {
@@ -12033,13 +12037,15 @@ function agentLines(agent) {
   lines.push({ tone: "ok", text: agent.cli.version ? t("Found the {cli} CLI on this computer (version {version}).", { cli, version: agent.cli.version }) : t("Found the {cli} CLI on this computer.", { cli }) });
   if (agent.signedIn === true && agent.consent !== "needed") lines.push({ tone: "ok", text: t("Signed in to {name}.", { name }) });
   if (agent.signedIn === true && agent.consent === "needed" && !cliBusy(agent)) lines.push({ tone: "bad", text: t("{name} is signed in on this computer. Confirm its account in a Bot's chat before Bots use it.", { name }), action: "login", label: t("Confirm account") });
-  if (agent.signedIn === false && !cliBusy(agent)) {
+  if (agent.signedIn === false && isNative(agent)) lines.push({ tone: "bad", text: t("Not signed in to {name}. Run {command} in a terminal, then check again.", { name, command: signInCommand(agent) }), action: "check" });
+  if (agent.signedIn === false && !isNative(agent) && !cliBusy(agent)) {
     lines.push({ tone: "bad", text: t("Not signed in to {name}. Sign in from a Bot's chat.", { name }), action: "login" });
     lines.push({ tone: "muted", text: t("Or run {command} in a terminal, then check again.", { command: SIGN_IN_OF[agent.id] ?? cli }), action: "check" });
   }
-  if (agent.signedIn === void 0 && !cliBusy(agent)) lines.push({ tone: "muted", text: t("The sign-in to {name} has not been checked yet.", { name }), action: "check" });
+  if (agent.signedIn === void 0 && !cliBusy(agent) && (agent.on || !isNative(agent))) lines.push({ tone: "muted", text: t("The sign-in to {name} has not been checked yet.", { name }), action: "check" });
   if (!agent.on) {
     lines.push({ tone: "muted", text: t("Off. Turn it on to use {name} as a model in DSH.", { name }) });
+    if (isNative(agent)) lines.push({ tone: "muted", text: t("Turning it on lets Automagik use the sign-in {name} already has on this computer.", { name }) });
     return lines;
   }
   const { state, version, error, diagnostic, logPath } = agent.connector;
@@ -12056,7 +12062,7 @@ function agentLines(agent) {
     });
   }
   if (state === "ready") {
-    lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });
+    if (!isNative(agent)) lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });
     if (agent.restartNeeded) lines.push({ tone: "bad", text: t("Restart DSH to see {name} in the model picker.", { name }) });
     else if (stateOf(agent) === "ready") lines.push({ tone: "ok", text: t("Ready: pick {name} in the model picker.", { name }), ready: true });
   }
@@ -12130,7 +12136,7 @@ function useAcp(request2 = call, { onLoginOpen, open = openChatLogin } = {}) {
     login: (agent) => {
       say(agent.id, null);
       if (!open(agent.id)) {
-        say(agent.id, t("No Bot chat to sign in from here. Run {command} in a terminal instead.", { command: SIGN_IN_OF[agent.id] ?? CLI_OF[agent.id] ?? agent.key }));
+        say(agent.id, t("No Bot chat to sign in from here. Run {command} in a terminal instead.", { command: signInCommand(agent) }));
         return false;
       }
       onLoginOpen?.(agent);

@@ -33,7 +33,7 @@ How they fit:
 
 - **Long-lived Bots**: each Bot is a dsh Session in the "DS Bot" workspace, with its own name, role, instructions and model.
 - **Working folders**: a Bot can work in a folder you choose instead of the team workspace, and a group chat can set one folder for all its members there. Pick it in the Bot's settings or details panel or in the group's settings, or ask a Bot (`update_bot`, `update_group`). After a change, the chat goes on in a fresh part that starts in the new folder. When a Bot sets a folder outside the team workspace, or adds a Bot to a group that works in one, it asks for your approval if those Bots can only write in their folder. Folders that hold dsh data (`$DSH_HOME`, the team's data) are refused. The team workspace itself moves in Settings > General > Locations; Bots and groups that work there go on in a fresh part in the new folder, and the old folder keeps its files.
-- **Permission presets**: each Bot runs with its own dsh permission preset (Read only, Workspace or Full access), set in its details panel. A group chat can run all its members with one preset there, in place of their own: turn on **Same for every member** under Permissions in the group's settings. A new Bot starts with the team default, set under Permissions in Settings > Bots. While DSH's experimental Auto review plugin is on, **Auto review** is a preset too, marked Experimental and confirmed once when picked. Where Auto cannot hold (the plugin is off, or DSH refuses it), the Bot or group runs as Workspace and says so; a chat whose Session was left on Auto opens again once Auto review is back on. Only you set permissions; Bots cannot change them.
+- **Permission presets**: each Bot runs with its own dsh permission preset (Read only, Workspace or Full access), set in its details panel. A group chat can run all its members with one preset there, in place of their own: turn on **Same for every member** under Permissions in the group's settings. A new Bot starts with the team default, set under Permissions in Settings > Bots. While DSH's experimental Auto review plugin is on, **Auto review** is a preset too, marked Experimental and confirmed once when picked. Where Auto cannot hold (the plugin is off, or DSH refuses it), the Bot or group runs as Workspace and says so; a chat whose Session was left on Auto opens again once Auto review is back on. When DSH stops offering a saved level (an upgrade renames or drops it), the level stays saved and is not rewritten: a conversation that already runs is lowered to the narrowest level DSH still offers when that is known to allow less than what it has, and is otherwise left as it is; nothing new starts (a task, a greeting, a first turn in a group) until a level is picked or DSH offers the saved one again. Details and Settings → Feedback say which of these happened. Only you set permissions; Bots cannot change them.
 - **Bots work together**: `message_bot` sends a message to another Bot, `create_bot`, `update_bot` and `delete_bot` add, set up and remove Bots (including a profile photo from a local image file or a data URL), and `ask_user` asks you a question without blocking the other Bots. `show_view` draws a card in a Bot's own chat — text, metrics, tables, progress, choices, confirmations and short forms; an interactive card waits for your answer.
 - **Group chats**: members speak one at a time, and each one reads the latest messages first. A message can `@Name` a member to pass the turn on; type `@` to pick one from a list. **+ → Reference a chat** adds another Bot's chat to a message as context, and in a group the members who answer get it. A member with nothing new to add stays quiet (`[PASS]`). Each member has its own hidden Session per group, so a group never reads a Bot's private chat.
 - **Roles and permissions**:
@@ -198,13 +198,40 @@ No credential is read or copied between programs. The background model is not mo
 
 **Images**: `generate_image` draws with an OpenAI API key (the Images API) exactly as before; without one, through the Codex CLI on its own ChatGPT sign-in (acp-dsh's `generateImage`, a one-off read-only Codex session using Codex's image tool), so a ChatGPT plan draws with no DSH sign-in. A ChatGPT grant an earlier version stored through DSH's `openai-codex` sign-in is read last, only so a person who signed in that way keeps drawing; Automagik no longer offers that sign-in. Nothing reads or copies the CLI's sign-in. A Bot on an agent (Codex) can also make an image with the agent's own tool: acp-dsh hands its PNG, from the call's own update, to the Bot team's keeper (`acpAgents.keepImages`), the chat shows it in the same image card, it is saved in the same images folder, and the agent's link to its own local copy leaves the reply. While any image is made (either path), the card is Omni painting: Omni's clay art with no card behind it, swaying, its face changing every 0.9 s, four dabs of the theme's colours around it, and "Painting your image…" with the seconds so far; a partial image, then the finished one, fades in where Omni was. With reduced motion Omni stands still and the dabs are gone. A call that fails or is stopped says the image was not made, and why.
 
+**Codex image security (#870): accepted risk.** Codex drawing stays enabled. codex-acp's
+`read-only` mode can read the whole disk wherever the OS user has read access. An injected
+drawing request could read a local file into the returned picture; the image tool can use
+local image files as input. The picture is shown in chat, so other viewers could see that
+content. An empty working folder and the tool checks do not isolate file reads.
+
+An OpenAI API key routes `generate_image` through the Images API instead of its one-off
+Codex fallback. The API receives the prompt without starting a local Codex session; keep
+secrets out of the prompt. A Bot running on Codex can still use its own image tool even with
+that key configured. Use a different Bot model or turn Codex off in the agent settings to
+avoid that route. Avoid sending outside messages or other untrusted text to Codex drawing,
+but do not treat prompt review as a file access control. The narrow-sandbox work remains
+open in [#870](https://github.com/automagik-si/automagik/issues/870); see the
+[ACP image security notes](../acp-dsh/README.md#images-through-codex).
+
 **Fallback**: when a Bot's model fails a request and nothing earlier answers it (DSH's own retries of the same model, or a move to a fresh part for a full or stuck chat), the step runs again on the fallback model: `fallbackModel`, else the team's default model (DeepSeek's, out of the box). The rest of that turn stays there, and a notice in the chat says which model failed and why; the next turn is back on the Bot's own model. A full context, a stop, and a fallback that fails too end the turn as before. It covers every Session of the team: a Bot's chat, a group seat, a task.
 
 **Model changes**: a new model is checked, put on the Bot's Sessions, and only then saved; a model that cannot run now (Claude Code or Codex turned off, still installing, or signed out, asked through acp-dsh's read-only `inspect`) or a selection DSH turns down refuses the whole change, with nothing written. `previousModel` is the last model that answered in the Bot's chat (a model that only started a call is never recorded), kept through a change until the new one's first answer. If that switch fails on its first turn because the new model cannot run the conversation (`MODEL_SWITCH_COMPACTION_FAILED`, `MODEL_ACCESS_REQUIRED` from a signed-out agent, or a route whose provider is not configured), or the fresh part it opened fails its first call with nothing else to answer it (a failure the fallback answers keeps the switch, unless the fallback fails too), the Bot goes back to `previousModel`, Session selection included, and nothing runs again on its own. A signed-out agent never moves to the fallback model; any other agent failure does, with its notice, which opens the fallback turn once the failed one has ended. The fallback never changes the Bot's model. The Bot's settings say what its model really did: switching and not answered yet, failed and back on the previous model, or in need of a sign-in. "Answered" comes only from an answer whose source is that model, never from the pick or a started request (state answer `work.models`, and the `model-state` read with whether the model can run now).
 
 **Signing in to Claude Code or Codex**: a Bot whose agent is signed out is signed in to from a transient row at the end of its chat (`src/client/cli-login.js`). It shows only after an explicit entry: picking that agent's model in the chat's picker, Sign in under the refused model in the Bot's settings, or Sign in in the welcome's Connect AI or its Claude Code and Codex page, which opens the selected Bot's chat, else the Main Bot's, through the bridge `Symbol.for('automagik.cli-login')`. It never opens by itself, except to restore a live attempt in the Bot that opened it. The row offers Sign in and Not now; then the link to open on any device, with its expiry, and Codex's device code to type there or a masked field for the code Claude shows after you authorize. While that field shows, the message box keeps its draft but takes no edit, and the model picker stays usable. When the CLI confirms, the row says so and goes by itself after about three seconds; a model the entry chose is then applied to that Bot only, if it is still your latest choice, and if it cannot be used the row says why for a few seconds and the Bot stays on its model. A failure or an expiry leaves one line with Try again and Close; a DSH restart during the attempt says so. The attempt itself lives in acp-dsh, so a reload, a second window or another Bot gets it back without cancelling it; only Cancel, which asks first (naming the Bot that opened it when that is another), or the expiry ends it. The endpoints are `cli-login-start`, `-current`, `-status`, `-answer`, `-cancel` and `-connections` on the team's route, which DSH answers only for its owner. A Claude code shown on this page is refused in the message box afterwards, and the host refuses to send, deliver or step any message that carries one, so it never reaches a Session, a draft, storage, a log or a model. Nothing of the sign-in stays in the chat; the only persisted row is acp-dsh's "Switching to X", which belongs to the model change.
 
-**The account a CLI is already signed in to (#869)**: a CLI's sign-in is one per OS user, shared with the person's terminal, so a CLI found signed in is not used by Bots until the person says so. acp-dsh keeps that record per vendor and account (`consent` on its rows: `given`, `carried`, `needed`); this plugin only asks and refuses. While it is `needed`: `cli-login-start` starts no sign-in and answers `{ status: 'confirm', account }` (the row's account step: who the CLI is signed in as, that Bots will use and bill that account, that the terminal shares it, with Use this account and Not now); a model of that agent is refused as `bot/account-confirm-required` before anything is written, which opens the same step in the chat; a turn about to open on it ends as `MODEL_ACCESS_REQUIRED` before anything is sent, so neither DSH's retry policy nor the fallback model answers it, and the step opens in that Bot's chat; no Bot starts on that agent by default (`needsAccount` on its models, which the menu still offers); the plan moves above wait (`reason: 'account'`); and Codex draws no image. `cli-login-confirm` is Use this account: acp-dsh records the consent and announces the agent ready, so the model chosen with the entry is applied as after a sign-in. A vendor already signed in when an earlier version's install first runs this one is `carried`: its Bots keep answering, and a notice says once which sign-in they use (`cli-login-accounts`, `cli-login-noticed`). An account that cannot be read, a sign-in that cannot be checked and an acp-dsh that says nothing of consent refuse nothing. The account is shown only on these owner-only endpoints, never in team state, a message, a tool, a model call or a log. Not here yet: a separate sign-in for Bots, sign-out and switch account; a sign-in started from a chat still replaces the terminal's.
+**Separate Bot accounts (#869)**: Claude Code and Codex each have a Bot CLI home per installation,
+shared by its teams and images, separate from the terminal. An upgrade keeps Bot models and
+history and asks for a fresh sign-in inside the app; old terminal consent is not carried.
+Signed-out Bots pause with a sign-in action. Codex never silently restores its legacy plan route
+or draws with an old ChatGPT grant while its Bot account is signed out. Explicit image API keys
+keep their own path. Bot settings show Bot and terminal identities (read-only, when reported),
+label their separation, and offer Sign in, Switch account and Sign out. The latter two stop
+running work before changing only Bot credentials. A failed logout stays paused for retry;
+another app instance sharing that vendor home must be closed before an account change.
+The owner-only endpoints add `cli-login-switch` and `cli-login-signout`; account details never
+enter team state, messages, tools, model calls or logs. The earlier confirm step still covers an
+existing account in the Bot's own CLI home. Terminal user settings are not imported; RFC 0003's
+isolation amendment records the settings migration.
 
 **Agents' tools and history**: what Claude Code and Codex see follows acp-dsh's `dshTools` (its README has the table): with it absent, both get the chat's history as a redacted replay, Claude Code gets the team's tools over the bridge, and Codex keeps only its own tools; the team's tools on Codex need an explicit `dshTools: true`.
 
@@ -427,3 +454,88 @@ dev/check.sh                             # all checks (see below)
 ## License
 
 [Apache-2.0](LICENSE)
+
+## Agent access (MCP)
+
+In **Settings → Agent access**, name the agent and choose **Create key**. Copy the key
+immediately; it is shown once. Keep it private: it grants the instance owner's space reads and
+Bot/group administration rights, including conversation text. **Revoke** asks first, then stops
+new calls at once, including existing MCP clients. An action already admitted may finish. The
+page lists each key with the day it was created and its last use, shows the address with an
+example setup under **Connect an agent**, and keeps an **Access log** of recent allowed and
+refused calls: the key's name, what it did, the target, the time, and configuration changes as
+before and after lines. The log filters by key; **Refresh** loads new activity. Normal team
+views show the edits too. In the protocol and in the files below, a key is an agent token.
+
+Each space serves MCP over Streamable HTTP, using JSON responses rather than an SSE subscription.
+The standalone listener starts when the first token is created and resumes on restart while an
+active token exists. It defaults to `127.0.0.1` and an OS-selected port, shown in Settings.
+Set the `omni-ui` plugin's `agentAccessHost` to the IP of the owner's private interface and
+`agentAccessPort` to an unused local port for direct access from another machine. Local, RFC1918,
+tailnet/CGNAT, IPv6 private and link-local addresses are accepted; public and wildcard bindings
+are refused. The plugin opens no public port by default. Use a trusted private network or TLS
+termination; the bearer token authenticates the agent but does not encrypt plain HTTP.
+
+Claude Code can use this project `.mcp.json` configuration (replace the placeholders):
+
+```json
+{
+  "mcpServers": {
+    "automagik": {
+      "type": "http",
+      "url": "http://<PRIVATE_INSTANCE_ADDRESS>:<MCP_PORT>/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AUTOMAGIK_AGENT_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Set `AUTOMAGIK_AGENT_TOKEN` in the agent's environment from your private token store. Keep the
+actual token out of checked-in configuration, URLs, command arguments and logs. The listener
+accepts bearer headers only, rejects URL queries, and rate limits failed authentication.
+Browser Origin headers are refused by default. `agentAccessOrigins` may list exact HTTP/HTTPS
+origins for clients that send one; it never enables credentialed browser CORS.
+
+On a web instance behind the session gate, use
+`https://<SPACE_ORIGIN>/api/omni-mcp` in the same client configuration. The gate forwards only
+that literal path to the plugin's token-authenticated MCP route. It carries the bearer on that
+hop, injects its own DSH credential, and drops browser cookies and identity/forwarding headers.
+Missing, wrong or revoked agent tokens cannot use the path, even with a valid browser session.
+Queries, aliases, WebSocket upgrades and all other routes keep the ordinary session gate.
+Gate Host/origin/cross-site rejections happen before MCP and use the gate's existing audit.
+Every request reaching MCP, including token refusals, appears in the owner's Access log.
+Web-gate clients must omit Origin; DSH accepts the internal cookie-authenticated hop that way.
+No separate public MCP listener or web session is needed. This path also supports future hosted
+spaces without changing the token protocol.
+
+An SSH tunnel remains an alternative when only local binding is wanted:
+
+```sh
+ssh -N -L <LOCAL_PORT>:127.0.0.1:<INSTANCE_MCP_PORT> <SSH_USER>@<INSTANCE_SSH_HOST>
+```
+
+Use `http://127.0.0.1:<LOCAL_PORT>/mcp` in the client configuration, with the same bearer header.
+For a container, the SSH endpoint must share the instance's network namespace.
+
+Read tools list/get Bots with role, instructions, model, effort, permission, folder and status;
+list/get groups and membership; list/get Bot and group conversations with running/waiting/idle
+state and last known activity; read text messages, safe settings, recent event metadata, and
+the recent audit window. Lists accept `offset` and `limit` (1–100, default 50) and return
+`nextOffset`. `read_messages` takes `id`, optional opaque `cursor`, and `limit`, returning
+`nextCursor`. Bot messages reuse the app's chat paging across earlier parts; group messages
+are newest first. Event activity covers up to 1,000 events seen since startup; an unknown last
+activity is `null`. No arbitrary native Session or attachment is addressable through these tools.
+
+Admin tools create/update/delete Bots and groups, edit instructions, model, effort and permission,
+manage membership, and set Main Bot. Creation uses the team's default permission; `update_bot`
+sets an explicit level through the same validator as Settings. Secret values, shell, files,
+plugin installation and token management are absent from the MCP tool surface. Stored secret
+values and agent token strings are redacted from all MCP responses and audit records.
+
+Tokens live only as hashes in private `agent-tokens.json` beside the team. `agent-audit.jsonl`
+keeps token name, tool, target, outcome and time for reads/writes; configuration writes also
+record changed-field before/after values. Message bodies and read results never enter the audit.
+Settings and `read_audit` expose up to the latest 200 complete records within the last 256 KiB.
+A `started` write with no completion was interrupted; check the configuration before retrying.

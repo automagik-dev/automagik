@@ -73,7 +73,10 @@ function readClaude(cli, { env, run, timeoutMs }) {
   return new Promise((done) => {
     try {
       // A signed-out CLI exits 1 and still prints its JSON: the output decides, not the code.
-      run(...batchSafe(cli, ['auth', 'status', '--json'], { env: cliEnv(cli, env), timeout: timeoutMs, maxBuffer: 1 << 20, windowsHide: true }), (error, stdout) => {
+      run(...batchSafe(cli, ['auth', 'status', '--json'], {
+        env: cliEnv(cli, env), cwd: env.AUTOMAGIK_BOT_CLI_HOME,
+        timeout: timeoutMs, maxBuffer: 1 << 20, windowsHide: true,
+      }), (error, stdout) => {
         try { done(claudeAccount(String(stdout ?? ''))) } catch { done(undefined) }
       })
     } catch {
@@ -99,7 +102,10 @@ function readCodex(cli, { env, spawn, timeoutMs }) {
       done(value)
     }
     try {
-      child = spawn(...batchSafe(cli, ['app-server', '--listen', 'stdio://'], { env: cliEnv(cli, env), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }))
+      child = spawn(...batchSafe(cli, ['app-server', '--listen', 'stdio://'], {
+        env: cliEnv(cli, env), cwd: env.AUTOMAGIK_BOT_CLI_HOME,
+        stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true,
+      }))
     } catch {
       return finish(undefined)
     }

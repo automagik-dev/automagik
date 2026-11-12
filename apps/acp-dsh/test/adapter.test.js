@@ -13,6 +13,7 @@ import { structuredNameOf } from '../src/host/acp.js'
 import { AcpAdapter, aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
 import { AGENTS } from '../src/host/agents.js'
 import { Backchannel, offeredTools, presetOf } from '../src/host/backchannel.js'
+import { CliHomes } from '../src/host/cli-homes.js'
 import { isAuthRequired, SYNTHETIC_KIND } from '../src/host/names.js'
 import { credentialShapes } from '../src/host/redact.js'
 import { BOUNDARY_KIND, crossed } from '../src/host/switch.js'
@@ -140,6 +141,24 @@ async function step(adapter, messages, { signal, onChunk, model = 'default', eff
   }
   return chunks
 }
+
+test('isolated chat without a working folder uses its Bot home; explicit project cwd stays',
+  async t => {
+    for (const explicit of [false, true]) {
+      const h = host()
+      t.after(h.close)
+      const project = h.agent.session.header.cwd
+      const homes = new CliHomes(join(project, 'private'))
+      t.after(() => homes.dispose())
+      const env = homes.environment('claude')
+      const agent = h.adapter.agents.get('acp-fake')
+      const original = agent.spawn
+      agent.spawn = () => ({ ...original(), env })
+      if (!explicit) delete h.agent.session.header.cwd
+      await step(h.adapter, [{ role: 'user', content: 'hello' }])
+      assert.equal(h.adapter.live.get('s1').run.spec.cwd, explicit ? project : env.HOME)
+    }
+  })
 
 // One DSH turn: steps until the model stops, tool calls run between them like DSH runs them.
 async function turn(h, messages, text, choice = {}) {
@@ -1043,6 +1062,73 @@ test('every drift turn records and cancels on its own trace, with no card on eit
   } finally {
     h.close()
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a queued call found to be drift cancels its cardless questions', async (t) => {
+  const cancelled = { outcome: { outcome: 'cancelled' } }
+  const answered = async (question) => {
+    let answer
+    question.then(value => { answer = value })
+    await waitFor(() => answer !== undefined, 500)
+    return answer
+  }
+  for (const when of ['before', 'after']) {
+    await t.test(`question ${when} the drift update`, async (t) => {
+      const h = dshHost({ spec: { drift: true } })
+      let end
+      let streaming
+      try {
+        const messages = text => [{
+          role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }],
+        }]
+        const warmup = await step(h.adapter, messages('plain'))
+        assert.equal(warmup.at(-1).reason.kind, 'stop')
+        const { run } = h.adapter.live.get('s1')
+        const ask = () => run.onPermission({
+          toolCall: { toolCallId: 'queued-drift', title: 'Run?' },
+          options: [{ optionId: 'yes', kind: 'allow_once' }],
+        })
+        // Keep the prompt open: its end must not mask a question the skip left unanswered.
+        // The real drift detector still records and cancels; only its process reply is held.
+        t.mock.method(run, 'cancel', async () => {})
+        let question
+        t.mock.method(run.conn, 'prompt', () => new Promise((resolve) => {
+          end = resolve
+          run.onUpdate({ sessionUpdate: 'tool_call', toolCallId: 'queued-drift' })
+          if (when === 'before') question = ask()
+          run.onUpdate({
+            sessionUpdate: 'tool_call_update', toolCallId: 'queued-drift', name: 'Bash',
+          })
+          if (when === 'after') question = ask()
+        }))
+        // Both updates and the question arrive before the adapter consumes the queued call.
+        streaming = step(h.adapter, messages('queued drift'))
+        await waitFor(() => question !== undefined)
+        assert.deepEqual(await answered(question), cancelled)
+        const tool = run.tools.get('queued-drift')
+        assert.equal(tool.drift, true)
+        assert.equal(tool.unanswerable, true)
+        assert.equal(tool.permission, undefined)
+        assert.deepEqual(await answered(ask()), cancelled, 'a question after the skip too')
+        // The built-in call already started and is being cancelled. A mirror would invite
+        // approval for that call, so drift keeps its existing policy of making no card.
+        end({ stopReason: 'cancelled' })
+        const chunks = await streaming
+        assert.equal(chunks.at(-1).reason.kind, 'aborted')
+        assert.equal(chunks.some(chunk =>
+          chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+        assert.equal(h.asked.length, 0)
+        const records = h.session.snapshotEvents()
+          .filter(event => event.type === 'plugin:acp-dsh/toolset-drift')
+        assert.equal(records.length, 1)
+        assert.equal(pluginRecordOf(records[0]).data.name, 'Bash')
+      } finally {
+        end?.({ stopReason: 'cancelled' })
+        await streaming
+        h.close()
+      }
+    })
   }
 })
 
