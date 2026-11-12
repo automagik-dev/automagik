@@ -47,8 +47,8 @@ The clay theme (src/client/clay.js) carries two fonts, Latin subsets of the
 Google Fonts builds, so the desktop app shows them offline. Each file and its
 licence are in src/client/art/fonts.
 
-Manrope, Copyright 2018 The Manrope Project Authors
-(https://github.com/googlefonts/manrope)
+Fredoka, Copyright 2016 The Fredoka Project Authors
+(https://github.com/hafontia/Fredoka-One)
 
 DM Sans, Copyright 2014 The DM Sans Project Authors
 (https://github.com/googlefonts/dm-fonts)

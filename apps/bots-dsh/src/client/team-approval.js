@@ -113,7 +113,7 @@ export const TEAM_APPROVAL_CSS = `
 .bt-apr-arrow{color:var(--bt-ink-2);font-weight:600}
 .bt-apr-heading{display:flex;flex-direction:column;gap:2px;min-width:0}
 .bt-apr-kicker{font-size:12px;line-height:16px;font-weight:600;color:var(--st-warn,var(--bt-ink-2))}
-.bt-apr-title{margin:0;font:700 16px/22px var(--bt-head-font,var(--bt-font))}
+.bt-apr-title{margin:0;font:var(--bt-weight-strong,700) 16px/22px var(--bt-head-font,var(--bt-font))}
 .bt-apr-quote{margin:0;padding:10px 14px;border-left:3px solid var(--bt-accent);border-radius:0 12px 12px 0;background:var(--bt-bubble);white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow-y:auto}
 .bt-apr-rows{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:12px;line-height:16px}
 .bt-apr-rows dt{color:var(--bt-ink-2);font-weight:600}
