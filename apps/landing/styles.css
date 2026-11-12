@@ -442,16 +442,15 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .install-line p{margin-top:14px;color:var(--muted);font-size:.95rem}
 .install-line h2{margin-bottom:14px;font:var(--weight-title) .74rem/1.4 var(--head);letter-spacing:.18em;text-transform:uppercase;color:var(--eyebrow,var(--ring))}
 .install-line+.actions{margin-top:26px}
-/* Arca's logo is the ark with its word, in the text colour: the heading of its stand-in
-   page. The small square icon (Arca's earlier logo, from its kit, on Arca's own two grounds)
-   stays in the Products menu and on the home card only until Arca hands over the ark alone. */
+/* Arca's logo is the ark, in the text colour, never coloured. With its word it is the
+   heading of the stand-in page. Alone it is the picture beside the name in the Products
+   menu (in the menu's own square, like every entry's picture) and on the home card. The
+   ark is wider than tall: it is drawn whole, centred in its square. */
 h1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);margin:8px auto 0}
-.arca-mark{display:block;flex:none;aspect-ratio:1;border-radius:26%;background:#e6d3b3}
-.arca-mark img{width:100%;height:100%}
-.arca-mark.at-menu{width:44px}
-.menu-icon:has(.arca-mark){border:0;background:none}
-.arca-mark.at-card{width:56px;margin-bottom:18px}
-@media (prefers-color-scheme:dark){.arca-mark{background:#0b0d12}}
+.arca-ark{display:block;flex:none;color:var(--text)}
+.arca-ark svg{display:block;width:100%;height:auto}
+.menu-icon .arca-ark{width:28px}
+.product-card .arca-ark{width:56px;margin-bottom:18px}
 .coming-mark{width:120px;margin:0 auto 28px;filter:drop-shadow(0 18px 22px rgba(60,48,73,.28))}
 
 /* The way on, on every block page */

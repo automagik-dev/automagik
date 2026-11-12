@@ -1,6 +1,6 @@
 # Brand assets
 
-Automagik's own marks and character art, Arca's icon, we unfold's Open Intelligence tag and
+Automagik's own marks and character art, Arca's logo, we unfold's Open Intelligence tag and
 the official logos of eleven open projects the products are built on (the last section) are
 used. No customer marks or new drawings are included.
 
@@ -29,8 +29,8 @@ used. No customer marks or new drawings are included.
   logo kit, Apache-2.0 as the files above. The word "mykes" is we unfold's file for its
   product; like the Open Intelligence tag it is not under this site's Apache-2.0 grant, and
   nothing here calls it open-licensed. Arca's logo (`arca-logo-b.svg`, the ark with its
-  word) is from the same package, used unchanged. Like Arca's icon below it belongs to Arca,
-  is shown here for Arca, and is not covered by this grant.
+  word, and `arca-ark-icon.svg`, the ark alone) is from the same package, used unchanged.
+  Arca's logo belongs to Arca, is shown here for Arca, and is not covered by this grant.
 
 | File | In the kit | SHA-256 |
 | --- | --- | --- |
@@ -59,13 +59,6 @@ used. No customer marks or new drawings are included.
   from DS Bot, Copyright 2026 Fei2411 and the DS Bot contributors, and Automagik,
   Copyright 2026 Namastex Labs and the Omni contributors (the Bots and welcome NOTICEs).
   These are brand accents, never substitutes for product captures.
-- `arca/svg/arca-icon-ink.svg`, `arca/svg/arca-icon-ivory.svg`: Arca's icon, from Arca's logo
-  kit (draft 3), copied unchanged under the kit's file names. It is Arca's earlier logo (the
-  arch); Arca's logo is now the ark (`assets/family/arca-logo-b.svg`, above), and these two
-  files stay only for the Products menu and the home card until the ark alone is handed
-  over. Arca's mark belongs to Arca;
-  it is shown here for Arca with Arca's agreement, by its kit's rules, and is not covered by
-  this site's Apache-2.0 grant. A newer kit replaces these files at the same paths.
 - `open-intelligence/open-intelligence-tag.svg`: we unfold's horizontal Open Intelligence
   tag, one colour, copied unchanged from Arca's public repository (`automagik-si/arca`,
   commit `7da787e`, `assets/open-intelligence/`). The tag is we unfold's mark, used as the

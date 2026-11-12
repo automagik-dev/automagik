@@ -195,24 +195,22 @@ put their digests in `LICENSES.md`; no page, style or test names what the files 
 
 ## Arca's logo
 
-Arca's logo is the ark with its word, in one colour, the text colour (the owner's decision,
-handed over in the family package's issue 11c). The heading of the stand-in page `/arca/`
-is that logo, and so is Arca's row in the family drawer: `assets/family/arca-logo-b.svg`,
-a byte copy from the package, written into the page so it takes the text colour. It is never
-coloured.
+Arca's logo is the ark, in one colour, the text colour, never coloured (the owner's decision,
+handed over in the family package's issue 11c). Both files are byte copies from that
+package, in `assets/family/`, written into the page as they are so they take the text
+colour:
 
-The arch is Arca's earlier logo, and no other site should use it. It still stands here in
-two places, as a small square icon beside the name: the Products menu and the home card.
-Those change to the ark alone when Arca hands that file over (asked); the logo with its
-word does not fit a small square beside the name. Add no other place for the arch. Until
-then those two carry
-Arca's icon from Arca's logo kit: `assets/brand/arca/svg/arca-icon-ink.svg` and
-`arca-icon-ivory.svg`, copied unchanged under the kit's own names. A newer kit replaces the
-files at the same paths; never edit a copy. Ink on Arca's sand ground in light, ivory on its
-night ground in dark. Arca's rules hold here: one colour, never redrawn or tinted, never
-animated by this site, never locked up with the Open Intelligence tag, no tagline locked to it,
-and the small cut for any size under 24 px (no place here is that small). Name any retina
-file `name-2x`, since the privacy check reads the usual at-sign form as an address.
+- `arca-logo-b.svg`, the ark with its word: the heading of the stand-in page `/arca/` and
+  Arca's row in the family drawer.
+- `arca-ark-icon.svg`, the ark alone: the picture beside the name "Arca" in the Products
+  menu (centred in the menu's own square) and on the home card. The name stands beside it,
+  so the picture is hidden from assistive technology.
+
+The arch was Arca's earlier logo. The package says no other site should use it: no page
+here shows it, its files are not in this site, and the contract test holds both. This site
+never animates Arca's logo, never tints it and never locks it up with the Open Intelligence
+tag. Name any retina file `name-2x`, since the privacy check reads the usual at-sign form
+as an address.
 
 ## Motion
 

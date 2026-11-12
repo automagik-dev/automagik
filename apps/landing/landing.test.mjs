@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { htmlPage, supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss, titleFace, brandFonts, statusNames } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, arcaLogo, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest, family, familyArt, familyButton, familyHost, familyLinks } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, arcaLogo, arcaArk, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest, family, familyArt, familyButton, familyHost, familyLinks } from './scripts/build-pages.mjs'
 import { BOX, GEOMETRY, LOGO, TONES, logoInner, tagInner } from './scripts/build-lockup.mjs'
 
 // The width of each name's lockup in the kit's own units; all are 264 high.
@@ -156,8 +156,7 @@ test('every href/action points locally or to an exact reviewed destination', () 
 })
 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
-  // Arca's two icon files are its kit's, under the kit's own names.
-  const brand = new Set(['/assets/brand/automagik-lockup-three-colours-ink-header.svg', '/assets/brand/automagik-lockup-three-colours-cream-header.svg', '/assets/brand/genie-lockup-three-colours-ink.svg', '/assets/brand/genie-lockup-three-colours-cream.svg', '/assets/brand/genie-lockup-three-colours-cream-header.svg', '/assets/brand/omni-lockup-three-colours-ink.svg', '/assets/brand/omni-lockup-three-colours-cream.svg', '/assets/brand/omni-lockup-three-colours-ink-header.svg', '/assets/brand/omni-lockup-three-colours-cream-header.svg', '/assets/brand/triskle-three-colours.svg', '/assets/brand/triskle-three-colours-32.svg', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
+  const brand = new Set(['/assets/brand/automagik-lockup-three-colours-ink-header.svg', '/assets/brand/automagik-lockup-three-colours-cream-header.svg', '/assets/brand/genie-lockup-three-colours-ink.svg', '/assets/brand/genie-lockup-three-colours-cream.svg', '/assets/brand/genie-lockup-three-colours-cream-header.svg', '/assets/brand/omni-lockup-three-colours-ink.svg', '/assets/brand/omni-lockup-three-colours-cream.svg', '/assets/brand/omni-lockup-three-colours-ink-header.svg', '/assets/brand/omni-lockup-three-colours-cream-header.svg', '/assets/brand/triskle-three-colours.svg', '/assets/brand/triskle-three-colours-32.svg', '/assets/brand/omni-pleased.png', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
   for (const { mark: [light, dark] } of used) for (const file of [light, dark]) if (file) brand.add(`/assets/brand/used/${file}`)
   // The family drawer's art: byte copies from its package (the drawer's own test pins them).
   for (const file of Object.values(familyArt)) brand.add(`/assets/family/${file}`)
@@ -494,7 +493,7 @@ test('motion: only for visitors who allow it, only transform and opacity, and ne
   // entrance skips it (the stand-in's heading is the logo).
   assert.ok(motion.includes('.hero-heading>:not(.arca-logo){animation:'))
   assert.equal(motion.split('arca-logo').length, 2)
-  assert.doesNotMatch(motion, /arca-mark/)
+  assert.doesNotMatch(motion, /arca-mark|arca-ark/)
 })
 
 test('all landing files pass privacy; no tracking or preview URL is committed', () => {
@@ -540,25 +539,15 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span>`))
   // The card says only Arca's name and the owner's line: no tag of guessed wording.
   assert.doesNotMatch(card, /tile-tag/)
-  // Arca's small square icon, from its kit, ink in light and ivory in dark: the Products menu
-  // and the home card each carry one, and nothing else does. It is Arca's earlier logo (the
-  // arch) and stays in those two places only until Arca hands over the ark alone; the
-  // stand-in page's heading has none (the next test). Never another product's mark beside
-  // Arca, and never the Open Intelligence tag.
-  const slot = /<span class="arca-mark at-(\w+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="\/assets\/brand\/arca\/svg\/arca-icon-ivory\.svg"><img src="\/assets\/brand\/arca\/svg\/arca-icon-ink\.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"><\/picture><\/span>/g
-  // The kit's files, never redrawn here: one colour each, Arca's ink and Arca's ivory.
-  for (const [tone, colour] of [['ink', '#2a1d12'], ['ivory', '#ebe6da']]) {
-    const icon = readFileSync(resolve(root, `assets/brand/arca/svg/arca-icon-${tone}.svg`), 'utf8')
-    assert.deepEqual([...new Set([...icon.matchAll(/#[0-9a-f]{3,8}\b/gi)].map(match => match[0].toLowerCase()))], [colour], tone)
-    assert.doesNotMatch(icon, /gradient|filter|<animate|<script|<image|href=/i, tone)
-  }
-  assert.deepEqual(readdirSync(resolve(root, 'assets/brand/arca/svg')).sort(), ['arca-icon-ink.svg', 'arca-icon-ivory.svg'])
+  // Beside the name "Arca" stands the ark alone, the package's file as it is (the test of the
+  // ark, below, holds its bytes and that no arch is left): once in the Products menu on
+  // every page, once more on the home card, and nowhere else. Never another product's mark
+  // beside Arca, and never the Open Intelligence tag.
   for (const [route, html] of generated) {
-    const places = [...html.matchAll(slot)].map(match => match[1])
-    assert.deepEqual(places, ['menu', ...(route === '/' ? ['card'] : [])], route)
-    assert.equal((html.match(/arca-mark/g) ?? []).length, places.length, route)
+    assert.equal(html.split(arcaArk).length - 1, route === '/' ? 2 : 1, route)
+    assert.equal((html.match(/class="arca-ark"/g) ?? []).length, route === '/' ? 2 : 1, route)
     for (const [item] of html.matchAll(/<a class="menu-item" href="\/arca\/"[\s\S]*?<\/a>/g)) assert.doesNotMatch(item, /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/, route)
-    assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-end">'), html.indexOf('</footer>')), /arca-mark|<img/, route)
+    assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-end">'), html.indexOf('</footer>')), /arca-ark|<img/, route)
   }
   assert.doesNotMatch(page.match(/<main[\s\S]*<\/main>/)[0].split('class="more ')[0], /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/)
   for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
@@ -670,6 +659,7 @@ const familyFiles = {
   'mykes-wordmark-cream.svg': '9099d9566ebee75e3cc683987f5b69bfc8c1c41873871f5415654a1efbc12752',
   'mykes-wordmark-ink.svg': '28c80ac26bea923146094869fafe032a9397d85c4fd0ad6432a885ceb24219dc',
   'arca-logo-b.svg': 'ea2cfc8b60be3fe0b064e11b6238b290a1545a654e8fe44a190ebc0a623db116',
+  'arca-ark-icon.svg': '165f7bbb1bf0d3ac6a079c2f2b547564f31c5f13dedd275c63816af9fd33ff87',
 }
 const digest = path => createHash('sha256').update(readFileSync(resolve(root, path))).digest('hex')
 const uncommented = html => html.replace(/<!--[\s\S]*?-->\n?/g, '').trim()
@@ -697,8 +687,13 @@ test('the family drawer: the piece and its art are byte copies of the package, a
   // could load or run. The builder writes it into the page as it is.
   const ark = read('assets/family/arca-logo-b.svg')
   assert.match(ark, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 2041\.97 488\.4" fill="currentColor" role="img" aria-label="arca">(?:<path d="[^"]+"\/>)+<\/svg>\n$/)
-  // Every picture in the folder is one the drawer shows, and the drawer shows no other.
-  assert.deepEqual([...Object.values(familyArt), 'arca-logo-b.svg'].sort(), Object.keys(familyFiles).filter(file => /\.(?:png|svg)$/.test(file)).sort())
+  // The ark alone came with issue 11c, in the package's art/ark-icon folder, which has a
+  // checksum list of its own: the note names that list too.
+  assert.ok(note.includes('`fcb0b261ca11121c97265d779b286517d38e19fc28bbf607ae2607eb67e2923d`'))
+  assert.match(read('assets/family/arca-ark-icon.svg'), /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 710\.4 488\.4" fill="currentColor" role="img" aria-label="arca">(?:<path d="[^"]+"\/>){3}<\/svg>\n$/)
+  // Every picture in the folder is one the drawer shows, or Arca's ark for the site's own
+  // places (the Products menu and the home card), and the drawer shows no other.
+  assert.deepEqual([...Object.values(familyArt), 'arca-logo-b.svg', 'arca-ark-icon.svg'].sort(), Object.keys(familyFiles).filter(file => /\.(?:png|svg)$/.test(file)).sort())
 })
 
 test('the family drawer on every page: the piece\'s markup with Automagik in the top block, three words and no mark beside them', () => {
@@ -919,7 +914,7 @@ test('navigation: menus, footer sitemap, breadcrumb and previous/next on every p
     assert.deepEqual(hrefs(group(footer, 'Company')).slice(0, 3), company, route)
     // Every menu entry has a one-line description and its character, mark or glyph.
     for (const source of [panel('products'), panel('resources'), panel('company')]) {
-      for (const [item] of source.matchAll(/<a class="menu-item"[\s\S]*?<\/a>/g)) assert.match(item, /<span class="menu-icon">(?:<img|<svg|<span class="arca-mark)[\s\S]*<strong>[^<]+[\s\S]*<\/strong><span>[^<]{8,}<\/span>/, `${route} ${item.slice(0, 80)}`)
+      for (const [item] of source.matchAll(/<a class="menu-item"[\s\S]*?<\/a>/g)) assert.match(item, /<span class="menu-icon">(?:<img|<svg|<span class="arca-ark")[\s\S]*<strong>[^<]+[\s\S]*<\/strong><span>[^<]{8,}<\/span>/, `${route} ${item.slice(0, 80)}`)
     }
     // The active page: marked in the header button, the menu, the drawer and the footer.
     // On the home page the one mark is the drawer's top block, the site itself.
@@ -941,32 +936,48 @@ test('navigation: menus, footer sitemap, breadcrumb and previous/next on every p
   }
 })
 
-// ARCA'S LOGO IS THE ARK (the family package's issue 11c): the ark with "arca", in one
-// colour, the text colour. The arch is Arca's earlier logo and no other site should use it.
-// So the stand-in page shows no arch: its heading is the ark logo, the package's file.
-test('Arca\'s stand-in page shows the ark, the package\'s logo, and no arch', () => {
+// ARCA'S LOGO IS THE ARK (the family package's issue 11c): the ark, in one colour, the text
+// colour, never coloured; with "arca" as the logo, alone as the small picture. The arch is
+// Arca's earlier logo and no other site should use it. So this site shows no arch: the
+// stand-in page's heading is the ark logo, the Products menu and the home card show the
+// ark alone, all three the package's files as they are, and the arch's files are gone.
+test('Arca is shown by the ark, the package\'s files, and the site shows no arch', () => {
+  // NO ARCH: not in a page, not in the stylesheet, not in the builder, not as a file.
+  for (const [route, html] of generated) assert.doesNotMatch(html, /arca-mark|arca-icon|assets\/brand\/arca\//, `${route} shows no arch`)
+  const css = read('styles.css')
+  assert.doesNotMatch(css, /arca-mark|arca-icon/)
+  assert.doesNotMatch(read('scripts/build-pages.mjs'), /arca-mark|arca-icon|arcaMark/)
+  assert.equal(existsSync(resolve(root, 'assets/brand/arca')), false, 'the arch\'s files are not in this site')
+
+  // THE STAND-IN PAGE'S HEADING is the ark logo: the package's file, byte for byte, written
+  // into the page once in the content (and once more in the drawer's row), in the text colour.
   const page = htmlAt('/arca/'), main = page.match(/<main[\s\S]*<\/main>/)[0]
-  // No arch anywhere in the page's own content: no icon tile, no kit icon file.
-  assert.doesNotMatch(main, /arca-mark|arca-icon|assets\/brand\/arca\//, 'the stand-in page shows no arch')
-  // The only arch left on the page is the Products menu's small icon, in the header.
-  assert.equal(page.split('arca-icon-ink.svg').length, 2)
-  assert.ok(page.indexOf('arca-icon-ink.svg') < page.indexOf('<main'))
-  // The heading is the ark logo: the package's file, byte for byte, written into the page
-  // once in the content (and once more in the drawer's row), in the text colour.
   const logo = read('assets/family/arca-logo-b.svg')
   assert.equal(arcaLogo, logo.trim())
   assert.equal(main.split(arcaLogo).length, 2, 'the heading holds the package\'s ark logo')
   assert.equal(main.split('<h1').length, 2)
   assert.ok(main.includes(`<h1 class="arca-logo">${arcaLogo}</h1>`))
-  assert.match(logo, / fill="currentColor" /); assert.doesNotMatch(logo, /#[0-9a-f]{3,8}\b|rgb|gradient|style=/i, 'one colour, the text colour, never coloured')
   assert.equal(page.split(arcaLogo).length, 3)
-  // Drawn as a heading: centred, at one size, in the heading's own colour, and never moved.
-  const css = read('styles.css')
   assert.ok(css.includes('\nh1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);margin:8px auto 0}\n'))
-  assert.doesNotMatch(css, /arca-mark\.at-hero/)
-  assert.doesNotMatch(css.replace('.hero-heading>:not(.arca-logo){animation:', ''), /arca-logo[^{]*\{[^}]*(?:fill|color|filter|animation|transition|transform)/)
-  // No other page gains an arch: the menu's icon on every page, the card on the home page.
-  for (const [route, html] of generated) assert.equal(html.split('arca-icon-ink.svg').length - 1, route === '/' ? 2 : 1, route)
+
+  // THE PRODUCTS MENU AND THE HOME CARD show the ark alone: the package's file, byte for
+  // byte, in a holder that hides it from assistive technology (the name stands beside it).
+  const ark = read('assets/family/arca-ark-icon.svg')
+  assert.equal(arcaArk, `<span class="arca-ark" aria-hidden="true">${ark.trim()}</span>`)
+  for (const [route, html] of generated) {
+    const entry = html.match(/<a class="menu-item" href="\/arca\/"[\s\S]*?<\/a>/)[0]
+    assert.ok(entry.includes(`<span class="menu-icon">${arcaArk}</span><span class="menu-text"><strong>Arca</strong>`), `${route}: the menu's entry for Arca shows the ark`)
+  }
+  const card = htmlAt('/').match(/<article class="product-card" data-block="arca">[\s\S]*?<\/article>/)[0]
+  assert.ok(card.includes(`<div class="tile-copy">${arcaArk}<h3><a href="/arca/">Arca</a></h3>`), 'the home card shows the ark over the name')
+  // Drawn whole and centred in the menu's own square, in the text colour.
+  assert.ok(css.includes('\n.arca-ark{display:block;flex:none;color:var(--text)}\n.arca-ark svg{display:block;width:100%;height:auto}\n.menu-icon .arca-ark{width:28px}\n.product-card .arca-ark{width:56px;margin-bottom:18px}\n'))
+  assert.ok(css.includes('\n.menu-icon{flex:none;display:grid;place-items:center;width:44px;height:44px;'))
+
+  // ONE COLOUR, THE TEXT COLOUR, NEVER COLOURED: neither file names a colour, and no rule
+  // here tints, filters or moves either drawing.
+  for (const file of [logo, ark]) { assert.match(file, / fill="currentColor" /); assert.doesNotMatch(file, /#[0-9a-f]{3,8}\b|rgb|gradient|style=|<script|<image|href=/i) }
+  assert.doesNotMatch(css.replace('.hero-heading>:not(.arca-logo){animation:', '').replace('.arca-ark{display:block;flex:none;color:var(--text)}', ''), /arca-(?:logo|ark)[^{]*\{[^}]*(?:fill|color|filter|animation|transition|transform)/)
 })
 
 test('root discovery files allow every crawler including training and preserve Arca lines', () => {

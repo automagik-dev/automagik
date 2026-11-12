@@ -39,6 +39,7 @@ another site uses (all below).
 | `mykes-wordmark-cream.svg` | `art/mykes-word-night.svg` | `9099d9566ebee75e3cc683987f5b69bfc8c1c41873871f5415654a1efbc12752` |
 | `mykes-wordmark-ink.svg` | `art/mykes-word-day.svg` | `28c80ac26bea923146094869fafe032a9397d85c4fd0ad6432a885ceb24219dc` |
 | `arca-logo-b.svg` | `art/arca-logo-b.svg` | `ea2cfc8b60be3fe0b064e11b6238b290a1545a654e8fe44a190ebc0a623db116` |
+| `arca-ark-icon.svg` | `art/ark-icon/svg/arca-ark-icon.svg` | `165f7bbb1bf0d3ac6a079c2f2b547564f31c5f13dedd275c63816af9fd33ff87` |
 
 ## The host is Automagik (issue 11b, "A case of its own")
 
@@ -69,6 +70,14 @@ moves to the top block only on a page in its own world, with its own logo in the
 (it takes the text colour and is never coloured): `arca-logo-b.svg`. The arch is Arca's
 earlier logo, and no other site should use it. So the same file is also the heading of this
 site's stand-in page for Arca (`arcaLogo` in `scripts/build-pages.mjs`).
+
+**The ark alone: `arca-ark-icon.svg`.** Handed over after issue 11c for the two places
+where this site shows Arca's picture beside its name, the Products menu and the home card
+(`arcaArk` in the builder), so that no arch is left on this site. It came in the package's
+folder `art/ark-icon/`, which has a checksum list of its own, with the sha256
+`fcb0b261ca11121c97265d779b286517d38e19fc28bbf607ae2607eb67e2923d`; issue 11c's own list
+does not name that folder. Only the file that takes the text colour is taken; the folder's
+ink and cream files and its PNGs are not.
 
 The package's picture of this case is a mock on Arca's draft page; its line and section names
 are stand-ins. The line here is this site's own ("Open building blocks of

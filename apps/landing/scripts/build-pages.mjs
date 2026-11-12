@@ -34,14 +34,14 @@ export const arca = {
   install: 'curl -fsSL https://get.automagik.si/arca | sh',
   needs: 'Today it needs a Linux machine (x86_64) with Incus, and a person comfortable with a terminal.',
 }
-// ARCA'S LOGO is the ark with its word, in one colour, the text colour (the owner's decision;
-// the family package's issue 11c). The stand-in page's heading is that logo: the package's
-// arca-logo-b.svg, written into the page (see arcaLogo, by the family drawer, which shows
-// the same file in Arca's row). The arch is Arca's earlier logo and no other site should use
-// it. It still stands as the small square icon in the Products menu and on the home card,
-// from Arca's kit under the kit's own file names in assets/brand/arca/svg/, only until Arca
-// hands over the ark alone; never add another place for it.
-const arcaMark = place => `<span class="arca-mark at-${place}"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/arca/svg/arca-icon-ivory.svg"><img src="/assets/brand/arca/svg/arca-icon-ink.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"></picture></span>`
+// ARCA'S LOGO is the ark, in one colour, the text colour, never coloured (the owner's decision;
+// the family package's issue 11c). With its word it is the heading of the stand-in page and
+// Arca's row in the family drawer (arcaLogo, below). Alone it is the small picture beside
+// the name "Arca" in the Products menu and on the home card: the package's
+// arca-ark-icon.svg, written into the page as it is, so it takes the text colour. The name
+// stands beside it, so the picture is hidden from assistive technology. The arch was Arca's
+// earlier logo: no page shows it, and its files are not in this site.
+export const arcaArk = `<span class="arca-ark" aria-hidden="true">${readFileSync(new URL('../assets/family/arca-ark-icon.svg', import.meta.url), 'utf8').trim()}</span>`
 // THE OFFICIAL LOCKUP: shown once, on the home page's brand block, never in the header,
 // the hero, the favicon or a share picture.
 const lockup = '/assets/brand/automagik/automagik-lockup-oi'
@@ -132,7 +132,7 @@ const products = [
   { href: '/omni/', name: 'Omni', image: 'omni', line: 'Your chat apps, connected.' },
   { href: '/genie/', name: 'Genie', image: 'genie', line: 'A wish, a branch, a report.' },
   { href: '/cloud/', name: 'Cloud', image: 'pet', line: 'Coming soon. Register your interest.' },
-  { href: '/arca/', name: 'Arca', mark: arcaMark('menu'), line: arca.line },
+  { href: '/arca/', name: 'Arca', mark: arcaArk, line: arca.line },
   { href: '/mykes/', name: 'Mykes', mark: triskle('menu-art', '', { small: true }), line: 'Coming soon.' },
 ]
 const resources = [
@@ -412,7 +412,7 @@ ${usedRow()}
 <article class="product-card" data-block="omni"><div class="tile-copy"><p class="tile-tag">Chat apps</p><h3><a href="/omni/">${productLogo('Omni', '-header')}</a></h3><p>Connect your chat apps to Automagik, with channels and canvases in the same window.</p><span class="detail-link" aria-hidden="true">Meet Omni →</span></div><div class="tile-art">${art('omni', 'Omni, the clay octopus.', { cls: 'tile-omni' })}</div></article>
 <article class="product-card" data-block="genie"><div class="tile-copy"><p class="tile-tag">Wishes</p><h3><a href="/genie/">${productLogo('Genie', '-header', { ground: 'dark' })}</a></h3><p>Turn a wish into a branch, a test run and a report you approve.</p><ol class="wish-steps" aria-label="What a wish becomes"><li>Wish</li><li>Branch</li><li>Test run</li><li>Report</li></ol><span class="detail-link" aria-hidden="true">Meet Genie →</span></div><div class="tile-art">${art('genie', 'Genie, the clay character with magenta hair.', { cls: 'tile-genie' })}${art('lamp', '', { cls: 'tile-lamp' })}</div></article>
 <article class="product-card" data-block="cloud"><div class="tile-art">${art('pet', 'The Automagik triskelion as a clay character with a small face.', { cls: 'tile-pet' })}</div><div class="tile-copy"><p class="tile-tag soon">Coming soon</p><h3><a href="/cloud/">Cloud</a></h3><p>One sign-in, organisations and hosted workspaces. Register your interest.</p><span class="detail-link" aria-hidden="true">Explore Cloud →</span></div></article>
-<article class="product-card" data-block="arca"><div class="tile-copy">${arcaMark('card')}<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span></div></article>
+<article class="product-card" data-block="arca"><div class="tile-copy">${arcaArk}<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span></div></article>
 </div>
 <div class="also"><p class="also-label">Also on the way</p><article class="product-card"><h3><a href="/mykes/">Mykes</a></h3><p>Coming soon.</p></article></div></section>
 <section class="wrap open" aria-labelledby="open-title"><div class="open-copy"><h2 id="open-title" class="open-line">${openLine}</h2><p class="open-part">${partOf()}</p></div></section>
