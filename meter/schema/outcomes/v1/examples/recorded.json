@@ -1,0 +1,479 @@
+{
+  "v": 1,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "meter_version": "3.107.0",
+  "schema_version": 3,
+  "machine": "machine-a1b2c3",
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "counted_from": "2026-09-10T00:00:00Z",
+  "recorded": true,
+  "errors_from": "2026-11-06T00:00:00Z",
+  "api_errors_from": "2026-11-06T00:00:00Z",
+  "complete": true,
+  "stale": false,
+  "note": "raw counts of failures a harness or hc recorded, including expected ones (a red test run while working test-first, a grep with no match) and usage-limit stops (written after a harness's own retries, so a count of model calls that failed for the session, not each retried attempt); not a quality verdict on their own",
+  "error_kinds": {
+    "tool_error": {
+      "source": "harness_log",
+      "rule": "harness-flagged failures, including expected ones",
+      "markers": {
+        "claude-code": "a tool_result block with is_error: true, once per tool_use_id",
+        "codex": "an item_completed event whose item has status \"failed\" or a non-zero exit_code, once per item id"
+      },
+      "unsupported_harnesses": [
+        "agy",
+        "dsh-tui",
+        "omp"
+      ]
+    },
+    "api_error": {
+      "source": "harness_log",
+      "rule": "harness-flagged model-call failures after the harness's own retries (model calls that failed for the session, not each retried attempt, including usage-limit stops; not a quality verdict on their own)",
+      "markers": {
+        "claude-code": "a type \"assistant\" line with top-level isApiErrorMessage: true (written after Claude Code's own retries, including usage-limit stops), once per line uuid"
+      },
+      "unsupported_harnesses": [
+        "agy",
+        "codex",
+        "dsh-tui",
+        "omp"
+      ]
+    },
+    "run_failed": {
+      "source": "hc_snapshot,workers_ledger",
+      "rule": "a launch whose terminal ended on its own with a non-zero exit status or on a signal, as hc's list of finished terminals gave it (hc_snapshot) or as an end row of the workers ledger copied it (workers_ledger); killed and stopped_by_restart are ends, never errors"
+    }
+  },
+  "truncated": false,
+  "windows": [
+    {
+      "window": "d1",
+      "start": "2026-11-07T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "requested_start": "2026-11-07T20:00:05Z",
+      "clipped": false,
+      "state": "ok",
+      "errors": {
+        "tool_error": {
+          "state": "full",
+          "source": "harness_log",
+          "count": 2
+        },
+        "api_error": {
+          "state": "full",
+          "source": "harness_log",
+          "count": 0
+        },
+        "run_failed": {
+          "state": "full",
+          "source": "hc_snapshot",
+          "count": 1
+        },
+        "unsupported_harnesses": [
+          "agy",
+          "dsh-tui",
+          "omp"
+        ],
+        "api_error_unsupported_harnesses": [
+          "agy",
+          "codex",
+          "dsh-tui",
+          "omp"
+        ],
+        "rows": [
+          {
+            "bot": "otter",
+            "kind": "worker",
+            "role": "dev",
+            "squad": "acme",
+            "harness": "claude-code",
+            "error_kind": "tool_error",
+            "source": "harness_log",
+            "count": 2
+          }
+        ],
+        "rows_omitted": 0,
+        "omitted_count": 0,
+        "unattributed": [
+          {
+            "state": "unlinked",
+            "reason": "no_record",
+            "harness": "codex",
+            "error_kind": "run_failed",
+            "source": "hc_snapshot",
+            "count": 1
+          }
+        ],
+        "by_branch": [
+          {
+            "repo": "example.com/acme/widgets",
+            "branch": "feat/widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 1,
+            "attributed": 2,
+            "unattributed": 1
+          }
+        ],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_task": [
+          {
+            "repo": "example.com/acme/widgets",
+            "task": "task-widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 0
+          }
+        ],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0
+      },
+      "run_ends": {
+        "exited_ok": 1,
+        "failed": 1,
+        "killed": 0,
+        "stopped_by_restart": 0,
+        "other": 0,
+        "unknown": 0
+      },
+      "time_to_pr": {
+        "state": "ok",
+        "all": {
+          "to_open_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          },
+          "to_merge_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          },
+          "launch_to_open_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          },
+          "launch_to_merge_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          }
+        },
+        "repos": [
+          {
+            "repo": "example.com/acme/widgets",
+            "to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            },
+            "to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            },
+            "launch_to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            },
+            "launch_to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            }
+          }
+        ],
+        "repos_omitted": 0,
+        "attribution": "full",
+        "bots": [
+          {
+            "bot": "otter",
+            "role": "dev",
+            "to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            },
+            "to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            },
+            "launch_to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            },
+            "launch_to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            }
+          }
+        ],
+        "bots_omitted": 0,
+        "unattributed": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "branches": [
+          {
+            "repo": "example.com/acme/widgets",
+            "branch": "feat/widgets",
+            "pr": 42,
+            "state": "merged",
+            "to_open_s": 3600,
+            "to_merge_s": 3600,
+            "launch_to_open_s": 3600,
+            "launch_to_merge_s": 3600
+          }
+        ],
+        "branches_omitted": 0,
+        "branches_no_pr": 0,
+        "no_first_commit": 0,
+        "no_launch": 0
+      }
+    },
+    {
+      "window": "d7",
+      "start": "2026-11-01T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "requested_start": "2026-11-01T20:00:05Z",
+      "clipped": false,
+      "state": "partial",
+      "errors": {
+        "tool_error": {
+          "state": "partial",
+          "source": "harness_log",
+          "count": 2
+        },
+        "api_error": {
+          "state": "partial",
+          "source": "harness_log",
+          "count": 0
+        },
+        "run_failed": {
+          "state": "full",
+          "source": "hc_snapshot",
+          "count": 1
+        },
+        "unsupported_harnesses": [
+          "agy",
+          "dsh-tui",
+          "omp"
+        ],
+        "api_error_unsupported_harnesses": [
+          "agy",
+          "codex",
+          "dsh-tui",
+          "omp"
+        ],
+        "rows": [
+          {
+            "bot": "otter",
+            "kind": "worker",
+            "role": "dev",
+            "squad": "acme",
+            "harness": "claude-code",
+            "error_kind": "tool_error",
+            "source": "harness_log",
+            "count": 2
+          }
+        ],
+        "rows_omitted": 0,
+        "omitted_count": 0,
+        "unattributed": [
+          {
+            "state": "unlinked",
+            "reason": "no_record",
+            "harness": "codex",
+            "error_kind": "run_failed",
+            "source": "hc_snapshot",
+            "count": 1
+          }
+        ],
+        "by_branch": [
+          {
+            "repo": "example.com/acme/widgets",
+            "branch": "feat/widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 1,
+            "attributed": 2,
+            "unattributed": 1
+          }
+        ],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_task": [
+          {
+            "repo": "example.com/acme/widgets",
+            "task": "task-widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 0
+          }
+        ],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0
+      },
+      "run_ends": {
+        "exited_ok": 1,
+        "failed": 1,
+        "killed": 0,
+        "stopped_by_restart": 0,
+        "other": 0,
+        "unknown": 0
+      },
+      "time_to_pr": {
+        "state": "ok",
+        "all": {
+          "to_open_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          },
+          "to_merge_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          },
+          "launch_to_open_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          },
+          "launch_to_merge_s": {
+            "n": 1,
+            "p50_s": 3600,
+            "p90_s": 3600
+          }
+        },
+        "repos": [
+          {
+            "repo": "example.com/acme/widgets",
+            "to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            },
+            "to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            },
+            "launch_to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            },
+            "launch_to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600
+            }
+          }
+        ],
+        "repos_omitted": 0,
+        "attribution": "full",
+        "bots": [
+          {
+            "bot": "otter",
+            "role": "dev",
+            "to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            },
+            "to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            },
+            "launch_to_open_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            },
+            "launch_to_merge_s": {
+              "n": 1,
+              "p50_s": 3600,
+              "p90_s": 3600,
+              "n_shared": 0
+            }
+          }
+        ],
+        "bots_omitted": 0,
+        "unattributed": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "branches": [
+          {
+            "repo": "example.com/acme/widgets",
+            "branch": "feat/widgets",
+            "pr": 42,
+            "state": "merged",
+            "to_open_s": 3600,
+            "to_merge_s": 3600,
+            "launch_to_open_s": 3600,
+            "launch_to_merge_s": 3600
+          }
+        ],
+        "branches_omitted": 0,
+        "branches_no_pr": 0,
+        "no_first_commit": 0,
+        "no_launch": 0
+      }
+    }
+  ]
+}

@@ -57,7 +57,10 @@
     "u",
     "u2"
   ],
-  "emails": [],
+  "emails": [
+    "confirm@send.automagik.si",
+    "privacy@automagik.si"
+  ],
   "lines": [
     {
       "file": "herdr/.genie/wishes/herdr-bots/WISH.md",
@@ -358,6 +361,11 @@
       "file": "server/test/secrecy.test.mjs",
       "text": "/home/iojs",
       "why": "the Node project's public build account, not a host account"
+    },
+    {
+      "file": "apps/landing/waitlist.test.mjs",
+      "text": "15555550100@s.whatsapp.net",
+      "why": "A reserved fictional +1 555 phone used as a WhatsApp JID in isolated tests; not an email address."
     }
   ],
   "pending": [

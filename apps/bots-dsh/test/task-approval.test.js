@@ -127,3 +127,16 @@ test('a running task without an approval still shows what it does', () => {
   assert.equal(taskState({ status: 'working' }, true), 'waiting')
   assert.equal(approvalFor({ approvals: [{ taskId: 'task1' }] }, 'task1'), true)
 })
+
+test('a working task shows its newest open stop, then its own words when closed', () => {
+  hookState.length = 0
+  const stops = [{ taskId: 'x', open: true, why: 'tool', tool: 'bash', count: 1, at: 1 }, { taskId: 'x', open: true, why: 'review', count: 1, at: 2 }]
+  const task = { from: 'ada', status: 'working', title: 'x', said: 'someone', at: 1 }
+  let tree = render(props('x', undefined, { stops }, { task }))
+  assert.match(text(tree), /A step did not run: Auto review refused it/)
+  assert.doesNotMatch(text(tree), /someone/)
+  stops.forEach(entry => { entry.open = false })
+  tree = render(props('x', undefined, { stops }, { task }))
+  assert.match(text(tree), /someone/)
+  assert.doesNotMatch(text(tree), /did not run/)
+})

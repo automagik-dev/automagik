@@ -1,0 +1,1268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://automagik.si/schema/meter/outcomes/v1/envelope.schema.json",
+  "title": "usagemeter outcomes, version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "generated_at",
+    "meter_version",
+    "schema_version",
+    "machine",
+    "store",
+    "counted_from",
+    "recorded",
+    "errors_from",
+    "api_errors_from",
+    "complete",
+    "stale",
+    "note",
+    "error_kinds",
+    "truncated",
+    "windows"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "generated_at": {
+      "$ref": "#/$defs/time"
+    },
+    "meter_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "machine": {
+      "type": "string",
+      "minLength": 1
+    },
+    "store": {
+      "$ref": "#/$defs/store"
+    },
+    "counted_from": {
+      "$ref": "#/$defs/time"
+    },
+    "recorded": {
+      "type": "boolean"
+    },
+    "errors_from": {
+      "$ref": "#/$defs/timeOrNull"
+    },
+    "api_errors_from": {
+      "$ref": "#/$defs/timeOrNull"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "stale": {
+      "type": "boolean"
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1
+    },
+    "error_kinds": {
+      "$ref": "#/$defs/kinds"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "windows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/window"
+      },
+      "minItems": 1,
+      "maxItems": 3
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "timeOrNull": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/time"
+        }
+      ]
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[a-z0-9.-]+(/[^/\\s]+)+$"
+    },
+    "harness": {
+      "enum": [
+        "claude-code",
+        "codex",
+        "omp",
+        "dsh-tui",
+        "agy"
+      ]
+    },
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "location"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "location": {
+          "enum": [
+            "current",
+            "legacy",
+            "override"
+          ]
+        }
+      }
+    },
+    "stat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "p50_s",
+        "p90_s"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "n_shared": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "p50_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "p90_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "n": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "p50_s": {
+                "type": "null"
+              },
+              "p90_s": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n": {
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "p50_s": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "p90_s": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "clocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "to_open_s",
+        "to_merge_s",
+        "launch_to_open_s",
+        "launch_to_merge_s"
+      ],
+      "properties": {
+        "to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "to_merge_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_merge_s": {
+          "$ref": "#/$defs/stat"
+        }
+      }
+    },
+    "repoLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "to_open_s",
+        "to_merge_s",
+        "launch_to_open_s",
+        "launch_to_merge_s"
+      ],
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "to_merge_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_merge_s": {
+          "$ref": "#/$defs/stat"
+        }
+      }
+    },
+    "botLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "role",
+        "to_open_s",
+        "to_merge_s",
+        "launch_to_open_s",
+        "launch_to_merge_s"
+      ],
+      "properties": {
+        "bot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "to_merge_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_merge_s": {
+          "$ref": "#/$defs/stat"
+        }
+      }
+    },
+    "branchLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "branch",
+        "pr",
+        "state",
+        "to_open_s",
+        "to_merge_s",
+        "launch_to_open_s",
+        "launch_to_merge_s"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pr": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "open",
+            "merged",
+            "closed",
+            "no_pr"
+          ]
+        },
+        "to_open_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "to_merge_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "launch_to_open_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "launch_to_merge_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        }
+      }
+    },
+    "timeToPr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "all",
+        "repos",
+        "repos_omitted",
+        "attribution",
+        "bots",
+        "bots_omitted",
+        "unattributed",
+        "branches",
+        "branches_omitted",
+        "branches_no_pr",
+        "no_first_commit",
+        "no_launch"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "ok",
+            "no_data",
+            "not_recorded"
+          ]
+        },
+        "all": {
+          "$ref": "#/$defs/clocks"
+        },
+        "repos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repoLine"
+          },
+          "maxItems": 50
+        },
+        "repos_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attribution": {
+          "enum": [
+            "full",
+            "partial"
+          ]
+        },
+        "bots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/botLine"
+          },
+          "maxItems": 50
+        },
+        "bots_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unattributed": {
+          "$ref": "#/$defs/clocks"
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/branchLine"
+          },
+          "maxItems": 200
+        },
+        "branches_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "branches_no_pr": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_first_commit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_launch": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "kindCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "source",
+        "count"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "full",
+            "partial",
+            "not_recorded",
+            "no_data"
+          ]
+        },
+        "source": {
+          "enum": [
+            "harness_log",
+            "hc_snapshot",
+            "workers_ledger",
+            "hc_snapshot,workers_ledger"
+          ]
+        },
+        "count": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "not_recorded",
+                  "no_data"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "full",
+                  "partial"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "errorLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "kind",
+        "role",
+        "squad",
+        "harness",
+        "error_kind",
+        "source",
+        "count"
+      ],
+      "properties": {
+        "bot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "squad": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "harness": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/harness"
+            }
+          ]
+        },
+        "error_kind": {
+          "enum": [
+            "tool_error",
+            "api_error",
+            "run_failed"
+          ]
+        },
+        "source": {
+          "enum": [
+            "harness_log",
+            "hc_snapshot",
+            "workers_ledger",
+            "hc_snapshot,workers_ledger"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "unattributedLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "reason",
+        "harness",
+        "error_kind",
+        "source",
+        "count"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "harness": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/harness"
+            }
+          ]
+        },
+        "error_kind": {
+          "enum": [
+            "tool_error",
+            "api_error",
+            "run_failed"
+          ]
+        },
+        "source": {
+          "enum": [
+            "harness_log",
+            "hc_snapshot",
+            "workers_ledger",
+            "hc_snapshot,workers_ledger"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "errors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_error",
+        "api_error",
+        "run_failed",
+        "unsupported_harnesses",
+        "api_error_unsupported_harnesses",
+        "rows",
+        "rows_omitted",
+        "omitted_count",
+        "unattributed",
+        "by_branch",
+        "by_branch_omitted",
+        "by_branch_omitted_count",
+        "by_task",
+        "by_task_omitted",
+        "by_task_omitted_count"
+      ],
+      "properties": {
+        "tool_error": {
+          "$ref": "#/$defs/kindCount"
+        },
+        "api_error": {
+          "$ref": "#/$defs/kindCount"
+        },
+        "run_failed": {
+          "$ref": "#/$defs/kindCount"
+        },
+        "unsupported_harnesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harness"
+          }
+        },
+        "api_error_unsupported_harnesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harness"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/errorLine"
+          },
+          "maxItems": 50
+        },
+        "rows_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unattributed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/unattributedLine"
+          }
+        },
+        "by_branch": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/branchErrorLine"
+          },
+          "maxItems": 50
+        },
+        "by_branch_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_branch_omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_task": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/taskErrorLine"
+          },
+          "maxItems": 50
+        },
+        "by_task_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_task_omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tool_error": {
+                "properties": {
+                  "state": {
+                    "const": "not_recorded"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "api_error": {
+                "properties": {
+                  "state": {
+                    "const": "not_recorded"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runEnds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exited_ok",
+        "failed",
+        "killed",
+        "stopped_by_restart",
+        "other",
+        "unknown"
+      ],
+      "properties": {
+        "exited_ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "killed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stopped_by_restart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "other": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window",
+        "start",
+        "end",
+        "requested_start",
+        "clipped",
+        "state",
+        "errors",
+        "run_ends",
+        "time_to_pr"
+      ],
+      "properties": {
+        "window": {
+          "enum": [
+            "d1",
+            "d7",
+            "d30"
+          ]
+        },
+        "start": {
+          "$ref": "#/$defs/time"
+        },
+        "end": {
+          "$ref": "#/$defs/time"
+        },
+        "requested_start": {
+          "$ref": "#/$defs/time"
+        },
+        "clipped": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "ok",
+            "partial",
+            "no_data",
+            "not_recorded"
+          ]
+        },
+        "errors": {
+          "$ref": "#/$defs/errors"
+        },
+        "run_ends": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runEnds"
+            }
+          ]
+        },
+        "time_to_pr": {
+          "$ref": "#/$defs/timeToPr"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "not_recorded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "run_ends": {
+                "type": "null"
+              },
+              "time_to_pr": {
+                "properties": {
+                  "state": {
+                    "const": "not_recorded"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "no_data"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "run_ends": {
+                "type": "null"
+              },
+              "time_to_pr": {
+                "properties": {
+                  "state": {
+                    "const": "no_data"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "ok",
+                  "partial"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "run_ends": {
+                "$ref": "#/$defs/runEnds"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "toolErrorDef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "rule",
+        "markers",
+        "unsupported_harnesses"
+      ],
+      "properties": {
+        "source": {
+          "const": "harness_log"
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "markers": {
+          "type": "object",
+          "required": [],
+          "properties": {},
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "unsupported_harnesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harness"
+          }
+        }
+      }
+    },
+    "runFailedDef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "rule"
+      ],
+      "properties": {
+        "source": {
+          "const": "hc_snapshot,workers_ledger"
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "kinds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_error",
+        "api_error",
+        "run_failed"
+      ],
+      "properties": {
+        "tool_error": {
+          "$ref": "#/$defs/toolErrorDef"
+        },
+        "api_error": {
+          "$ref": "#/$defs/toolErrorDef"
+        },
+        "run_failed": {
+          "$ref": "#/$defs/runFailedDef"
+        }
+      }
+    },
+    "branchErrorLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "branch",
+        "tool_error",
+        "api_error",
+        "run_failed",
+        "attributed",
+        "unattributed"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "api_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attributed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unattributed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "taskErrorLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "task",
+        "tool_error",
+        "api_error",
+        "run_failed"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "api_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

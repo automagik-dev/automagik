@@ -1,0 +1,1526 @@
+{
+  "v": 1,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "meter_version": "3.107.0",
+  "schema_version": 3,
+  "machine": "machine-a1b2c3",
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "counted_from": "2026-09-10T00:00:00Z",
+  "records_from": "2026-10-01T00:00:00Z",
+  "evidence_from": "2026-10-20T00:00:00Z",
+  "complete": true,
+  "stale": false,
+  "as_of": "2026-11-08T19:52:41Z",
+  "all_vouch": true,
+  "incomplete_sources": [],
+  "truncated": true,
+  "windows": [
+    {
+      "window": "d7",
+      "requested_start": "2026-11-01T20:00:05Z",
+      "start": "2026-11-01T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "clipped": false,
+      "evidence": "full",
+      "evidence_from": "2026-10-20T00:00:00Z",
+      "complete": true,
+      "stale": false,
+      "totals": {
+        "attributed": 5100,
+        "ambiguous": 0,
+        "unlinked": 0,
+        "before_evidence": 0,
+        "total": 5100
+      },
+      "bot_coverage": 1.0,
+      "inspected": 1.0,
+      "parts": [
+        {
+          "state": "ambiguous",
+          "reason": "claimants_differ",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "no_record",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "dsh_tui_seat",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "other_machine",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "before_evidence",
+          "reason": "before_evidence",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        }
+      ],
+      "before_evidence_tagged": 0,
+      "no_repo": {
+        "tokens": 0,
+        "note": "store-wide, even with --repo: usage with no repo belongs to no query answer, so it is outside the denominator"
+      },
+      "repos": [
+        {
+          "repo": "example.com/acme/widgets-00",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-01",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-02",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-03",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-04",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-05",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-06",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-07",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-08",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-09",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-10",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-11",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-12",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-13",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-14",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-15",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-16",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-17",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-18",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-19",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-20",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-21",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-22",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-23",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-24",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-25",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-26",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-27",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-28",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-29",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-30",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-31",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-32",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-33",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-34",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-35",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-36",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-37",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-38",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-39",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-40",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-41",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-42",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-43",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-44",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-45",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-46",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-47",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-48",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        },
+        {
+          "repo": "example.com/acme/widgets-49",
+          "state": "measured",
+          "totals": {
+            "attributed": 100,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 1.0
+        }
+      ],
+      "repos_shown": 50,
+      "repos_omitted": 1,
+      "repos_other": {
+        "repo": "other",
+        "state": "other",
+        "totals": {
+          "attributed": 100,
+          "ambiguous": 0,
+          "unlinked": 0,
+          "before_evidence": 0,
+          "total": 100
+        },
+        "bot_coverage": 1.0
+      },
+      "bots": [
+        {
+          "bot": "lark-00",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-01",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-02",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-03",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-04",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-05",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-06",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-07",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-08",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-09",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-10",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-11",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-12",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-13",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-14",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-15",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-16",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-17",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-18",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-19",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-20",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-21",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-22",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-23",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-24",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-25",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-26",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-27",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-28",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-29",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-30",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-31",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-32",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-33",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-34",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-35",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-36",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-37",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-38",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-39",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-40",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-41",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-42",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-43",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-44",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-45",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-46",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-47",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-48",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        },
+        {
+          "bot": "lark-49",
+          "tokens": 100,
+          "share": 0.0196,
+          "tokens_by_basis": {
+            "session": 100,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        }
+      ],
+      "bots_shown": 50,
+      "bots_omitted": 1,
+      "bots_other": {
+        "bot": "other",
+        "tokens": 100,
+        "share": 0.0196,
+        "tokens_by_basis": {
+          "session": 100,
+          "label": 0,
+          "worktree": 0
+        },
+        "unrecorded": [],
+        "tokens_unrecorded": 0,
+        "harnesses": [
+          "claude-code"
+        ],
+        "lower_bound": true
+      },
+      "truncated": true
+    }
+  ]
+}

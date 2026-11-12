@@ -142,7 +142,7 @@ const count = value => (Number.isFinite(value) && value >= 0 ? value : 0)
  * The Pocket rows one committed Session event makes (Pocket Link chat/types.js row kinds).
  * `scope` carries what the fold needs across events: the open turn and the tool-call rows by call id.
  * @param {{ type: string, seq: number, time?: number, data?: any }} event
- * @param {{ sessionId: string, turn: number, calls: Map<string, string> }} scope
+ * @param {{ sessionId: string, turn: number, calls: Map<string, string>, stopOf?: (turn: number) => string | undefined }} scope
  */
 export function rowsOf(event, scope) {
   const data = event?.data ?? {}
@@ -163,6 +163,10 @@ export function rowsOf(event, scope) {
       const usage = data.usage
       if (usage && typeof usage === 'object') rows.push({ ...base('tokens'), kind: 'tokens', input: count(usage.inputTokens), output: count(usage.outputTokens), cache: count(usage.cacheReadTokens) })
       return rows
+    }
+    case 'turn/end': {
+      const msg = scope.stopOf?.(data.turn ?? scope.turn)
+      return msg ? [{ ...base('stop'), kind: 'status', state: 'error', msg: cut(msg, PREVIEW_MAX) }] : []
     }
     case 'tool/call': {
       const row = { ...base(), kind: 'tool-call', tool: String(data.name ?? ''), summary: String(data.name ?? ''), input: cut(typeof data.arguments === 'string' ? data.arguments : '', PREVIEW_MAX) }
@@ -243,11 +247,12 @@ const globalOnly = bot => bot?.project == null
  *   timers?: typeof realTimers, pollMs?: number, listMs?: number,
  *   keep?: number, maxFollowed?: number, log?: (...args: any[]) => void, writable?: boolean,
  *   shown?: (bot: { id: string, project?: string | null, machine?: string, placeUnknown?: true }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number,
+ *   stopOf?: (sessionId: string, turn: number) => string | undefined,
  *   carriesSignInCode?: (text: string) => boolean }} options
  */
 export class DshChatSource {
-  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, listMs = LIST_STATE_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, registryIdOf = () => null, chatOwner, now = Date.now, carriesSignInCode = () => false }) {
-    Object.assign(this, { adapter, bots, timers, pollMs, listMs, keep, maxFollowed, log, shown, registryIdOf, now })
+  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, listMs = LIST_STATE_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, registryIdOf = () => null, chatOwner, now = Date.now, carriesSignInCode = () => false, stopOf = () => undefined }) {
+    Object.assign(this, { adapter, bots, timers, pollMs, listMs, keep, maxFollowed, log, shown, registryIdOf, now, stopOf })
     /** Whether a text carries a Claude sign-in code the computer showed (cli-login.js). Never throws. */
     this.carriesSignInCode = (text) => { try { return carriesSignInCode(text) === true } catch { return false } }
     /** Writes need the adapter's prompt and cancel, and the answerer listeners wired (install). */
@@ -382,7 +387,7 @@ export class DshChatSource {
     const controller = new AbortController()
     const entry = {
       botId: bot.id, sessionId: bot.sessionId, controller, listeners: new Set(), rows: [], floorSeq: 0, cursor: -1,
-      scope: { sessionId: bot.sessionId, turn: 0, calls: new Map() }, status: statusOf(null), approval: null, question: null, poller: null, gone: false,
+      scope: { sessionId: bot.sessionId, turn: 0, calls: new Map(), stopOf: turn => this.stopOf(bot.sessionId, turn) }, status: statusOf(null), approval: null, question: null, poller: null, gone: false,
     }
     entry.ready = this.start(entry)
     return entry
@@ -489,7 +494,7 @@ export class DshChatSource {
     try { older = await this.adapter.events(entry.sessionId, { beforeSeq: entry.floorSeq, maxMessages: PAGE_ROWS }, entry.controller.signal) } catch { return latest }
     const records = Array.isArray(older?.records) ? older.records : []
     if (!records.length || records[0].event.seq > cursor.seq + 1) return latest
-    const scope = { sessionId: entry.sessionId, turn: 0, calls: new Map(entry.scope.calls) }
+    const scope = { sessionId: entry.sessionId, turn: 0, calls: new Map(entry.scope.calls), stopOf: turn => this.stopOf(entry.sessionId, turn) }
     const missed = records.filter(record => record.event.seq > cursor.seq).flatMap(record => rowsOf(record.event, scope))
     const rows = [...missed, ...entry.rows]
     // Everything missed must fit one page; otherwise the phone starts over from the latest page.
@@ -502,7 +507,7 @@ export class DshChatSource {
     if (!cursor || cursor.sessionId !== entry.sessionId || entry.gone) return []
     const max = Math.min(Math.max(1, Number.isInteger(limit) ? limit : 50), PAGE_ROWS)
     const page = await this.adapter.events(entry.sessionId, { beforeSeq: cursor.seq, maxMessages: max }, entry.controller.signal)
-    const scope = { sessionId: entry.sessionId, turn: 0, calls: new Map() }
+    const scope = { sessionId: entry.sessionId, turn: 0, calls: new Map(), stopOf: turn => this.stopOf(entry.sessionId, turn) }
     const rows = (page?.records ?? []).filter(record => record.event.seq < cursor.seq).flatMap(record => rowsOf(record.event, scope))
     return pageOf(rows, max)
   }
@@ -869,6 +874,7 @@ export function install(rt) {
       source = new DshChatSource({
         adapter: createAdapter(controller), bots: ownBots(rt, reader), shown: reader.shown, registryIdOf: reader.registryIdOf,
         log: (...args) => rt.warn?.(...args), writable, chatOwner,
+        stopOf: (id, turn) => rt.stopLineOfTurn?.(id, turn),
         carriesSignInCode: text => rt.loginTextMatches?.(text) === true,
       })
       socket = await startPocketSocket({ home: rt.home, source, log: (...args) => rt.warn?.(...args) })

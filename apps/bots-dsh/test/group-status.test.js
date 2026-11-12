@@ -74,7 +74,7 @@ async function start(extra = {}) {
   const askApproval = (sessionId, extra = {}, next = () => 'from-dsh') => ctx.listeners.get('approval/request')[0]({ agent: { session: { id: sessionId } }, toolName: 'pwsh', reason: 'escalate sandbox', ...extra }, next)
   const stop = async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) }
   await tool('list_bots', {}, 'a')
-  return { agentOf, emit, tool, call, askApproval, stop, archived }
+  return { agentOf, emit, tool, call, askApproval, stop, archived, rt: ctx.provided.get('omniTeam') }
 }
 
 // Waits on real I/O (state writes) without timers, which some tests mock.
@@ -322,4 +322,40 @@ test('an approval asked inside a PTC program shows what that call does', async (
   const [approval] = value.work.approvals
   assert.deepEqual(approval.detail, { text: 'Copy the doc', code: 'Copy-Item a.md E:/docs' })
   assert.equal(value.work.bots.b.tool, 'pwsh')
+})
+
+test('permission stops join the round once per reason, without failing its member', async (t) => {
+  const host = await start()
+  t.after(host.stop)
+  const result = await openTurn(t, host)
+  host.rt.noteStop('gb', { why: 'tool', callId: 'x' })
+  host.rt.noteStop('gb', { why: 'tool', callId: 'y' })
+  assert.equal(host.rt.stopsView().find(item => item.botId === 'b').inRound, true)
+  host.rt.noteStop('a', { why: 'tool', callId: 'z' })
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: 'someone' }] } })
+  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  await settle(() => result() !== undefined)
+  const stops = result().replies.filter(reply => reply.kind === 'permission-stop')
+  assert.equal(stops.length, 1)
+  assert.equal(stops[0].count, 2)
+  assert.equal(stops[0].why, 'tool')
+  assert.equal(stops[0].botId, 'b')
+  assert.equal(result().failed, undefined)
+  const listed = (await host.call('state', {})).value.work.stops
+  const entry = listed.find(item => item.botId === 'b')
+  assert.deepEqual([entry.botId, entry.roomId, entry.open, entry.inRound], ['b', 'r1', true, true])
+  const other = listed.find(item => item.botId === 'a')
+  assert.deepEqual([other.sessionId, other.open, other.inRound], ['a', true, undefined])
+})
+
+test('a stop after the member yielded for approval stays outside that round', async (t) => {
+  const host = await start()
+  t.after(host.stop)
+  const result = await openTurn(t, host)
+  host.rt.yieldRoomTurn('gb')
+  await settle(() => result() !== undefined)
+  host.rt.noteStop('gb', { why: 'sandbox', callId: 'x' })
+  assert.equal(result().replies.some(reply => reply.kind === 'permission-stop'), false)
+  const [entry] = (await host.call('state', {})).value.work.stops
+  assert.equal(entry.inRound, undefined)
 })

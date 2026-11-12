@@ -71,3 +71,40 @@ test('a task\'s approval notification opens the task, where it is answered', () 
   page.shown[0].onclick()
   assert.deepEqual(page.opened, ['t1'])
 })
+
+const stopEntry = extra => ({ id: 'x', botId: 'b', sessionId: 'x', taskId: 'x', label: 'someone', at: 200, open: true, why: 'tool', tool: 'bash', count: 1, calls: [], ...extra })
+test('one notice per stop entry, with its text, tag and place; closed and old entries stay quiet', () => {
+  const page = windowWith()
+  page.noticeApprovals({ work: page.work, roster: page.roster, shownSession: () => 'elsewhere', openSession: page.openSession, since: 100 })
+  page.work.set({ stops: [stopEntry()] })
+  page.work.set({ stops: [stopEntry({ count: 2 })] })
+  page.work.set({ stops: [stopEntry({ open: false })] })
+  page.work.set({ stops: [stopEntry({ count: 3 }), stopEntry({ id: 'old', at: 50 }), stopEntry({ id: 'closed', open: false })] })
+  assert.deepEqual(page.shown.map(note => [note.title, note.body, note.tag]), [['Writer stopped on a permission', 'someone · bash did not run: this Bot does not have that tool', 'omni-ui-stop-x']])
+  page.shown[0].onclick()
+  assert.deepEqual(page.opened, ['x'])
+  assert.equal(page.shown[0].closed, true)
+})
+
+test('on-screen stops notify only when their place cannot draw them', () => {
+  for (const [extra, shown, expected] of [
+    [{ roomId: 'r1', inRound: true }, 'r1', 0],
+    [{ roomId: 'r1' }, 'r1', 1],
+    [{ sessionId: 'b', calls: [{ sessionId: 'b', callId: 'x' }] }, 'b', 0],
+    [{ sessionId: 'b', child: true, calls: [{ sessionId: 'child', callId: 'x' }] }, 'b', 1],
+    [{ sessionId: 'b', calls: [] }, 'b', 1],
+  ]) {
+    const page = windowWith()
+    page.noticeApprovals({ work: page.work, roster: page.roster, shownSession: () => shown, openSession: page.openSession, since: 100 })
+    page.work.set({ stops: [stopEntry({ taskId: undefined, ...extra })] })
+    assert.equal(page.shown.length, expected, JSON.stringify(extra))
+    if (expected) {
+      page.shown[0].onclick()
+      assert.deepEqual(page.opened, [extra.roomId ?? 'b'])
+    }
+  }
+  const page = windowWith({ permission: 'default' })
+  page.noticeApprovals({ work: page.work, roster: page.roster, shownSession: () => 'x', openSession: page.openSession, since: 100 })
+  page.work.set({ stops: [stopEntry()] })
+  assert.equal(page.shown.length, 0)
+})

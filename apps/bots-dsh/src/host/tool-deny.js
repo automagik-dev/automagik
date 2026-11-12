@@ -305,12 +305,18 @@ export function install(rt) {
   // whatever put the tool on the surface.
   ctx.on('tools/execute', async (exec, next) => {
     // And none at all on a Session whose permission level was not set (permissions.js).
-    await rt.levelHolds?.(exec)
+    try {
+      await rt.levelHolds?.(exec)
+    } catch (error) {
+      if (error?.code === 'bot/refused') rt.noteStop?.(exec.agent?.id ?? exec.agent?.session?.id, { why: 'level', tool: exec.name, callId: exec.callId }, exec.agent)
+      throw error
+    }
     const name = typeof exec?.name === 'string' ? exec.name : ''
     if (name === '' || exec?.agent === undefined) return next()
     const bot = botOfSession(exec.agent?.id ?? exec.agent?.session?.id, exec.agent)
     // A call that goes on carries its Session, for a task started inside it (permissions.js).
     if (bot === undefined || !deniedNames(bot).includes(name)) return rt.inToolCall === undefined ? next() : rt.inToolCall(exec, next)
+    rt.noteStop?.(exec.agent?.id ?? exec.agent?.session?.id, { why: 'tool', tool: name, callId: exec.callId }, exec.agent)
     throw refusal(`${bot.name} does not have the ${name} tool`)
   })
 

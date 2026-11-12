@@ -136,6 +136,7 @@ export function install(rt) {
   const mounted = {}
   mountBrowserPlugin(rt.ctx, {
     api: mounted,
+    onAddressRefused: (exec, tool) => rt.noteStop?.(exec.agent?.id ?? exec.agent?.session?.id, { why: 'address', tool, callId: exec.callId }, exec.agent),
     toolDefs: plugin.tools ?? plugin.toolDefs,
     defineTool,
     profileRoot: join(rt.home, 'browser-profiles'),

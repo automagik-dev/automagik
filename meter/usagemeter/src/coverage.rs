@@ -98,6 +98,7 @@ impl Failure {
 struct Request {
     windows: Vec<Window>,
     repos: Vec<String>,
+    repo_aliases: Vec<String>,
     json: bool,
 }
 
@@ -106,6 +107,7 @@ struct Request {
 fn parse(args: &[String]) -> Result<Request, String> {
     let mut windows: Vec<Window> = Vec::new();
     let mut repos: Vec<String> = Vec::new();
+    let mut repo_aliases: Vec<String> = Vec::new();
     let mut json = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -147,12 +149,43 @@ fn parse(args: &[String]) -> Result<Request, String> {
                     repos.push(v.clone());
                 }
             }
+            "--repo-alias" => {
+                let v = it.next().ok_or("--repo-alias needs a value")?;
+                if !query::repo_ok(v) {
+                    return Err(format!(
+                        "--repo-alias takes host/owner/repo as the meter normalizes a remote, not {}",
+                        query::quoted(v)
+                    ));
+                }
+                if v.len() > query::MAX_REPO_BYTES {
+                    return Err(format!(
+                        "--repo-alias takes {} bytes; the most it takes is {}",
+                        v.len(),
+                        query::MAX_REPO_BYTES
+                    ));
+                }
+                if !repo_aliases.contains(v) {
+                    repo_aliases.push(v.clone());
+                }
+            }
             other => {
                 return Err(format!(
                     "unknown option {} for coverage; see usagemeter --help",
                     query::quoted(other)
                 ));
             }
+        }
+    }
+    if !repo_aliases.is_empty() {
+        if repos.is_empty() {
+            return Err("--repo-alias requires --repo".into());
+        }
+        if repos.len() > 1 {
+            return Err("--repo-alias requires a single --repo".into());
+        }
+        repo_aliases.retain(|a| a != &repos[0]);
+        if repo_aliases.len() > query::MAX_REPO_ALIASES {
+            return Err("at most 16 --repo-alias values may be given".into());
         }
     }
     if windows.is_empty() {
@@ -163,6 +196,7 @@ fn parse(args: &[String]) -> Result<Request, String> {
     Ok(Request {
         windows,
         repos,
+        repo_aliases,
         json,
     })
 }
@@ -753,7 +787,13 @@ fn report(
 
     let mut wins: Vec<WinAcc> = bounds.iter().map(|_| WinAcc::new()).collect();
     let named: BTreeSet<&str> = req.repos.iter().map(String::as_str).collect();
-    query::scan_usage(c, None, from, to, evidence_from, &mut |r| {
+    query::scan_usage(c, None, from, to, evidence_from, &mut |mut r| {
+        if r.repo
+            .as_ref()
+            .is_some_and(|repo| req.repo_aliases.contains(repo))
+        {
+            r.repo = Some(req.repos[0].clone());
+        }
         let total = r.tokens.total;
         if total <= 0 {
             return;

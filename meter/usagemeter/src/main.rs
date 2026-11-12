@@ -15,11 +15,14 @@ Usage:
   usagemeter sync --evidence-backfill --days N [--budget-secs N] [--no-publish] [--doc NAME]
   usagemeter status
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
+                   [--repo-alias <host/owner/repo>]...
                    [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
   usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
   usagemeter query --repo HOST/OWNER/REPO --by task [--branch B ...] --json [...]
   usagemeter coverage [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
+                      [--repo-alias <host/owner/repo>]...
   usagemeter outcomes [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
+                      [--repo-alias <host/owner/repo>]...
   usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui, Antigravity) into the store and
@@ -40,6 +43,9 @@ status    Print the store's state as JSON. It never writes the store: the databa
 query     Usage and estimated cost per branch of one repo, as the contract 1 envelope (RFC 0018,
           meter/schema/query/v1/) on stdout, for every exit below. It opens the store as status
           does; only sync refreshes the store. Capability meter.usage@1.
+  --repo-alias <host/owner/repo>
+                  Include a previous repo name; repeat for more aliases (at most 16).
+                  Coverage and outcomes require a single --repo when aliases are given.
   --by bot        One row per bot (RFC 0021): bot, kind, role, squad and harness, from the
                   usage tied to a launch; any --branch is then a filter, and none is needed.
   --by task       One row per task id (RFC 0018 M3, RFC 0021 D4): the task's usage and cost,

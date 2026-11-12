@@ -4,7 +4,7 @@ import { install } from '../src/host/approvals.js'
 
 // The approval listener, with the team state it reads: a running task a Bot started, the
 // Bots' own chats, and hidden group Sessions.
-function bench({ tasks = {}, chats = [], groups = [] } = {}) {
+function bench({ tasks = {}, chats = [], groups = [], runs = [] } = {}) {
   const handlers = []
   const noted = []
   const rt = {
@@ -13,6 +13,7 @@ function bench({ tasks = {}, chats = [], groups = [] } = {}) {
     groupOwners: new Map(groups),
     chatOwners: new Map(chats),
     botOf: id => (['genie', 'writer'].includes(id) ? { id } : undefined),
+    teamOwnerOf: id => new Map(runs).get(id),
     noteApproval: (sessionId, note) => noted.push([sessionId, note]),
     callDetail: () => ({ text: 'bun test', code: 'bun test' }),
     yieldRoomTurn: () => {},
@@ -71,4 +72,25 @@ test('an approval nobody on the team owns goes on to the next answerer', async (
   const outcome = await handlers[0].handler(request('other'), () => Promise.resolve('unavailable'))
   assert.equal(outcome, 'unavailable')
   assert.deepEqual(rt.approvalsView(), [])
+})
+
+test('a run ask is noted without answering, and a run whose Bot left passes unnoted', async () => {
+  const { rt, handlers, noted } = bench({ runs: [['x', { kind: 'run', run: true, botId: 'ada', taskId: 'x', label: 'someone' }]] })
+  let settle
+  const outcome = handlers[0].handler(request('x'), () => new Promise(resolve => { settle = resolve }))
+  const [entry] = rt.approvalsView()
+  assert.deepEqual([entry.botId, entry.sessionId, entry.taskId, entry.label, entry.answerable], ['ada', 'x', 'x', 'someone', false])
+  settle('rejected')
+  assert.equal(await outcome, 'rejected')
+  assert.deepEqual(rt.approvalsView(), [])
+  assert.equal(noted.at(-1)[1], undefined)
+  const gone = bench()
+  assert.equal(await gone.handlers[0].handler(request('x'), () => 'unavailable'), 'unavailable')
+  assert.deepEqual(gone.noted, [])
+})
+
+test('a run child is still passed to DSH without an approval note', async () => {
+  const b = bench({ runs: [['x', { run: true, child: true, botId: 'ada' }]] })
+  assert.equal(await b.handlers[0].handler(request('x'), () => 'cancelled'), 'cancelled')
+  assert.deepEqual(b.noted, [])
 })

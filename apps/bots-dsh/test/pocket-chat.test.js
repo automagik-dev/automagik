@@ -1296,3 +1296,58 @@ test('#674 stays: a project Bot without its yes lists shown:false and still carr
   assert.equal(reg.chat, 'session')
   assert.deepEqual(await source.watch(`dsh:${REG}`, () => {}), { ok: false, reason: 'not-shown' })
 })
+
+test('a turn end projects a permission stop as an English status hint only when supplied', () => {
+  const end = { type: 'turn/end', seq: 4, time: 100, data: { turn: 2 } }
+  const scope = { sessionId: 'ada', turn: 1, calls: new Map() }
+  assert.deepEqual(rowsOf(end, scope), [])
+  const rows = rowsOf(end, { ...scope, stopOf: turn => turn === 2 ? 'A step did not run: the sandbox blocked it' : undefined })
+  assert.equal(rows.length, 1)
+  assert.deepEqual([rows[0].kind, rows[0].state, rows[0].msg, rows[0].turn], ['status', 'error', 'A step did not run: the sandbox blocked it', 2])
+})
+
+test('a permission stop reaches the phone as a status row: live, from the log, and on a reconnect page', async () => {
+  const stopOf = (id, turn) => (id === 's-omni-2' && turn === 1 ? 'x' : undefined)
+  const stopRows = rows => rows.filter(row => row.kind === 'status').map(row => [row.id, row.state, row.msg, row.turn])
+  const want = [['dsh:s-omni-2:7#stop', 'error', 'x', 1]]
+  const controller = fakeController(sessions())
+  const source = writableOf(controller, team(), { stopOf })
+  const w = watcher()
+  const handle = await source.watch('dsh:omni', w.listener)
+  assert.deepEqual(stopRows(w.events[0].rows), [])
+  controller.append('s-omni-2', event(7, 'turn/end', { turn: 1 }))
+  await settle(); await settle()
+  assert.deepEqual(stopRows(w.last('rows').rows), want)
+  assert.deepEqual(stopRows(await handle.backfill('dsh:s-omni-2:8', 10)), want)
+  handle.close()
+  source.close()
+  const data = sessions()
+  data['s-omni-2'].records.push(event(7, 'turn/end', { turn: 1 }), userAt(8, 'someone'), userAt(9, 'someone'))
+  data['s-omni-2'].window = 2
+  const paged = writableOf(fakeController(data), team(), { stopOf })
+  await paged.watch('dsh:omni', () => {})
+  const again = watcher()
+  await paged.watch('dsh:omni', again.listener, { after: 'dsh:s-omni-2:6' })
+  assert.equal(again.events[0].reset, false)
+  assert.deepEqual(stopRows(again.events[0].rows), want)
+  paged.close()
+})
+
+test('install hands the team’s stop lines to the phone', async (t) => {
+  const s = scope(t)
+  const data = sessions()
+  data['s-omni-2'].records.push(event(7, 'turn/end', { turn: 1 }))
+  const ctx = fakeContext({ services: { sessionController: fakeController(data) } })
+  s.defer(() => ctx.dispose())
+  install({ ...rtFor(ctx, s.home), stopLineOfTurn: (id, turn) => (id === 's-omni-2' && turn === 1 ? 'x' : undefined) })
+  let found = null
+  for (let i = 0; i < 200 && !found; i++) {
+    try { found = lstatSync(s.path) } catch { await new Promise(resolve => setTimeout(resolve, 10)) }
+  }
+  assert.ok(found?.isSocket(), 'the socket appears')
+  const c = s.client()
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  const snapshot = await c.until(line => line.channel === 1 && line.event.type === 'snapshot')
+  assert.deepEqual(snapshot.event.rows.filter(row => row.kind === 'status').map(row => [row.id, row.state, row.msg]), [['dsh:s-omni-2:7#stop', 'error', 'x']])
+  c.socket.destroy()
+})

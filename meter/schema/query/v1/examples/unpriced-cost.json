@@ -142,6 +142,24 @@
         ],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "acme-local-7b",
+          "calls": 5,
+          "tokens": {
+            "input": 40000,
+            "cache_read": 600000,
+            "cache_write_5m": 25000,
+            "cache_write_1h": 0,
+            "output": 18000,
+            "reasoning": 3000,
+            "unsplit": 0,
+            "total": 683000
+          },
+          "cost_usd": null
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "branch_window",

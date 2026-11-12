@@ -36,6 +36,7 @@ pub const MAX_BRANCHES: usize = 500;
 pub const MAX_BRANCH_BYTES: usize = 255;
 pub const MAX_NAMES_BYTES: usize = 65_536;
 pub const MAX_REPO_BYTES: usize = 512;
+pub const MAX_REPO_ALIASES: usize = 16;
 /// The whole envelope as written to stdout, its line feed included.
 pub const OUTPUT_CAP: usize = 458_752;
 /// A refusal keeps the leading names whose echo fits here.
@@ -50,6 +51,7 @@ pub const LABEL_CHARS: usize = 200;
 /// `unpriced_models` keeps the models with the most unpriced tokens, each name cut to this many
 /// bytes as JSON; `tokens_unpriced` still counts every one.
 pub const UNPRICED_MODELS_MAX: usize = 8;
+pub const MODELS_MAX: usize = 8;
 pub const MODEL_NAME_BYTES: usize = 40;
 /// A user's string quoted in an error message is cut to this many characters.
 const QUOTED_CHARS: usize = 64;
@@ -176,6 +178,7 @@ pub(crate) fn bounds(meta: &BTreeMap<String, String>, window: Window, now_ms: i6
 #[derive(Debug, Clone)]
 struct Request {
     repo: String,
+    repo_aliases: Vec<String>,
     window: Window,
     /// What a row is keyed by: the branch (default), the bot, or the task.
     by: By,
@@ -369,6 +372,8 @@ struct Echo {
     /// Present, and false, only when `repo` was cut to fit its bound (a refusal).
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_complete: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    repo_aliases: Vec<String>,
     window: &'static str,
     /// `bot` for a `--by bot` request; absent for branch rows.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -397,6 +402,8 @@ struct BranchRow {
     reason: Option<&'static str>,
     tokens: Option<TokensOut>,
     cost: Option<Cost>,
+    models: Vec<ModelOut>,
+    models_omitted: usize,
     token_precision: Option<&'static str>,
     attribution: Attribution,
     activity: Option<Activity>,
@@ -450,6 +457,18 @@ struct Cost {
     unpriced_models_omitted: usize,
 }
 
+/// One model's usage on a row (R1b, #1098): ordered by `tokens.total` descending, ties by
+/// `model` ascending. `cost_usd` is `None` (`null`) when none of the model's calls on the row
+/// is priced or reported (unknown, never 0).
+#[derive(Serialize, Clone)]
+struct ModelOut {
+    model: String,
+    calls: i64,
+    tokens: TokensOut,
+    #[serde(serialize_with = "usd")]
+    cost_usd: Option<f64>,
+}
+
 /// A bot row (RFC 0021 (d)): the attributed usage of one bot key in the repo and window.
 #[derive(Serialize)]
 struct BotRow {
@@ -463,6 +482,8 @@ struct BotRow {
     reason: Option<&'static str>,
     tokens: TokensOut,
     cost: Cost,
+    models: Vec<ModelOut>,
+    models_omitted: usize,
     token_precision: &'static str,
     attribution: Attribution,
     activity: Activity,
@@ -483,6 +504,8 @@ struct TaskRow {
     reason: Option<&'static str>,
     tokens: Option<TokensOut>,
     cost: Option<Cost>,
+    models: Vec<ModelOut>,
+    models_omitted: usize,
     token_precision: Option<&'static str>,
     attribution: Attribution,
     activity: Option<Activity>,
@@ -682,12 +705,20 @@ pub fn repo_ok(r: &str) -> bool {
             .all(|s| !s.is_empty() && !s.chars().any(|c| c.is_whitespace() || c == '\u{feff}'))
 }
 
-/// The request's hash: repo, window, the line `by <by>` for a non-branch request (it holds a
-/// space, which no branch can, so it never reads as a branch), then each branch, each followed by
-/// a line feed.
-fn request_sha256(repo: &str, window: &str, by: By, branches: &[String]) -> String {
+/// The request's hash: repo, each `alias <repo>` line, window, optional `by <by>`, then each
+/// branch, each followed by a line feed. The prefixed lines hold a space, which no window or
+/// branch can, so they are unambiguous. No aliases preserves the original hash.
+fn request_sha256(
+    repo: &str,
+    aliases: &[String],
+    window: &str,
+    by: By,
+    branches: &[String],
+) -> String {
     let mut h = Sha256::new();
+    let aliases: Vec<String> = aliases.iter().map(|a| format!("alias {a}")).collect();
     for part in std::iter::once(repo)
+        .chain(aliases.iter().map(String::as_str))
         .chain(std::iter::once(window))
         .chain(by.hash_line())
         .chain(branches.iter().map(String::as_str))
@@ -700,7 +731,14 @@ fn request_sha256(repo: &str, window: &str, by: By, branches: &[String]) -> Stri
 
 /// The request echoed back. A refusal keeps the leading names that fit in 4 KiB (each name
 /// counted as its JSON bytes plus a comma), cut at a whole name: at most 500, none past 255 bytes.
-fn echo(repo: &str, window: Window, by: By, branches: &[String], capped: bool) -> Echo {
+fn echo(
+    repo: &str,
+    aliases: &[String],
+    window: Window,
+    by: By,
+    branches: &[String],
+    capped: bool,
+) -> Echo {
     let mut kept = Vec::new();
     let mut used = 0;
     for b in branches {
@@ -729,24 +767,17 @@ fn echo(repo: &str, window: Window, by: By, branches: &[String], capped: bool) -
     Echo {
         repo: repo_echo,
         repo_complete,
+        repo_aliases: aliases.to_vec(),
         window: window.name(),
         by: by.echo(),
         branch_count: branches.len(),
         branches_complete: kept.len() == branches.len(),
         branches: kept,
-        request_sha256: request_sha256(repo, window.name(), by, branches),
+        request_sha256: request_sha256(repo, aliases, window.name(), by, branches),
     }
 }
 
-fn too_large_request(
-    repo: &str,
-    window: Window,
-    by: By,
-    branches: &[String],
-    message: String,
-    limit: usize,
-    needed: usize,
-) -> Refusal {
+fn too_large_request(echo: Echo, message: String, limit: usize, needed: usize) -> Refusal {
     let mut e = ErrorObj::new("request_too_large", message);
     e.limit_bytes = Some(limit);
     e.needed_bytes = Some(needed);
@@ -754,7 +785,7 @@ fn too_large_request(
         code: exit::USAGE,
         status: "usage",
         error: e,
-        echo: Some(echo(repo, window, by, branches, true)),
+        echo: Some(echo),
         store: None,
         machine: None,
     }
@@ -762,6 +793,7 @@ fn too_large_request(
 
 fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let mut repo: Option<String> = None;
+    let mut repo_aliases: Vec<String> = Vec::new();
     let mut window: Option<Window> = None;
     let mut contract: Option<u64> = None;
     let mut stale: Option<i64> = None;
@@ -783,6 +815,16 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
                         "--repo is given twice: one call per project",
                     )));
                 }
+            }
+            "--repo-alias" => {
+                let alias = value("--repo-alias", it.next())?;
+                if !repo_ok(&alias) {
+                    return Err(Box::new(Refusal::usage(format!(
+                        "--repo-alias takes host/owner/repo as the meter normalizes a remote, not {}",
+                        quoted(&alias)
+                    ))));
+                }
+                repo_aliases.push(alias);
             }
             "--branch" => branches.push(value("--branch", it.next())?),
             "--by" => {
@@ -882,14 +924,32 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             quoted(&repo)
         ))));
     }
+    repo_aliases.retain(|a| a != &repo);
+    let mut seen = BTreeSet::new();
+    repo_aliases.retain(|a| seen.insert(a.clone()));
+    for alias in &repo_aliases {
+        if alias.len() > MAX_REPO_BYTES {
+            return Err(Box::new(too_large_request(
+                echo(&repo, &[], window, by, &branches, true),
+                format!(
+                    "--repo-alias takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
+                    alias.len()
+                ),
+                MAX_REPO_BYTES,
+                alias.len(),
+            )));
+        }
+    }
+    if repo_aliases.len() > MAX_REPO_ALIASES {
+        return Err(Box::new(Refusal::usage(
+            "at most 16 --repo-alias values may be given",
+        )));
+    }
     if repo.len() > MAX_REPO_BYTES {
         // The defined refusal, echoed: its repo cut to fit (`repo_complete: false`), the request
         // still matched by its count and sha256.
         return Err(Box::new(too_large_request(
-            &repo,
-            window,
-            by,
-            &branches,
+            echo(&repo, &repo_aliases, window, by, &branches, true),
             format!(
                 "--repo takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
                 repo.len()
@@ -904,17 +964,14 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             branches.len()
         ));
         r.error.code = "too_many_branches";
-        r.echo = Some(echo(&repo, window, by, &branches, true));
+        r.echo = Some(echo(&repo, &repo_aliases, window, by, &branches, true));
         return Err(Box::new(r));
     }
     if let Some(long) = branches.iter().map(String::len).max()
         && long > MAX_BRANCH_BYTES
     {
         return Err(Box::new(too_large_request(
-            &repo,
-            window,
-            by,
-            &branches,
+            echo(&repo, &repo_aliases, window, by, &branches, true),
             format!("a branch name takes {long} bytes; the most one takes is {MAX_BRANCH_BYTES}"),
             MAX_BRANCH_BYTES,
             long,
@@ -923,10 +980,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let names: usize = branches.iter().map(String::len).sum();
     if names > MAX_NAMES_BYTES {
         return Err(Box::new(too_large_request(
-            &repo,
-            window,
-            by,
-            &branches,
+            echo(&repo, &repo_aliases, window, by, &branches, true),
             format!(
                 "the branch names take {names} bytes; the most one call takes is \
                  {MAX_NAMES_BYTES}"
@@ -946,13 +1000,14 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             code: exit::UNSUPPORTED_CONTRACT,
             status: "unsupported_contract",
             error: e,
-            echo: Some(echo(&repo, window, by, &branches, true)),
+            echo: Some(echo(&repo, &repo_aliases, window, by, &branches, true)),
             store: None,
             machine: None,
         }));
     }
     Ok(Request {
         repo,
+        repo_aliases,
         window,
         by,
         branches,
@@ -1116,6 +1171,7 @@ pub(crate) struct UsageRead {
     pub(crate) branch: Option<String>,
     pub(crate) harness: String,
     pub(crate) model: String,
+    pub(crate) events: i64,
     pub(crate) hour_ms: i64,
     pub(crate) tokens: TokensOut,
     pub(crate) total_only: bool,
@@ -1336,6 +1392,7 @@ struct TaskCall {
 impl TaskCall {
     fn parts(&self) -> CallParts<'_> {
         CallParts {
+            calls: 1,
             tokens: &self.tokens,
             class: self.class,
             branch_basis: self.branch_basis,
@@ -1421,18 +1478,23 @@ fn task_candidates(c: &Connection) -> rusqlite::Result<TaskCandidates> {
 /// The task-labelled calls of the repo in the window (RFC 0018 M3), read only from the evidence
 /// its task launches can name. The stored attribution stays the authority; the bound only keeps
 /// the read proportional to the tasks, not to the whole evidence table.
-fn task_calls(c: &Connection, repo: &str, from: i64, to: i64) -> rusqlite::Result<Vec<TaskCall>> {
+fn task_calls(
+    c: &Connection,
+    repos: &[&str],
+    from: i64,
+    to: i64,
+) -> rusqlite::Result<Vec<TaskCall>> {
     let TaskCandidates { sessions, cwds } = task_candidates(c)?;
     let mut kept: BTreeMap<i64, TaskCall> = BTreeMap::new();
     // Three arms, one count per evidence id: a call's own session, its parent's (a sub-agent or a
     // resumed child is tied through its parent, as the resolver ties it in ledger.rs), and its
     // start folder. Each arm is one indexed column.
     for chunk in sessions.chunks(TASK_CANDIDATE_CHUNK) {
-        read_task_calls(c, repo, from, to, TaskArm::Sessions(chunk), &mut kept)?;
-        read_task_calls(c, repo, from, to, TaskArm::Parents(chunk), &mut kept)?;
+        read_task_calls(c, repos, from, to, TaskArm::Sessions(chunk), &mut kept)?;
+        read_task_calls(c, repos, from, to, TaskArm::Parents(chunk), &mut kept)?;
     }
     for chunk in cwds.chunks(TASK_CANDIDATE_CHUNK) {
-        read_task_calls(c, repo, from, to, TaskArm::Cwds(chunk), &mut kept)?;
+        read_task_calls(c, repos, from, to, TaskArm::Cwds(chunk), &mut kept)?;
     }
     Ok(kept.into_values().collect())
 }
@@ -1449,7 +1511,7 @@ enum TaskArm<'a> {
 
 /// A task id the contract can print: not empty, no control character (no blank row, no row
 /// carrying an escape), and within the tag bound. Only that is checked; Genie's id shape is not.
-fn task_id_fits(task: &str) -> bool {
+pub(crate) fn task_id_fits(task: &str) -> bool {
     !task.is_empty() && !task.chars().any(char::is_control) && crate::ledger::tag_fits(task)
 }
 
@@ -1463,20 +1525,25 @@ fn placeholders(first: usize, n: usize) -> String {
 
 fn read_task_calls(
     c: &Connection,
-    repo: &str,
+    repos: &[&str],
     from: i64,
     to: i64,
     arm: TaskArm<'_>,
     kept: &mut BTreeMap<i64, TaskCall>,
 ) -> rusqlite::Result<()> {
-    let mut values: Vec<rusqlite::types::Value> =
-        vec![from.into(), to.into(), repo.to_string().into()];
+    let mut values: Vec<rusqlite::types::Value> = vec![from.into(), to.into()];
+    values.extend(
+        repos
+            .iter()
+            .map(|r| rusqlite::types::Value::Text((*r).into())),
+    );
+    let repo_list = placeholders(3, repos.len());
     // A call is tied to its launch by its own session or by its parent's (ledger.rs), so the
     // session hashes are matched against both columns. Matching only the own session drops a
     // parent-only call with no count and can hide a second checkout from the ambiguity rule.
     let predicate = match &arm {
         TaskArm::Sessions(sessions) | TaskArm::Parents(sessions) => {
-            let list = placeholders(4, sessions.len());
+            let list = placeholders(3 + repos.len(), sessions.len());
             for s in *sessions {
                 values.push(rusqlite::types::Value::Blob(s.clone()));
             }
@@ -1487,7 +1554,7 @@ fn read_task_calls(
             }
         }
         TaskArm::Cwds(ids) => {
-            let list = placeholders(4, ids.len());
+            let list = placeholders(3 + repos.len(), ids.len());
             for id in *ids {
                 values.push(rusqlite::types::Value::Integer(*id));
             }
@@ -1500,7 +1567,7 @@ fn read_task_calls(
            e.reported_usd, a.state, a.basis, a.bot, a.kind, a.role, a.squad, a.unrecorded,
            a.task, a.project, a.filled_branch
          FROM evidence e JOIN ev_dim d ON d.id = e.dim JOIN ev_actor a ON a.id = e.actor
-         WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2 AND d.repo = ?3
+         WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2 AND d.repo IN ({repo_list})
            AND a.state = 'attributed' AND a.task IS NOT NULL AND a.task <> ''
            AND a.project IS NOT NULL
            AND {predicate}"
@@ -1604,6 +1671,7 @@ fn read_task_calls(
 fn read(
     c: &Connection,
     repo: &str,
+    aliases: &[String],
     by: By,
     start: impl Fn(&BTreeMap<String, String>) -> (i64, i64),
 ) -> rusqlite::Result<Read> {
@@ -1643,18 +1711,24 @@ fn read(
     // Every row of the repo in the window, through `usage_repo_branch`: branch rows read the
     // branches named, and the actor counts (`actor_unattributed`, bot rows) the whole repo.
     let mut rows = Vec::new();
-    scan_usage(c, Some(&[repo]), from, to, evidence_from, &mut |r| {
+    let repos: Vec<&str> = std::iter::once(repo)
+        .chain(aliases.iter().map(String::as_str))
+        .collect();
+    scan_usage(c, Some(&repos), from, to, evidence_from, &mut |r| {
         rows.push(r);
     })?;
     let repo_seen = rows.iter().any(|r| r.tokens.total > 0)
         || c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM usage WHERE repo = ?1)",
-            [repo],
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM usage WHERE repo IN ({}))",
+                placeholders(1, repos.len())
+            ),
+            rusqlite::params_from_iter(&repos),
             |r| r.get::<_, bool>(0),
         )?;
     // The task rows read per-call evidence (RFC 0018 M3): the hourly rollups carry no task.
     let task_calls = if by == By::Task {
-        task_calls(c, repo, from, to)?
+        task_calls(c, &repos, from, to)?
     } else {
         Vec::new()
     };
@@ -1699,7 +1773,7 @@ pub(crate) fn scan_usage(
            actor_state, basis, branch_basis, ",
     );
     sql.push_str(if reason { "reason" } else { "NULL" });
-    sql.push_str(", bot, kind, role, squad, unrecorded FROM usage WHERE ");
+    sql.push_str(", bot, kind, role, squad, unrecorded, events FROM usage WHERE ");
     if let Some(rs) = repos.filter(|rs| !rs.is_empty()) {
         let names: Vec<String> = (1..=rs.len()).map(|i| format!("?{i}")).collect();
         sql.push_str(&format!("repo IN ({}) AND ", names.join(", ")));
@@ -1785,6 +1859,7 @@ pub(crate) fn scan_usage(
             branch,
             harness,
             model: r.get(3)?,
+            events: nonneg(r.get(23)?).max(1),
             hour_ms,
             tokens: t,
             total_only: r.get::<_, String>(12)? == "total_only",
@@ -1842,6 +1917,7 @@ impl TokensOut {
 /// The fields one call contributes to an accumulator, whichever source it came from: an hourly
 /// rollup (RFC 0018 (a)) or a per-call evidence row (`--by task`, RFC 0018 M3).
 struct CallParts<'a> {
+    calls: i64,
     tokens: &'a TokensOut,
     class: Class,
     branch_basis: BranchBasis,
@@ -1855,6 +1931,7 @@ struct CallParts<'a> {
 impl UsageRead {
     fn parts(&self) -> CallParts<'_> {
         CallParts {
+            calls: self.events.max(1),
             tokens: &self.tokens,
             class: self.class,
             branch_basis: self.branch_basis,
@@ -1865,6 +1942,14 @@ impl UsageRead {
             total_only: self.total_only,
         }
     }
+}
+
+#[derive(Default)]
+struct ModelAcc {
+    calls: i64,
+    tokens: TokensOut,
+    usd: f64,
+    tokens_priced: i64,
 }
 
 /// What a branch's usage in the window adds up to.
@@ -1881,6 +1966,7 @@ struct Acc {
     tokens_reported: i64,
     tokens_unpriced: i64,
     unpriced: BTreeMap<String, i64>,
+    models: BTreeMap<String, ModelAcc>,
     actor: ActorOut,
 }
 
@@ -1917,6 +2003,9 @@ impl Acc {
         if t.total == 0 {
             return;
         }
+        let m = self.models.entry(r.model.to_string()).or_default();
+        m.calls = m.calls.saturating_add(r.calls.max(1));
+        m.tokens.add(t);
         self.tokens.add(t);
         self.actor.count(r.class, r.branch_basis, t.total);
         self.hours.insert(r.hour_ms);
@@ -1929,11 +2018,16 @@ impl Acc {
         if let Some(u) = r.reported_usd {
             self.usd_reported += u;
             self.tokens_reported = self.tokens_reported.saturating_add(t.total);
+            m.usd += u;
+            m.tokens_priced = m.tokens_priced.saturating_add(t.total);
         } else if let Some(p) = prices.get(r.model) {
             let split = split_total(t);
             if split > 0 {
-                self.usd_estimated += p.cost(&t.as_event_tokens());
+                let est = p.cost(&t.as_event_tokens());
+                self.usd_estimated += est;
                 self.tokens_priced = self.tokens_priced.saturating_add(split);
+                m.usd += est;
+                m.tokens_priced = m.tokens_priced.saturating_add(split);
             }
             self.tokens_unpriced = self.tokens_unpriced.saturating_add(t.unsplit);
         } else {
@@ -1941,6 +2035,28 @@ impl Acc {
             let n = self.unpriced.entry(r.model.to_string()).or_default();
             *n = n.saturating_add(t.total);
         }
+    }
+
+    fn models(&self) -> (Vec<ModelOut>, usize) {
+        let mut list: Vec<(&String, &ModelAcc)> = self.models.iter().collect();
+        list.sort_by(|a, b| {
+            b.1.tokens
+                .total
+                .cmp(&a.1.tokens.total)
+                .then_with(|| a.0.cmp(b.0))
+        });
+        let omitted = list.len().saturating_sub(MODELS_MAX);
+        let out = list
+            .into_iter()
+            .take(MODELS_MAX)
+            .map(|(name, m)| ModelOut {
+                model: json_bounded(name, MODEL_NAME_BYTES),
+                calls: m.calls,
+                tokens: m.tokens,
+                cost_usd: (m.tokens_priced > 0).then_some(m.usd),
+            })
+            .collect();
+        (out, omitted)
     }
 
     fn cost(&self) -> Cost {
@@ -2153,7 +2269,16 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         Ok(r) => r,
         Err(r) => return refuse(*r),
     };
-    let echo_capped = || Some(echo(&req.repo, req.window, req.by, &req.branches, true));
+    let echo_capped = || {
+        Some(echo(
+            &req.repo,
+            &req.repo_aliases,
+            req.window,
+            req.by,
+            &req.branches,
+            true,
+        ))
+    };
     let failure = |code: u8,
                    status: &'static str,
                    error: ErrorObj,
@@ -2238,7 +2363,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         let b = bounds(meta, req.window, ctx.now_ms);
         (b.start, b.end)
     };
-    let snap = match read(&conn, &req.repo, req.by, window_of) {
+    let snap = match read(&conn, &req.repo, &req.repo_aliases, req.by, window_of) {
         Ok(Read::Snapshot(s)) => s,
         Ok(Read::Absent) => return refuse(absent(failure)),
         Ok(Read::Version(v)) => {
@@ -2479,7 +2604,8 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                     } else {
                         ("measured", None)
                     };
-                    Row::Bot(Box::new(BotRow {
+                    let (models, models_omitted) = acc.models();
+                    let mut row = BotRow {
                         unrecorded: key.unrecorded(),
                         bot: key.bot,
                         kind: key.kind,
@@ -2490,6 +2616,8 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                         reason,
                         tokens: acc.tokens,
                         cost: acc.cost(),
+                        models,
+                        models_omitted,
                         token_precision: acc.precision(),
                         attribution: Attribution {
                             precision: "actor_interval",
@@ -2500,7 +2628,12 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                         },
                         activity: acc.activity(),
                         incomplete_sources: incomplete.clone(),
-                    }))
+                    };
+                    while json(&row).len() > ROW_BYTES && !row.models.is_empty() {
+                        row.models.pop();
+                        row.models_omitted += 1;
+                    }
+                    Row::Bot(Box::new(row))
                 })
                 .collect()
         }
@@ -2550,7 +2683,14 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         }),
         actor_unattributed: Some(actor_unattributed),
         pricing: Some(pricing),
-        query: Some(echo(&req.repo, req.window, req.by, &req.branches, false)),
+        query: Some(echo(
+            &req.repo,
+            &req.repo_aliases,
+            req.window,
+            req.by,
+            &req.branches,
+            false,
+        )),
         rows,
     };
 
@@ -2688,13 +2828,16 @@ fn branch_rows(req: &Request, by_branch: &BTreeMap<&str, Acc>, c: &BranchCtx<'_>
                     ),
                 )
             };
-            Row::Branch(Box::new(BranchRow {
+            let (models, models_omitted) = if found { acc.models() } else { (Vec::new(), 0) };
+            let mut row = BranchRow {
                 branch: branch.to_string(),
                 requested,
                 state,
                 reason,
                 tokens,
                 cost,
+                models,
+                models_omitted,
                 token_precision: precision,
                 attribution: Attribution {
                     precision: "branch_window",
@@ -2705,7 +2848,12 @@ fn branch_rows(req: &Request, by_branch: &BTreeMap<&str, Acc>, c: &BranchCtx<'_>
                 },
                 activity,
                 incomplete_sources: c.incomplete.to_vec(),
-            }))
+            };
+            while json(&row).len() > ROW_BYTES && !row.models.is_empty() {
+                row.models.pop();
+                row.models_omitted += 1;
+            }
+            Row::Branch(Box::new(row))
         })
         .collect()
 }
@@ -2744,6 +2892,11 @@ fn task_rows(
             let token_precision = e.acc.precision();
             let activity = e.acc.activity();
             let actor = e.acc.actor;
+            let (models, models_omitted) = if found {
+                e.acc.models()
+            } else {
+                (Vec::new(), 0)
+            };
             let mut row = TaskRow {
                 task,
                 actors: if found {
@@ -2756,6 +2909,8 @@ fn task_rows(
                 reason,
                 tokens: found.then_some(e.acc.tokens),
                 cost: found.then_some(cost),
+                models,
+                models_omitted,
                 token_precision: found.then_some(token_precision),
                 attribution: Attribution {
                     precision: "task_interval",
@@ -2773,9 +2928,13 @@ fn task_rows(
         .collect()
 }
 
-/// A row never grows past RFC 0018's row bound: the trailing actor keys are left out (and
-/// counted) rather than cut, so two bots never read as one and a reader shows "at least".
+/// Keep RFC 0018's row bound by omitting trailing models first, then actor keys. Every
+/// omission is counted, so two bots never read as one and a reader shows "at least".
 fn fit_task_actors(row: &mut TaskRow) {
+    while json(row).len() > ROW_BYTES && !row.models.is_empty() {
+        row.models.pop();
+        row.models_omitted += 1;
+    }
     while json(row).len() > ROW_BYTES && !row.actors.is_empty() {
         row.actors.pop();
         row.actors_omitted += 1;
@@ -2946,7 +3105,7 @@ mod tests {
                    (3, 3000, 1, 1, x'03', x'09', 1, 10);",
             )
             .unwrap();
-        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        let calls = task_calls(&store.conn, &["example.com/acme/widgets"], 0, 10_000).unwrap();
         assert_eq!(
             calls.len(),
             2,
@@ -2963,7 +3122,7 @@ mod tests {
                    ('claude', x'02', 'a', 'session');",
             )
             .unwrap();
-        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        let calls = task_calls(&store.conn, &["example.com/acme/widgets"], 0, 10_000).unwrap();
         assert_eq!(calls.len(), 2, "one count per evidence id");
         assert_eq!(calls.iter().map(|c| c.tokens.total).sum::<i64>(), 20);
     }
@@ -3025,6 +3184,18 @@ mod tests {
                 unpriced_models: (0..UNPRICED_MODELS_MAX).map(|i| format!("m{i}")).collect(),
                 unpriced_models_omitted: 0,
             }),
+            models: (0..MODELS_MAX)
+                .map(|i| ModelOut {
+                    model: format!("m{i}"),
+                    calls: 1,
+                    tokens: TokensOut {
+                        total: 1,
+                        ..TokensOut::default()
+                    },
+                    cost_usd: None,
+                })
+                .collect(),
+            models_omitted: 0,
             token_precision: Some("exact"),
             attribution: Attribution {
                 precision: "task_interval",
@@ -3044,6 +3215,8 @@ mod tests {
         let all: Vec<String> = row.actors.iter().map(|a| a.bot.clone()).collect();
         let total = row.tokens.as_ref().unwrap().total;
         fit_task_actors(&mut row);
+        assert!(row.models.is_empty(), "models are omitted before actors");
+        assert_eq!(row.models_omitted, MODELS_MAX);
         assert!(
             json(&row).len() <= ROW_BYTES,
             "a task row of {} bytes",
