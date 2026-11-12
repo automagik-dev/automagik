@@ -17,23 +17,14 @@
 // turn keeps running in its group Session, and what it ends with is posted to the group,
 // where the member that asked for it answers.
 import { randomUUID } from 'node:crypto'
-<<<<<<< HEAD
 import { refusal } from './refusal.js'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import { GROUP_LINE_READ, ROOM_REPLY_TIMEOUT_MS, ROOM_STEP_GAP_MS, ROOM_WORK_GRACE_MS, SLOW_TEAM_TOOLS, SOURCE_KIND, TEAM_TOOLS, TEXT_KEPT } from './constants.js'
-=======
-import { readFileSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { GROUP_LINE_READ, LATE_ANSWER, ROOM_IDLE_RELAY_LIMIT, ROOM_REPLY_TIMEOUT_MS, ROOM_STEP_GAP_MS, ROOM_WORK_GRACE_MS, SOURCE_KIND, TEAM_TOOLS, TEXT_KEPT } from './constants.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
+import { GROUP_LINE_READ, LATE_ANSWER, ROOM_IDLE_RELAY_LIMIT, ROOM_REPLY_TIMEOUT_MS, ROOM_STEP_GAP_MS, ROOM_WORK_GRACE_MS, SLOW_TEAM_TOOLS, SOURCE_KIND, TEAM_TOOLS, TEXT_KEPT } from './constants.js'
 import { escapeRegExp, headOf, splitRef, textOf } from './text.js'
 import { viaOf } from '../shared/im-platforms.js'
 import { mentionSpans, speakerOf } from '../shared/mentions.js'
@@ -45,6 +36,10 @@ const ROOM_LOG_MAX = 60
 const ROOM_FIRST_LOOK = 12
 const ROOM_DELTA_MAX = 24
 const ROOM_EARLIER_MAX = 8
+
+// The group limit follows the upstream member-count rule unless a room overrides it.
+export const defaultRelayLimit = room => 3 * (room?.members?.length ?? 0)
+const relayLimit = room => room.relayLimit ?? defaultRelayLimit(room)
 
 // Short ack/thanks/closing phrases with no new content, used by the 0-tool idle loop guard.
 const IDLE_ACK_WORDS = "收到|好的|好|明白|明白了|了解|了解了|没问题|谢谢|多谢|感谢|辛苦了|辛苦|不客气|不用谢|完毕|完成|好嘞|行|ok|okay|got\\s+it|understood|noted|thanks|thank\\s+you|you\\s+are\\s+welcome|you're\\s+welcome|welcome|np|no\\s+problem|roger|ack|done|all\\s+good|sounds\\s+good"
@@ -421,7 +416,6 @@ export function install(rt) {
     }
     room.sessions[member.id] = id
     rt.groupOwners.set(id, { botId: member.id, roomId: room.id })
-<<<<<<< HEAD
     // Once more now that a change of level reaches it: one picked while the first apply
     // ran went only to the Sessions the group had then.
     try {
@@ -459,17 +453,6 @@ export function install(rt) {
         }
       }
     }
-=======
-    delete room.seen[member.id]
-    const ref = await rt.desiredModel(member)
-    if (ref !== undefined) {
-      const effort = await rt.desiredEffort(member, ref)
-      await rt.selectSessionModel(id, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
-        .catch(error => rt.warn('omni-ui: model for %s in %s not applied: %s', member.name, room.name, error))
-    }
-    await rt.applyPermission(member, id, room)
-      .catch(error => rt.warn('omni-ui: permission for %s in %s not applied: %s', member.name, room.name, error))
->>>>>>> vendor/ds-bot-0.3.6-prepared
     await rt.save()
     // The Session was resolved before the group owned it, so its scoped tools land now.
     await rt.resolveAgent(id)
@@ -940,11 +923,7 @@ export function install(rt) {
       const content = Array.isArray(message.content) ? message.content : []
       const text = textOf(content)
       if (text === '' || content.some(block => block?.type !== 'text') || text.includes('dsh-session:')) break
-<<<<<<< HEAD
       lines.push({ id: message.id, text, exchangeId: message.source?.exchangeId })
-=======
-      lines.push({ id: message.id, text, ...(viaOf(message.source) ? { via: viaOf(message.source) } : {}) })
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
     return lines
   })
@@ -1019,96 +998,7 @@ export function install(rt) {
         const note = named.includes(peer) ? `${member.name} mentioned you` : all ? `${member.name} called everyone` : `${member.name} posted in the group`
         parked.push({ id: peer.id, name: peer.name, note, by: member.id, idle: true })
       }
-<<<<<<< HEAD
-      if (slot.origin === 'bot') {
-        // The group's one guard: Bots calling each other can go on only so long
-        // without the user. Past the limit the call is parked, not dropped — the
-        // user releases it by writing here or pressing Continue.
-        if ((room.relays ?? 0) >= relayLimit(room)) {
-          slot.status = 'paused'
-          const paused = (room.paused ??= [])
-          if (!paused.some(entry => entry.id === slot.id)) {
-            paused.push({
-              id: slot.id, name: slot.name,
-              ...(slot.note !== undefined ? { note: slot.note } : {}),
-              ...(slot.by !== undefined ? { by: slot.by } : {}),
-            })
-          }
-          if (!(round.parked ??= []).includes(slot.name)) round.parked.push(slot.name)
-          continue
-        }
-        room.relays = (room.relays ?? 0) + 1
-      }
-      slot.status = 'speaking'
-      round.speaking = member.id
-      let session
-      try {
-        session = await groupSessionFor(room, member)
-      } catch (error) {
-        rt.warn('omni-ui: group Session for %s in %s failed: %s', member.name, room.name, error)
-        round.speaking = null
-        slot.status = 'failed'
-        round.failed.push(member.name)
-        round.replies.push({ kind: 'failed', botId: member.id, name: member.name, color: member.color, code: error?.levelNotSet === true ? 'PERMISSION' : 'SESSION', text: String(error?.message ?? error).slice(0, 300), time: Date.now() })
-        continue
-      }
-      if (session === undefined) {
-        round.speaking = null
-        slot.status = 'left'
-        continue
-      }
-      await loadGroupLines(room)
-      const prompt = roomPrompt(room, member, round)
-      round.shown?.push(member.id)
-      const text = session.brief === undefined ? prompt.text : `${session.brief}\n\n${prompt.text}`
-      const said = []
-      const startedAt = Date.now()
-      const reply = await roomTurn(room, member, session.id, { text, files: prompt.files }, slot.note ?? 'your turn', signal, round, slot.by, said)
-      round.speaking = null
-      for (const stop of rt.stopsIn?.(session.id, startedAt) ?? []) {
-        round.replies.push({ kind: 'permission-stop', botId: member.id, name: member.name, color: member.color, why: stop.why, count: stop.count, time: stop.last })
-      }
-      const final = typeof reply === 'string' && !isPass(reply) ? reply : undefined
-      if (reply?.failure !== undefined) {
-        // Not a pass: the user sees why the member is silent, and the round goes on.
-        slot.status = 'failed'
-        round.failed.push(member.name)
-        const { code, status, message } = reply.failure
-        round.replies.push({ kind: 'failed', botId: member.id, name: member.name, color: member.color, code, ...(status ? { status } : {}), text: message, time: Date.now() })
-      } else if (reply?.approval) {
-        // The member's turn goes on in the background and posts when it ends.
-        slot.status = 'waiting-approval'
-        round.replies.push({ kind: 'approval', botId: member.id, name: member.name, color: member.color, time: Date.now() })
-      } else if (reply?.working) {
-        slot.status = 'working'
-        round.replies.push({ kind: 'working', botId: member.id, name: member.name, color: member.color, time: Date.now() })
-      } else if (final !== undefined || (typeof reply === 'string' && said.length > 0)) {
-        slot.status = 'posted'
-        if (final !== undefined) postInRound(room, round, member, final, Date.now() - startedAt)
-      } else {
-        slot.status = typeof reply === 'string' ? 'passed' : 'missed'
-        round.passed.push(member.name)
-        if (reply?.missed) {
-          round.replies.push({ kind: 'missed', botId: member.id, name: member.name, color: member.color, time: Date.now() })
-          // The round moved on without this member: the log shows the call and then
-          // silence, which reads as a lost message. The group is told the baton was
-          // dropped, and what brings the member back.
-          appendRoom(room, { who: 'Omni', kind: 'notice', reason: 'missed', names: [member.name], minutes: Math.round(ROOM_REPLY_TIMEOUT_MS / 60000) })
-        }
-      }
-      const spoken = final === undefined ? said : [...said, final]
-      if (spoken.length === 0) continue
-      // Only the admin's "@all" calls everyone, so a member cannot set off a storm.
-      const leads = rt.isAdminOf(room, member.id)
-      const everyone = room.members.map(rt.botOf).filter(Boolean)
-      const others = everyone.filter(other => other.id !== member.id)
-      const { all, found: named } = mentionsIn(spoken.join('\n\n'), everyone)
-      const found = named.filter(other => other.id !== member.id)
-      const callees = leads && all ? [...found, ...others.filter(other => !found.includes(other))] : found
-      callMembers(round, index, callees, `${member.name} mentioned you`, member.id, 'bot')
-=======
       room.paused = parked
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
     announceRoomIdlePaused(room, round, member, callees)
     return true
@@ -1190,7 +1080,6 @@ export function install(rt) {
     // An answer that came, or is still coming, means the round is not left silent.
     const answered = round.slots.some(slot => ['posted', 'working', 'waiting-approval'].includes(slot.status))
     if (alone && !answered) {
-<<<<<<< HEAD
       appendRoom(room, { who: 'Omni', kind: 'notice', reason: 'admin-passed', names: [round.soleAdmin.name] })
       // The round the user watched shows the same notice as one line of its replies.
       round.replies.push({ kind: 'admin-passed', botId: round.soleAdmin.id, name: round.soleAdmin.name, color: round.soleAdmin.color, time: Date.now() })
@@ -1202,9 +1091,6 @@ export function install(rt) {
       const limit = relayLimit(room)
       appendRoom(room, { who: 'Omni', kind: 'notice', reason: 'paused', names: round.parked, limit })
       round.replies.push({ kind: 'paused', names: round.parked, count: limit, time: Date.now() })
-=======
-      say(room, { who: 'Omni', kind: 'notice', reason: 'admin-passed', names: [round.soleAdmin.name], about: round.soleAdmin.id })
->>>>>>> vendor/ds-bot-0.3.6-prepared
       await rt.save()
     }
   }
@@ -2057,7 +1943,6 @@ export function install(rt) {
   }
   rt.greetRoom = greetRoom
 
-<<<<<<< HEAD
   // The Continue of a group paused at its relay limit: the parked calls run in a
   // round of their own, opened by the same relay a user message opens.
   async function continueRoom(roomId) {
@@ -2075,8 +1960,6 @@ export function install(rt) {
   }
   rt.continueRoom = continueRoom
 
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
   async function reportRound(room, post, round) {
     const lines = round.rows.filter(row => row.kind === undefined).map(row => `${row.name}: ${row.text}`)
     const waiting = round.rows.filter(row => row.kind === 'approval').map(row => row.name)

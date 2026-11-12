@@ -77,7 +77,6 @@ export function install(rt) {
   // `deferred`: a request the Bot already read mid-turn, handed back to answer in a
   // turn of its own; its exchange was recorded when it first arrived. `resumed` and
   // `retried` carry on a turn that a restart cut off or that wrote its tool call as
-<<<<<<< HEAD
   // text (resume.js, turns.js), and `resent` is a message a shutdown cancelled; their
   // exchange is recorded already too. `askedBy` is the member whose @mention called a
   // group turn (groups.js). `fromRoomId`: the group whose Session the sender wrote
@@ -87,18 +86,6 @@ export function install(rt) {
   // the work (handoffs.js) a result that came back goes on with. `merged`: a request
   // that takes in an earlier one its recipient had not read, under that one's exchange.
   async function deliver({ fromId, toId, sessionId, text, role, replyTo, roomId, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, merged = false, askedBy, fromRoomId, files = [], length, work, taskSessionId }) {
-=======
-  // text (resume.js, turns.js); their exchange is recorded already too. `resent` is
-  // a message a shutdown cancelled; its first send may not have been recorded.
-  // `askedBy` is the member whose @mention called a group turn (groups.js).
-  // `fromRoomId`: the group whose Session the sender wrote from; the reply goes back
-  // to that Session (turns.js). `images` and `files` go along as image and file blocks,
-  // which DSH projects for the recipient's model and tools. `length`: the whole message's
-  // length when it went as a file (attachLong). `work`: the work (handoffs.js) a
-  // result that came back goes on with. `merged`: a request that takes in an earlier
-  // one its recipient had not read, under that one's exchange.
-  async function deliver({ fromId, fromName: senderName, toId, sessionId, text, role, replyTo, roomId, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, merged = false, abandoned = false, recordExchange = true, askedBy, fromRoomId, images = [], files = [], length, work }) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const from = rt.botOf(fromId)
     const to = rt.botOf(toId)
     if (to === undefined) throw new Error(`Unknown Bot ${toId}`)
@@ -122,11 +109,7 @@ export function install(rt) {
       ...(retried ? { retried: true } : {}),
       ...(askedBy ? { askedBy } : {}),
       ...(fromRoomId ? { senderRoomId: fromRoomId } : {}),
-<<<<<<< HEAD
       ...(taskSessionId ? { taskSessionId } : {}),
-=======
-      ...(abandoned ? { abandoned: true } : {}),
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
     const targetSessionId = sessionId ?? rt.chatOf(toId)
     // On disk before it goes out: a message the book could not keep is not sent, so none is

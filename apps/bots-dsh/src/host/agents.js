@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 // DSH bots: plain dsh entries listed under the Bots but not Bots. The user makes any number,
 // each with a name, a project folder (`workDir`, else the team workspace) and a DSH agent
 // preset (`profile`, else DSH's default). Their Sessions are ordinary root Sessions there,
@@ -29,13 +28,6 @@ const TASK_SUMMARY_MAX = 600
 
 export const DSH_BOT = 'dsh'
 export const TASKS = 'tasks'
-=======
-// The DSH Agent: a team's one plain dsh entry, listed beside the Bots but not one of
-// them. Its Sessions are ordinary root Sessions in the Omni workspace, so they get
-// the whole dsh conversation surface and none of the team tools.
-import { randomUUID } from 'node:crypto'
-import { AGENT_NAME, AGENT_SESSION_TITLE_MAX } from './constants.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 export function install(rt) {
   const { ctx, state } = rt
@@ -97,7 +89,6 @@ export function install(rt) {
   // The DSH bot or the tasks record a Session belongs to; Bot and group Sessions get undefined.
   const agentOf = sessionId => state.agents[sessionIndex.get(sessionId)]
 
-<<<<<<< HEAD
   // A DSH bot or task Session must not offer the team tools: its agent sees only the
   // global dsh surface minus this plugin's registrations. A Session whose deny
   // has not landed yet (schemas not up, restrict hook missing, a transient
@@ -171,8 +162,6 @@ export function install(rt) {
       .catch(error => rt.warn('omni-ui: tool restrict on agent/created failed: %s', error))
   })
 
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const writeCheck = () => {
     const readOnly = rt.readOnly()
     if (readOnly !== undefined) throw refusal(readOnly)
@@ -188,7 +177,6 @@ export function install(rt) {
   // A Session of a DSH bot starts in its folder with its preset; a task's comes from the caller.
   async function createAgentSession(agentId, workspaceId, options = {}, creation) {
     writeCheck()
-<<<<<<< HEAD
     let agent = record(agentId)
     if (agent.kind === DSH_BOT) {
       if (agent.workDir !== undefined && !(await rt.isFolder(agent.workDir))) throw refusal(`The folder ${agent.workDir} of ${agent.name} is gone. Pick another in its settings.`)
@@ -233,17 +221,6 @@ export function install(rt) {
     await rt.save({ required: creation !== undefined })
     // agent/created fired before the session joined the index, so restrict again now.
     await restrictTeamTools(await rt.resolveAgent(sessionId))
-=======
-    const agent = record(agentId)
-    // A known workspace id wins (the Agent's latest Session may live outside the
-    // team workspace after a workspace switch); anything else gets the team's own.
-    const target = typeof workspaceId === 'string' && ctx.workspaceRegistry.get(workspaceId)
-      ? workspaceId
-      : await rt.ensureWorkspace()
-    const { sessionId } = await ctx.sessionController.create({ workspaceId: target })
-    agent.sessions.push(sessionId)
-    await rt.save()
->>>>>>> vendor/ds-bot-0.3.6-prepared
     return sessionId
   }
 

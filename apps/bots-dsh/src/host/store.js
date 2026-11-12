@@ -1,7 +1,6 @@
 // Store: the saved team (state.json), its migrations, the lock that keeps a second dsh
 // host on the same data from writing it, and the indexes that map a Session to the Bot
 // or group chat it belongs to.
-<<<<<<< HEAD
 import { createHash } from 'node:crypto'
 import { constants, mkdirSync, statSync } from 'node:fs'
 import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
@@ -15,12 +14,6 @@ const COMPATIBLE_VERSIONS = [LEGACY_VERSION, 1, STATE_VERSION]
 import { join } from 'node:path'
 import { piAiClaudeOf } from './claude-models.js'
 import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, TEXT_KEPT } from './constants.js'
-=======
-import { copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
-import { mkdir, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, SECTION_COLORS, SECTION_NAME_MAX, TEXT_KEPT } from './constants.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { replaceFile } from './files.js'
 import { homeLock } from './home-lock.js'
 import { GENIE_CLAY, shippedPet, shipsPet } from './pets.js'
@@ -35,13 +28,8 @@ export const own = (table, key) => (table != null && Object.hasOwn(table, key) ?
 export function install(rt) {
   const { ctx, home, statePath } = rt
 
-<<<<<<< HEAD
   /** @type {{version:2, workspaceId?:string, mainBotIds:string[], bots:Record<string,any>, rooms:Record<string,any>, agents:Record<string,any>, capabilities:{items:Record<string,any>}, exchanges:any[], exchangeTurns:Record<string,number[]>, revision:number}} */
   const state = { version: STATE_VERSION, mainBotIds: [], bots: {}, rooms: {}, agents: {}, capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, prefs: {}, switching: {}, revision: 0 }
-=======
-  /** @type {{version:2, workspaceId?:string, mainBotIds:string[], bots:Record<string,any>, privateArchives:any[], rooms:Record<string,any>, agents:Record<string,any>, sections:any[], capabilities:{items:Record<string,any>}, exchanges:any[], exchangeTurns:Record<string,number[]>, revision:number}} */
-  const state = { version: 2, mainBotIds: [], bots: {}, privateArchives: [], rooms: {}, agents: {}, sections: [], capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, closedCards: {}, prefs: {}, switching: {}, revision: 0 }
->>>>>>> vendor/ds-bot-0.3.6-prepared
   let loaded = null
   // Whether `state` is the team as its file has it (teamLoaded).
   let teamRead = false
@@ -90,7 +78,6 @@ export function install(rt) {
     return `The Bot team in ${home} is open in another dsh (Web or Desktop, ${where}). This window shows the team but cannot change it; close the other one and reload.`
   }
 
-<<<<<<< HEAD
   // A file this host cannot read is copied aside byte for byte before anything can rewrite
   // it, so the person keeps the original bytes; a failed copy keeps the team read-only.
   // The name is the content's hash, so a restart that sees the same corrupt bytes finds and
@@ -141,14 +128,6 @@ export function install(rt) {
     let contents
     try {
       contents = await readFile(statePath)
-=======
-  // Synchronous on purpose: the saved team and the session indexes built from it
-  // exist before the first tool or shell env call can resolve a Session.
-  const readFileState = () => {
-    let contents
-    try {
-      contents = readFileSync(statePath, 'utf8')
->>>>>>> vendor/ds-bot-0.3.6-prepared
     } catch (error) {
       seen = stamp()
       if (error?.code === 'ENOENT') {
@@ -164,7 +143,6 @@ export function install(rt) {
     try {
       parsed = JSON.parse(contents.toString('utf8'))
     } catch (error) {
-<<<<<<< HEAD
       return setAside(error, contents)
     }
     // A top level that is not a plain object is corrupt, not the format before the stamp:
@@ -191,31 +169,12 @@ export function install(rt) {
     stuck = version !== undefined && version > STATE_VERSION
       ? 'saved by a newer Omni; update Omni'
       : `saved by an Omni this version cannot read (format ${JSON.stringify(raw)?.slice(0, 24)})`
-=======
-      const backup = `${statePath}.broken-${Date.now()}`
-      try {
-        copyFileSync(statePath, backup)
-        stuck = undefined
-        warn('omni-ui: unreadable state %s: %s; backed up as %s', statePath, error, backup)
-      } catch (copyError) {
-        stuck = copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
-        warn('omni-ui: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
-      }
-      return undefined
-    }
-    if (parsed?.version === undefined || [0, 1, 2].includes(parsed?.version)) {
-      stuck = undefined
-      return parsed
-    }
-    stuck = 'saved by a newer Omni; update Omni'
->>>>>>> vendor/ds-bot-0.3.6-prepared
     return undefined
   }
 
   // Fill `state` from the saved file and bring an older team up to date. Returns the
   // groups whose Session titles still need the new name.
   const adopt = (parsed) => {
-<<<<<<< HEAD
     // Until the end of this: a file that could not be read, or was set aside as corrupt,
     // leaves an empty team in memory that is not the saved one.
     teamRead = false
@@ -233,19 +192,6 @@ export function install(rt) {
     if (holder !== undefined) rt.dropAutoMarks()
     // The single DSH Agent of older teams splits into a DSH bot and the tasks record (agents.js).
     if (rt.migrateAgents?.()) migrated = true
-=======
-    lockEpoch += 1
-    const hadCapabilities = parsed !== null && parsed !== undefined && Object.hasOwn(parsed, 'capabilities')
-    for (const key of Object.keys(state)) delete state[key]
-    Object.assign(state, JSON.parse(EMPTY), parsed ?? {})
-    state.version = 2
-    state.prefs ??= {}
-    // Teams saved before the DSH Agent existed carry no `agents`; corrupt values reset.
-    if (state.agents === null || typeof state.agents !== 'object' || Array.isArray(state.agents)) state.agents = {}
-    // `computer` is the computer-use switch; absent or corrupt means off.
-    if (state.computer === null || typeof state.computer !== 'object' || Array.isArray(state.computer)) state.computer = {}
-    let migrated = !hadCapabilities || parsed?.version !== 2
->>>>>>> vendor/ds-bot-0.3.6-prepared
     if (state.capabilities === null || typeof state.capabilities !== 'object' || Array.isArray(state.capabilities)) {
       state.capabilities = { items: {} }
       migrated = true
@@ -585,7 +531,6 @@ export function install(rt) {
     indexSessions()
     // A reading host keeps the file's revision, so its window does not skip the next change.
     if (!writable()) return required ? Promise.reject(new Error(`This host cannot save the Bot team: ${readOnly()}`)) : writing
-<<<<<<< HEAD
     rt.sweepAuto?.()
     state.revision += 1
     state.autoStamp = state.revision
@@ -596,8 +541,6 @@ export function install(rt) {
   }
 
   const writeSnapshot = (snapshot) => {
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const run = writing.then(async () => {
       // Re-check writability once the queued write runs: an adopt queued before
       // it may have made this host read-only (e.g. a file a newer Omni wrote).
@@ -682,15 +625,9 @@ export function install(rt) {
   const chatOwners = new Map()
   /** @type {Map<string, {botId:string, roomId:string}>} */
   const groupOwners = new Map()
-<<<<<<< HEAD
   // Single-run task Sessions a subscription started for a Bot (subscriptions.js).
   const taskOwners = new Map()
   /** @type {Map<string, {botId:string, roomId?:string}>} */
-=======
-  /** @type {Map<string, string>} */
-  const roomOwners = new Map()
-  /** @type {Map<string, {botId?:string, roomId?:string}>} */
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const pastOwners = new Map()
   const chatOf = botId => botOf(botId)?.sessionId ?? botId
   const sessionOfRoom = room => (room === undefined ? undefined : room.sessionId ?? room.id)
@@ -792,7 +729,6 @@ export function install(rt) {
   }
   const isAdminOf = (room, id) => id !== undefined && room.admin === id
 
-<<<<<<< HEAD
   // Whether the team in memory was read from its file, or is a new team no file held yet,
   // or was saved since: false before the first load, and after a file that could not be
   // read or was set aside as corrupt. It reads memory only.
@@ -802,28 +738,6 @@ export function install(rt) {
     state, load, save, refresh, readOnly, teamLoaded, own,
     botOf, roomOf, isMain, chatOf, selfOf, isBotSession,
     chatOwners, groupOwners, pastOwners, taskOwners, indexSessions,
-=======
-  const savedListeners = new Set()
-  const onSaved = (listener) => {
-    savedListeners.add(listener)
-    return () => savedListeners.delete(listener)
-  }
-
-  // A question or view card closed without an answer on the card (dismissed, or
-  // answered by a message) stays in the chat, read-only: by the Session where it
-  // was asked, its call id and how it closed. A card answered on the card shows
-  // on its reply message.
-  const closeCard = (sessionId, card, outcome) => {
-    if (typeof card?.callId !== 'string') return
-    const target = typeof card.callSessionId === 'string' ? card.callSessionId : sessionId
-    state.closedCards[target] = { ...own(state.closedCards, target), [card.callId]: outcome }
-  }
-
-  Object.assign(rt, {
-    state, load, save, refresh, readOnly, own, onSaved, closeCard,
-    botOf, roomOf, isMain, chatOf, sessionOfRoom, selfOf, isBotSession,
-    chatOwners, groupOwners, roomOwners, pastOwners,
->>>>>>> vendor/ds-bot-0.3.6-prepared
     groupSessionsOf, dropGroupSession, retireGroupSession, findBot, findRooms, isAdminOf,
   })
 }

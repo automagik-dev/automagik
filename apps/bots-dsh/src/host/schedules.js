@@ -56,7 +56,6 @@ function timingOf(record) {
   }
 }
 
-<<<<<<< HEAD
 function requestOf(record) {
   const timing = timingOf(record)
   return timing === null ? null : { title: record.title, prompt: record.prompt, timing }
@@ -66,26 +65,6 @@ function requestOf(record) {
 const targetSessionOf = entry => (entry.target?.kind === 'new' ? undefined : entry.target?.sessionId)
 
 // The settings form's timing as DSH 0.2.2's typed create selector.
-=======
-// DSH 0.2.2 keeps tasks Host-wide, each with a delivery target, and changes them through
-// edit(); DSH 0.2.1 keeps them by Session. Both are served.
-const hostWide = service => typeof service.edit === 'function'
-// The existing Session a task delivers to; a task that opens new Sessions has none.
-const sessionOf = entry => entry.target === undefined ? entry.sessionId : entry.target.kind === 'session' ? entry.target.sessionId : undefined
-const TIMING_KINDS = { at: 'at', every_seconds: 'every', daily: 'daily', weekly: 'weekly' }
-const OWN_TASK_TOOLS = ['schedule_edit', 'schedule_view']
-// DSH 0.2.2's list page: 100 by default, at most 500.
-const LIST_PAGE = 100
-const LIST_READ_LIMIT = 500
-const OTHER_TASK_REFUSAL = 'This task belongs to another chat. A Bot reads and changes only the tasks of its own chat.'
-const sameOwner = (a, b) => a !== undefined && b !== undefined && a.botId === b.botId && a.roomId === b.roomId
-const timingOf = (selector) => {
-  const [key] = Object.keys(selector)
-  return { kind: TIMING_KINDS[key], [key]: selector[key] }
-}
-
-// The settings form's timing as a create request selector.
->>>>>>> vendor/ds-bot-0.3.6-prepared
 function selectorOf(when) {
   const zone = typeof when?.timeZone === 'string' && when.timeZone !== '' ? when.timeZone : 'UTC'
   switch (when?.kind) {
@@ -129,13 +108,9 @@ export function install(rt) {
   const attach = (sub) => {
     const own = sub.schedule
     service = own
-<<<<<<< HEAD
     sub.effect(() => () => { if (service === own) service = null }, 'omni-ui: schedule service')
     void revokeNewSchedules()
       .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
-=======
-    sub.effect(() => () => { if (service === own) service = null }, 'omni-ui: schedule service')
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }
   if (typeof ctx.inject === 'function') ctx.inject(['schedule'], attach)
   else if (ctx.get?.('schedule') !== undefined) attach({ schedule: ctx.get('schedule'), effect: (execute, label) => ctx.effect(execute, label) })
@@ -459,22 +434,10 @@ export function install(rt) {
     const now = Date.now()
     const tasks = []
     for (const entry of await service.catalog()) {
-<<<<<<< HEAD
       const sessionId = targetSessionOf(entry)
       const owner = ownerOf(sessionId)
       if (!known(owner)) continue
       tasks.push({ ...entry, sessionId, ...owner })
-=======
-      const sessionId = sessionOf(entry)
-      const owner = sessionId === undefined ? undefined : ownerOf(sessionId)
-      if (!known(owner)) continue
-      // The state DSH derives for its own view: a task past its next firing reads
-      // overdue; a paused one stays paused; any other is finished. catalog() carries
-      // the status but not this state, so it is derived the same way here.
-      const state = entry.status === 'active' ? (now >= Date.parse(entry.scheduledAt) ? 'overdue' : 'scheduled')
-        : entry.status === 'paused' ? 'paused' : 'finished'
-      tasks.push({ ...entry, sessionId, ...owner, state })
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
     return { available: true, tasks }
   }
@@ -491,34 +454,16 @@ export function install(rt) {
       if (title === '') throw invalid('Give the task a name')
       if (title.length > MAX_TITLE) throw invalid(`Keep the name under ${MAX_TITLE} characters`)
       if (prompt === '') throw invalid('Say what the Bot should do')
-<<<<<<< HEAD
       const sessionId = bot ? rt.chatOf(bot.id) : room.id
       await service.create({ title, prompt, timing: selectorOf(body.when), target: { kind: 'session', sessionId } })
-=======
-      const sessionId = bot ? rt.chatOf(bot.id) : rt.sessionOfRoom(room)
-      const selector = selectorOf(body.when)
-      if (hostWide(service)) await service.create({ title, prompt, timing: timingOf(selector), target: { kind: 'session', sessionId } })
-      else await service.create(sessionId, { title, prompt, ...selector })
->>>>>>> vendor/ds-bot-0.3.6-prepared
       return schedulesView()
     },
     async 'schedule-delete'(body) {
       if (service === null) throw invalid('Automation tasks are off in DSH')
       if (ownerOf(body.sessionId) === undefined) throw invalid('No such task')
-<<<<<<< HEAD
       const entry = (await service.catalog()).find(task => task.id === body.id)
       if (entry === undefined || targetSessionOf(entry) !== body.sessionId) throw invalid('No such task')
       await service.edit({ id: body.id, action: 'delete' })
-=======
-      if (hostWide(service)) {
-        // Ids are Host-wide here, so the task must still deliver to the team Session named.
-        const entry = (await service.catalog()).find(task => task.id === body.id)
-        if (entry === undefined || sessionOf(entry) !== body.sessionId) throw invalid('No such task')
-        await service.edit({ id: body.id, action: 'delete' })
-      } else {
-        await service.delete({ sessionId: body.sessionId, id: body.id })
-      }
->>>>>>> vendor/ds-bot-0.3.6-prepared
       return schedulesView()
     },
   }
@@ -527,20 +472,7 @@ export function install(rt) {
   // the fresh Session before the old one goes, so a failure leaves it where it was.
   async function moveSchedules(fromId, toId) {
     if (service === null) return
-<<<<<<< HEAD
     const records = (await service.catalog()).filter(entry => targetSessionOf(entry) === fromId && entry.status === 'active')
-=======
-    // A Host-wide task changes its target in place and keeps its next firing; a
-    // paused one moves too, so it resumes in the Bot's current part.
-    if (hostWide(service)) {
-      for (const entry of await service.catalog()) {
-        if (entry.status === 'ended' || sessionOf(entry) !== fromId) continue
-        await service.edit({ id: entry.id, action: 'update', patch: { target: { kind: 'session', sessionId: toId } } })
-      }
-      return
-    }
-    const records = await service.list({ sessionId: fromId })
->>>>>>> vendor/ds-bot-0.3.6-prepared
     for (const record of records) {
       const request = requestOf(record)
       if (request === null || (request.timing.kind === 'at' && Date.parse(request.timing.at) <= Date.now())) continue
@@ -556,69 +488,9 @@ export function install(rt) {
     }
   }
 
-<<<<<<< HEAD
   Object.assign(rt, {
     scheduleEndpoint: (endpoint, body) => endpoints[endpoint](body ?? {}),
     moveSchedules,
     revokeNewSchedules,
   })
-=======
-  // DSH 0.2.2's task ids are Host-wide, so a Bot's schedule tools reach only the tasks
-  // that deliver to its own chat, or to the same group place, in any of its parts.
-  ctx.on('tools/pre-execute', async (exec, next) => {
-    const decision = await next()
-    if (decision.kind !== 'allow' || !OWN_TASK_TOOLS.includes(exec.name) || service === null || !hostWide(service)) return decision
-    await rt.load()
-    const caller = exec.agent?.id
-    if (!rt.isBotSession(caller)) return decision
-    const entry = (await service.catalog()).find(task => task.id === exec.arguments?.id)
-    // An unknown id gets DSH's own not-found result.
-    if (entry === undefined) return decision
-    const target = sessionOf(entry)
-    if (target !== undefined && sameOwner(ownerOf(caller), ownerOf(target))) return decision
-    return { kind: 'deny', reason: OTHER_TASK_REFUSAL }
-  })
-  // schedule_list pages over every Host task and cannot filter by Session, and only the
-  // tool formats its items. So the tool is asked for the Host range that holds the
-  // caller's page (catalog() keeps list()'s order), and the other chats' tasks in that
-  // range are dropped. A page whose tasks span more than one Host page comes back
-  // short; total still counts all of the caller's tasks, so the next offset goes on.
-  ctx.on('tools/execute', async function listOwnSchedules(exec, next) {
-    if (exec.name !== 'schedule_list' || service === null || !hostWide(service)) return next()
-    await rt.load()
-    const own = rt.isBotSession(exec.agent?.id) ? ownerOf(exec.agent.id) : undefined
-    if (own === undefined) return next()
-    const asked = exec.arguments ?? {}
-    const limit = asked.limit ?? LIST_PAGE
-    const offset = asked.offset ?? 0
-    const mine = entry => {
-      const target = sessionOf(entry)
-      return target !== undefined && sameOwner(own, ownerOf(target))
-    }
-    // An invalid page gets DSH's own input error; a page it accepts anyway is still narrowed.
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIST_READ_LIMIT || !Number.isSafeInteger(offset) || offset < 0) {
-      const result = await next()
-      if (result.isError || !Array.isArray(result.value?.items)) return result
-      const items = result.value.items.filter(mine)
-      const total = (await service.catalog()).filter(entry => mine(entry) && (asked.active === undefined || (entry.status === 'active') === asked.active)).length
-      return { ...result, value: { ...result.value, items, shown: items.length, total } }
-    }
-    const pool = (await service.catalog()).filter(entry => asked.active === undefined || (entry.status === 'active') === asked.active)
-    const positions = pool.flatMap((entry, at) => (mine(entry) ? [at] : []))
-    const page = positions.slice(offset, offset + limit)
-    const from = page[0] ?? pool.length
-    exec.arguments = { ...asked, offset: from, limit: page.length === 0 ? 1 : Math.min(LIST_READ_LIMIT, page.at(-1) - from + 1) }
-    let result
-    try {
-      result = await next()
-    } finally {
-      exec.arguments = asked
-    }
-    if (result.isError || !Array.isArray(result.value?.items)) return result
-    const items = result.value.items.filter(mine).slice(0, limit)
-    return { ...result, value: { ...result.value, items, shown: items.length, total: positions.length, limit, offset } }
-  })
-
-  Object.assign(rt, { scheduleEndpoint: (endpoint, body) => endpoints[endpoint](body ?? {}), moveSchedules })
->>>>>>> vendor/ds-bot-0.3.6-prepared
 }

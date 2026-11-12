@@ -16,11 +16,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { normalizeUsage, buildUsageStatsIterated, scopeFromAggregates, usageStatsResult } from '../shared/usage-stats.js'
 
-<<<<<<< HEAD
 const LEDGER_VERSION = 4
-=======
-const LEDGER_VERSION = 4
->>>>>>> vendor/ds-bot-0.3.6-prepared
 const PAGE_MESSAGES = 400
 const PAGE_TIMEOUT_MS = 20_000
 const SCAN_TIMEOUT_MS = 180_000
@@ -242,13 +238,8 @@ function sqliteLedger(DatabaseSync, path) {
     // briefly, and the timeout must be armed before the WAL pragma can block.
     db.exec('PRAGMA busy_timeout = 5000')
     db.exec('PRAGMA journal_mode = WAL')
-<<<<<<< HEAD
     // Schema upgrades are additive. In particular, old live auxiliary rows cannot
     // be reconstructed from Session history and must never be rebuilt or erased.
-=======
-    // Both prior products used version 3 with different columns. Upgrade by shape,
-    // under one write lock, preserving live rows and Automagik's usage_details.
->>>>>>> vendor/ds-bot-0.3.6-prepared
     db.exec('BEGIN IMMEDIATE')
     try {
       const version = db.prepare('PRAGMA user_version').get().user_version
@@ -256,24 +247,18 @@ function sqliteLedger(DatabaseSync, path) {
       db.exec(`
         CREATE TABLE IF NOT EXISTS calls (key TEXT PRIMARY KEY, session TEXT NOT NULL, time INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL, live INTEGER NOT NULL, input INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, output INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS calls_session ON calls (session);
-<<<<<<< HEAD
-        CREATE TABLE IF NOT EXISTS marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, fold TEXT NOT NULL, sealed INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, fold TEXT NOT NULL, sealed INTEGER NOT NULL, listed INTEGER);
         CREATE TABLE IF NOT EXISTS owners (session TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS kinds (session TEXT PRIMARY KEY, kind TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS usage_details (key TEXT PRIMARY KEY, session_id TEXT NOT NULL, request_id TEXT, turn_id TEXT, attempt_id TEXT, turn INTEGER, step INTEGER, retry_ordinal INTEGER, source_seq INTEGER, input INTEGER, output INTEGER, cache_read INTEGER, cache_write INTEGER, total_tokens INTEGER, provenance TEXT NOT NULL, cache_semantics TEXT, outcome TEXT);
         CREATE INDEX IF NOT EXISTS usage_request ON usage_details (session_id, request_id);
         CREATE INDEX IF NOT EXISTS usage_turn ON usage_details (session_id, turn_id);
         CREATE INDEX IF NOT EXISTS usage_latest ON usage_details (session_id, source_seq DESC) WHERE source_seq IS NOT NULL;`)
-      // Replay enriches durable logged rows; all auxiliary rows and old amounts
-      // remain intact. Unreadable history keeps legacy-unknown metadata.
-=======
-        CREATE TABLE IF NOT EXISTS marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, fold TEXT NOT NULL, sealed INTEGER NOT NULL, listed INTEGER);
-        CREATE TABLE IF NOT EXISTS owners (session TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS kinds (session TEXT PRIMARY KEY, kind TEXT NOT NULL);`)
       if (!db.prepare('PRAGMA table_info(marks)').all().some(column => column.name === 'listed')) {
         db.exec('ALTER TABLE marks ADD COLUMN listed INTEGER')
       }
->>>>>>> vendor/ds-bot-0.3.6-prepared
+      // Replay enriches durable logged rows; all auxiliary rows and old amounts
+      // remain intact. Unreadable history keeps legacy-unknown metadata.
       if (version < LEDGER_VERSION) db.exec("UPDATE marks SET through = -1, fold = '{}', sealed = 0")
       db.exec(`PRAGMA user_version = ${LEDGER_VERSION}`)
       db.exec('COMMIT')
@@ -420,7 +405,6 @@ export function install(rt) {
         rt.warn('omni-ui: usage is kept in memory only: %s', error)
         return memoryLedger()
       }
-<<<<<<< HEAD
       try {
         return sqliteLedger(DatabaseSync, path)
       } catch (error) {
@@ -428,22 +412,6 @@ export function install(rt) {
         // Never delete a ledger as a side effect of opening a statistics view.
         rt.warn('omni-ui: usage is kept in memory only: %s', error)
         return memoryLedger()
-=======
-      // Only proven damage warrants a rebuild: Desktop and Web share this file,
-      // and a busy lock must never read as corruption, or the other writer's
-      // ledger would be deleted under it.
-      const damaged = error => /malformed|not a database|corrupt/i.test(String(error?.message ?? error))
-      for (const fresh of [false, true]) {
-        try {
-          if (fresh) await unlink(path).catch(() => {})
-          return sqliteLedger(DatabaseSync, path)
-        } catch (error) {
-          if (fresh || !damaged(error)) {
-            rt.warn('omni-ui: usage is kept in memory only: %s', error)
-            return memoryLedger()
-          }
-        }
->>>>>>> vendor/ds-bot-0.3.6-prepared
       }
     })().then((opened) => {
       // The plugin may have been disposed while the file opened.
@@ -470,13 +438,8 @@ export function install(rt) {
     for (const bot of Object.values(state.bots ?? {})) {
       for (const sessionId of [bot.id, rt.chatOf(bot.id), ...(bot.segments ?? []).map(segment => segment.sessionId)]) owners.set(sessionId, botOwner(bot))
     }
-<<<<<<< HEAD
     for (const room of Object.values(state.rooms ?? {})) {
       owners.set(room.id, { owner: `room:${room.id}`, name: room.name })
-=======
-    for (const room of Object.values(state.rooms)) {
-      for (const sessionId of [rt.sessionOfRoom(room), ...(room.parts ?? []).map(segment => segment.sessionId)].filter(Boolean)) owners.set(sessionId, { owner: `room:${room.id}`, name: room.name })
->>>>>>> vendor/ds-bot-0.3.6-prepared
       const memberOwner = botId => ({ owner: botId, name: rt.botOf(botId)?.name ?? '' })
       for (const [botId, sessionId] of Object.entries(room.sessions ?? {})) owners.set(sessionId, memberOwner(botId))
       for (const [botId, segments] of Object.entries(room.segments ?? {})) {
@@ -529,13 +492,9 @@ export function install(rt) {
   async function scanSession(ledger, address, asOfSeq, seal, signal) {
     const sessionId = address.kind === 'session' ? address.sessionId : address.childSessionId
     const mark = ledger.mark(sessionId)
-<<<<<<< HEAD
-    if (mark?.sealed) return true
-=======
-    // A seal stands only while the listing shows the watermark it was sealed at, so a
-    // cold Session whose log grew since is read again.
-    if (mark?.sealed && seal !== undefined && mark.listed === seal.listed) return
->>>>>>> vendor/ds-bot-0.3.6-prepared
+    // A seal is valid only while the listing still carries the watermark it was
+    // sealed at. A cold Session whose log grew since is read again.
+    if (mark?.sealed && seal !== undefined && mark.listed === seal.listed) return true
     let through = asOfSeq
     if (through === undefined) {
       const projections = await ctx.sessionController.projections({ sessionId }, signal)
@@ -543,17 +502,11 @@ export function install(rt) {
       through = projections.asOfSeq
     }
     const from = mark?.through ?? -1
-<<<<<<< HEAD
-    if (!Number.isSafeInteger(through) || through < from) return false
-    if (through === from) {
-      if (mark !== undefined && sealable) ledger.commit(sessionId, { rows: [], reset: false, mark: { ...mark, sealed: true } })
-      return true
-=======
     if (!Number.isSafeInteger(through) || through <= from) {
-      // Nothing new to read: a warm Session's seal is cleared, and a cold one is sealed again at its watermark.
-      if (mark !== undefined && (seal !== undefined || mark.sealed)) ledger.commit(sessionId, { rows: [], reset: false, mark: { ...mark, ...sealFields(seal) } })
-      return
->>>>>>> vendor/ds-bot-0.3.6-prepared
+      if (mark !== undefined && (seal !== undefined || mark.sealed)) {
+        ledger.commit(sessionId, { rows: [], reset: false, mark: { ...mark, ...sealFields(seal) } })
+      }
+      return true
     }
     const events = []
     let beforeSeq
@@ -605,12 +558,8 @@ export function install(rt) {
         listed = (await ctx.sessionController.list({}, signal)).items ?? []
         listingFailed = false
       } catch (error) {
-<<<<<<< HEAD
         listingFailed = true
         rt.warn('omni-ui: usage could not list the Sessions: %s', error)
-=======
-        rt.warn('omni-ui: usage could not list the Sessions: %s', error)
->>>>>>> vendor/ds-bot-0.3.6-prepared
       }
       const stored = ledger.owners()
       const owners = liveOwners(listed, stored)
@@ -662,13 +611,9 @@ export function install(rt) {
           return
         }
         try {
-<<<<<<< HEAD
-          const complete = await scanSession(ledger, address, asOfSeq, ended.has(sessionId), signal)
+          const complete = await scanSession(ledger, address, asOfSeq, sealOf(sessionId), signal)
           if (complete) unresolved.delete(sessionId)
           else unresolved.add(sessionId)
-=======
-          await scanSession(ledger, address, asOfSeq, sealOf(sessionId), signal)
->>>>>>> vendor/ds-bot-0.3.6-prepared
           unreadable.delete(sessionId)
         } catch (error) {
           // The scan timeout cancels the reads still open. Those Sessions are not broken,
@@ -682,22 +627,11 @@ export function install(rt) {
           failed.push([sessionId, error])
         }
       })
-<<<<<<< HEAD
       scanFailed = false
     })().catch(error => {
       scanFailed = true
       throw error
     }).finally(() => {
-=======
-      // One line for the whole scan, not one per Session it could not read.
-      const missed = failed.length + cut
-      if (missed > 0) {
-        rt.warn('omni-ui: usage could not read %d Session%s%s%s', missed, missed === 1 ? '' : 's',
-          cut > 0 ? ' before the scan ran out of time' : '',
-          failed.length > 0 ? `: ${failed.map(([sessionId]) => sessionId).join(', ')} (first error: ${failed[0][1]})` : '')
-      }
-    })().finally(() => {
->>>>>>> vendor/ds-bot-0.3.6-prepared
       scannedAt = Date.now()
       scanning = undefined
     })
@@ -789,7 +723,6 @@ export function install(rt) {
     }
   }
 
-<<<<<<< HEAD
   // A read refreshes only this derived ledger. It never creates or mutates a
   // Session, changes a setting, or starts a model request.
   async function usageStats(botId, { sessionId } = {}) {
@@ -826,9 +759,6 @@ export function install(rt) {
   }
 
   // Omni tags the requests it makes outside a Session with the Session they serve.
-=======
-  // Omni tags the requests it makes outside a Session with the Session they serve.
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const tags = new WeakMap()
   const tagUsage = (messages, tag) => {
     if (messages !== null && typeof messages === 'object') tags.set(messages, tag)
@@ -870,11 +800,7 @@ export function install(rt) {
       if (captured.owner === undefined) await rt.load()
       const book = ledger ?? await openLedger().catch(() => undefined)
       if (book === undefined) return
-<<<<<<< HEAD
       try { journal(book, sessionId, captured) } catch (error) { rt.warn('omni-ui: usage could not journal %s: %s', sessionId, error) }
-=======
-      try { journal(book, sessionId) } catch (error) { rt.warn('omni-ui: usage could not journal %s: %s', sessionId, error) }
->>>>>>> vendor/ds-bot-0.3.6-prepared
     })()
   }
   function record({ sessionId, kind, provider, model, usage, response, tag, invocation, outcome }) {
@@ -888,15 +814,11 @@ export function install(rt) {
       ...normalizeUsage(usage, response),
     }
     if (ledger !== undefined) {
-<<<<<<< HEAD
       try { ledger.add(row) } catch (error) {
         writeFailed = true
         early.push(row)
         rt.warn('omni-ui: usage could not record a call: %s', error)
       }
-=======
-      try { ledger.add(row) } catch (error) { rt.warn('omni-ui: usage could not record a call: %s', error) }
->>>>>>> vendor/ds-bot-0.3.6-prepared
       return
     }
     early.push(row)

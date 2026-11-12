@@ -186,11 +186,7 @@ export function install(rt) {
   }
 
   const abandoned = botId => disposing || dropped.has(botId) || rt.botOf(botId) === undefined
-<<<<<<< HEAD
   const stopError = (botId) => refusal(disposing && !dropped.has(botId) && rt.botOf(botId) !== undefined ? 'Omni is stopping.' : 'Unknown Bot')
-=======
-  const stopError = (botId) => new Error(disposing && !dropped.has(botId) && rt.botOf(botId) !== undefined ? 'Omni is stopping.' : 'Unknown Bot')
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
   // Wait until every targeted flight has left. A call still inside resolveAgent
   // has no `done` yet; yielding lets it notice disposal and drop the slot.
@@ -257,17 +253,11 @@ export function install(rt) {
       }
     } catch (error) {
       if (signal.aborted || entry.status !== 'answering' || !alive(botId, chat, entry)) return
-<<<<<<< HEAD
       // The provider's message may quote the request, its endpoint or its key, so the
       // card and the log say the kind only.
       const kind = failureKind(error)
       rt.warn('omni-ui: side for %s failed (%s)', botId, kind)
       if (settle(botId, chat, entry, { status: 'failed', error: modelFailure(error, 'The side question failed'), answer: '' })) await persist(botId)
-=======
-      const message = error?.message ?? String(error)
-      rt.warn('omni-ui: side for %s failed: %s', botId, message)
-      if (settle(botId, chat, entry, { status: 'failed', error: message, answer: '' })) await persist(botId)
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
   }
 

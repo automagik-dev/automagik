@@ -1,12 +1,8 @@
 // Models. Every Bot runs on one model of its own, fixed when it is created and changed
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
-<<<<<<< HEAD
 import { cliRoute, leavesCli, piAiRoutes, routeOf } from '../shared/routes.js'
 import { refusal } from './refusal.js'
-=======
-import { BlockAssembler, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
 import { PI_AI_CLAUDE, claudeFamilyOf, supersededClaude } from './claude-models.js'
@@ -25,7 +21,6 @@ export const ACCESS_MESSAGES = Object.freeze({
 // (acp-dsh's `consent: 'needed'`): the sign-in card's confirm step answers it, a sign-in does not.
 export const ACCOUNT_CONFIRM_REQUIRED = 'bot/account-confirm-required'
 const ROUTE_WAIT_MS = 30_000
-<<<<<<< HEAD
 // How often an agent whose sign-in acp-dsh has not checked yet is asked once, in the
 // background: the menu reads acp-dsh's last answer and never spawns a check when it opens.
 const SIGN_IN_CHECK_MS = 5 * 60_000
@@ -74,98 +69,6 @@ function resolvedDefault(provider, model) {
   if (model?.id !== 'default' || routeOf(provider).connectedBy !== 'acp') return {}
   const name = OWN_SETTING.exec(typeof model.description === 'string' ? model.description : '')?.[1]?.trim()
   return name ? { resolvesTo: name } : {}
-=======
-// The DeepSeek account's sign-in grant (dsh-deepseek-account-platform).
-const ACCOUNT_RECORD = 'deepseek-account-platform/default'
-const TRANSIENT_LLM_CODES = new Set(['TRANSPORT', 'TIMEOUT'])
-
-function retryPolicyOf(ctx, provider) {
-  try {
-    const resolved = ctx.llm?.providerRetryPolicy?.(provider)
-    if (resolved !== undefined) return resolved
-  } catch {}
-  return resolveRetryPolicy(undefined, 'ds-bot')
-}
-
-function retryDelayMs(policy, failure, retry, backoff, random) {
-  const initialDelayMs = backoff?.initialDelayMs ?? policy.initialDelayMs
-  const maxDelayMs = backoff?.maxDelayMs ?? policy.maxDelayMs
-  const jitterRatio = backoff?.jitterRatio ?? policy.jitterRatio
-  const providerAfter = failure?.providerRetryAfterMs
-  if (providerAfter !== undefined && Number.isFinite(providerAfter) && providerAfter > 0) {
-    if (providerAfter <= maxDelayMs) return providerAfter
-    if (policy.mode === 'normal') return undefined
-  }
-  const exponential = Math.min(initialDelayMs * 2 ** Math.min(retry - 1, 1024), maxDelayMs)
-  const jitter = 1 - jitterRatio + 2 * jitterRatio * random()
-  return Math.min(exponential * jitter, maxDelayMs)
-}
-
-function waitRetryDelay(delayMs, signal) {
-  if (signal?.aborted) return Promise.resolve(false)
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve(true)
-    }, delayMs)
-    function onAbort() {
-      clearTimeout(timer)
-      resolve(false)
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
-function abortedAssembler(failure) {
-  const assembler = new BlockAssembler()
-  assembler.push({ type: 'finish', reason: { kind: 'aborted', failure: failure ?? { code: 'ABORTED', message: 'aborted' } } })
-  return assembler
-}
-
-function canRetryPolicy(policy, code, retry) {
-  if (policy.mode === 'always') return true
-  if (policy.mode !== 'normal') return false
-  return Array.isArray(policy.retryableCodes) && policy.retryableCodes.includes(code) && retry <= policy.maxRetries
-}
-
-// Auxiliary calls (memory, learning, handoff, steward, OCR, side chats, browser_task)
-// bypass the agent loop's `agent/request-error` hook, so `dsh-llm-retry` never sees
-// their transport or stream-idle failures. Retry those transient codes on the same
-// route with the provider's own retry policy, discarding partial chunks from failed attempts.
-export async function assembleLlmStream(ctx, options, { signal, backoff, random = Math.random } = {}) {
-  const fused = options.signal && signal ? AbortSignal.any([options.signal, signal]) : (options.signal ?? signal)
-  const request = fused === options.signal ? options : { ...options, signal: fused }
-  for (let retry = 1; ; retry += 1) {
-    const assembler = new BlockAssembler()
-    let thrown
-    try {
-      for await (const chunk of ctx.llm.stream(request)) assembler.push(chunk)
-    } catch (error) {
-      thrown = error
-    }
-    if (thrown !== undefined) {
-      const code = thrown?.failure?.code ?? thrown?.code
-      const failure = thrown?.failure ?? { code, message: thrown?.message || String(thrown) }
-      if (fused?.aborted || !TRANSIENT_LLM_CODES.has(code)) throw thrown
-      const policy = retryPolicyOf(ctx, options.provider)
-      if (!canRetryPolicy(policy, code, retry)) throw thrown
-      const delayMs = retryDelayMs(policy, failure, retry, backoff, random)
-      if (delayMs === undefined) throw thrown
-      if (!await waitRetryDelay(delayMs, fused)) throw fused?.reason ?? thrown
-      continue
-    }
-    const finish = assembler.finish
-    if (finish.kind !== 'error' || fused?.aborted) return assembler
-    const failure = finish.failure
-    const code = failure?.code
-    if (!TRANSIENT_LLM_CODES.has(code)) return assembler
-    const policy = retryPolicyOf(ctx, options.provider)
-    if (!canRetryPolicy(policy, code, retry)) return assembler
-    const delayMs = retryDelayMs(policy, failure, retry, backoff, random)
-    if (delayMs === undefined) return assembler
-    if (!await waitRetryDelay(delayMs, fused)) return abortedAssembler({ code: 'ABORTED', message: failure?.message ?? 'aborted' })
-  }
->>>>>>> vendor/ds-bot-0.3.6-prepared
 }
 
 export function install(rt) {
@@ -285,18 +188,12 @@ export function install(rt) {
   // A provider's model list can change in DSH settings without any event, so a picker
   // that is about to be used asks for a `fresh` one. Entries for models a Bot uses
   // also carry their `reasoning`, so the picker can offer thinking levels.
-<<<<<<< HEAD
   async function catalog({ fresh = false, remember = true } = {}) {
     if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return catalogCache.value
     const listed = []
     let directory = []
     try { directory = ctx.llm.listConfigurableProviders?.() ?? [] } catch {}
     const piAi = piAiRoutes(directory)
-=======
-  async function catalog({ fresh = false } = {}) {
-    if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return answerable(catalogCache.value)
-    const entries = []
->>>>>>> vendor/ds-bot-0.3.6-prepared
     for (const provider of ctx.llm.listProviders()) {
       let models = []
       try { models = await ctx.llm.listModels(provider.id) } catch { continue }
@@ -323,7 +220,6 @@ export function install(rt) {
     // turn on them fails.
     const missing = await rt.missingKeys?.([...new Set(entries.map(entry => entry.provider))]) ?? new Set()
     for (const entry of entries) if (missing.has(entry.provider)) entry.needsKey = true
-<<<<<<< HEAD
     // How each route is connected (providers.js routeAuth) and whether it can run: a plan
     // route with no stored sign-in, or an agent whose CLI is signed out, `needsSignIn`.
     const providers = [...new Set(entries.map(entry => entry.provider))]
@@ -342,12 +238,6 @@ export function install(rt) {
     // DSH's own ChatGPT or Claude sign-in: its CLI serves that plan, signed in or not.
     for (const entry of entries) if (coveredBy(entry) !== undefined) entry.covered = true
     if (remember) noteConnected(entries)
-=======
-    // A key can arrive without an event (an environment variable at the next start), so
-    // a provider listed with its key again lifts what its missing key blocked.
-    rt.unblockBots?.({ keyed: new Set(entries.filter(entry => !entry.needsKey).map(entry => entry.provider)) })
-    const used = new Set(Object.values(state.bots ?? {}).flatMap(bot => [bot.model, bot.appliedModel].filter(Boolean)))
->>>>>>> vendor/ds-bot-0.3.6-prepared
     await Promise.all(entries.filter(entry => used.has(entry.ref)).map(async (entry) => {
       const reasoning = await reasoningOf(entry.ref)
       if (reasoning !== undefined) entry.reasoning = reasoning
@@ -363,7 +253,6 @@ export function install(rt) {
     const ref = `${selection.provider}/${selection.model}`
     return refused.has(ref) ? undefined : ref
   }
-<<<<<<< HEAD
   // The providers in the order they could first run here (a key set, an account signed
   // in), kept with the team: "the first account you connected".
   function noteConnected(entries) {
@@ -437,51 +326,9 @@ export function install(rt) {
   // is written. `remember: false` leaves the team's record of connected providers alone, so a
   // refused pick changes nothing. `keep`: the Bot's current model, never moved (onPlanCli).
   async function resolveModel(text, { checkAccess = false, remember = true, keep } = {}) {
-    const entries = await catalog({ fresh: true, remember })
-=======
-  // A model whose provider has no key fails every turn, so no Bot is given one unasked.
-  const keyed = entries => entries.filter(entry => entry.needsKey !== true)
-  const isLocal = ref => rt.isLocalAgentRef?.(ref) === true
-  // Nor is a Bot given a local agent unasked: what it runs on changes only in its settings.
-  const usableOf = entries => keyed(entries).filter(entry => !isLocal(entry.ref))
-  // By the catalog as last listed, without waiting for a fresh one.
-  const isUsable = ref => keyed(catalogCache.value).some(entry => entry.ref === ref)
-  // The profile default model of DSH, when it is served and usable; else the first
-  // usable model; else none.
-  function pickDefault(entries) {
-    const usable = usableOf(entries)
-    const ref = defaultRef()
-    // Neither a refused route nor one that fails for a missing key is picked.
-    const list = answerable(usable)
-    return list.find(entry => entry.ref === ref)?.ref ?? list[0]?.ref
-  }
-  const defaultModel = async () => pickDefault(await catalog())
-
-  // The model a create that names none starts on: the team's pick while the catalog
-  // still serves it, else the DSH default. A create fixes the ref then, so a later
-  // change of either default leaves the Bot alone.
-  const defaultBotModel = async () => {
-    const entries = await catalog()
-    const preferred = state.prefs.defaultBotModel
-    return !isLocal(preferred) && entries.some(entry => entry.ref === preferred) ? preferred : pickDefault(entries)
-  }
-
-  // A local agent's model, by its full ref only, so a short name never moves a Bot onto
-  // a CLI. Its CLI is asked only when Omni does not know the model yet.
-  async function resolveLocalModel(ref) {
-    const { provider, model } = splitRef(ref)
-    const known = await ctx.llm.listModels(provider).catch(() => [])
-    const served = known.some(entry => entry.id === model) ? known : await rt.localAgentModels(provider)
-    if (served.some(entry => entry.id === model)) return ref
-    throw new Error(`Model ${ref} is not available. Available models: ${served.map(entry => `${provider}/${entry.id}`).join(', ') || 'none'}`)
-  }
-
-  // A full `provider/model` ref, or a model id or name that only one provider serves.
-  async function resolveModel(text) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const wanted = String(text ?? '').trim()
     if (isLocal(wanted)) return resolveLocalModel(wanted)
-    const entries = (await catalog({ fresh: true })).filter(entry => !isLocal(entry.ref))
+    const entries = (await catalog({ fresh: true, remember })).filter(entry => !isLocal(entry.ref))
     const exact = entries.find(entry => entry.ref === wanted)
     const named = exact ? [] : entries.filter(entry => normalize(entry.id) === normalize(wanted) || normalize(entry.name) === normalize(wanted))
     const picked = exact?.ref ?? (named.length === 1 ? named[0].ref : undefined)
@@ -540,7 +387,6 @@ export function install(rt) {
   }
 
   // A Bot with no model yet waits for the user to pick one and changes nothing. A
-<<<<<<< HEAD
   // model that is no longer served falls back to the last one it ran on, then the default.
   // A Session at Full access of a Bot whose model is a coding CLI's (acp-claude, acp-codex) is
   // not moved to another provider this way: there the CLI itself runs without asking, and
@@ -551,14 +397,6 @@ export function install(rt) {
   // beside the chat that runs no tool (memory.js) keeps the plain rule.
   const stayed = new Set()
   const plainModel = async (bot) => {
-=======
-  // model that is no longer served falls back to the last one it ran on, then the
-  // default; a fallback is never one that needs a key, nor a local agent. A local
-  // agent that is gone stays the Bot's: its turn fails with the repair card.
-  async function desiredModel(bot) {
-    if (!bot.model) return undefined
-    if (isLocal(bot.model)) return bot.model
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const entries = await catalog()
     if (entries.some(entry => entry.ref === bot.model)) return bot.model
     return usableOf(entries).some(entry => entry.ref === bot.appliedModel) ? bot.appliedModel : pickDefault(entries)
@@ -663,13 +501,9 @@ export function install(rt) {
       })
       const saved = result?.selected ?? { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) }
       if (before?.provider && before?.model && !sameSelection(before, saved)) {
-<<<<<<< HEAD
         await defaults.saveSelection(before).catch((error) => {
           if (!sameSelection(defaults.currentSelection(), before)) rt.warn('omni-ui: the default model was not restored: %s', error)
         })
-=======
-        await defaults.saveSelection(before).catch(error => rt.warn('omni-ui: the default model was not restored: %s', error))
->>>>>>> vendor/ds-bot-0.3.6-prepared
       }
       sessionSelections.set(sessionId, { provider, model, reasoningEffort })
       return result
@@ -696,24 +530,14 @@ export function install(rt) {
     if (staying.size > 0) stays(bot, ref)
     if (staying.has(chat) && rt.groupSessionsOf(bot.id).every(sessionId => staying.has(sessionId))) return undefined
     const effort = await desiredEffort(bot, ref)
-<<<<<<< HEAD
     if (!force && staying.size === 0 && bot.appliedModel === ref && (bot.appliedEffort ?? undefined) === effort) return ref
     const route = { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) }
     if (!staying.has(chat)) await selectSessionModel(chat, route)
     for (const sessionId of rt.groupSessionsOf(bot.id)) {
       if (staying.has(sessionId)) continue
-=======
-    const ownChanged = force || bot.appliedModel !== ref || (bot.appliedEffort ?? undefined) !== effort
-    const route = { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) }
-    if (ownChanged) await selectSessionModel(rt.chatOf(bot.id), route)
-    for (const sessionId of rt.groupSessionsOf(bot.id)) {
-      const applied = sessionSelections.get(sessionId)
-      if (!force && applied !== undefined && sameSelection(applied, route)) continue
->>>>>>> vendor/ds-bot-0.3.6-prepared
       await selectSessionModel(sessionId, route)
         .catch(error => rt.warn('omni-ui: model for %s in a group not applied: %s', bot.name, error))
     }
-<<<<<<< HEAD
     // Some Sessions moved and some stayed, so no one model is applied to all of them. The
     // record, which is one per Bot, says what the Bot's own chat runs on: the model it just
     // took, or, when it is the chat that stayed, nothing unless the record already names that
@@ -726,9 +550,6 @@ export function install(rt) {
       await rt.save()
       return undefined
     }
-=======
-    if (!ownChanged) return ref
->>>>>>> vendor/ds-bot-0.3.6-prepared
     bot.appliedModel = ref
     if (effort === undefined) delete bot.appliedEffort
     else bot.appliedEffort = effort
@@ -795,16 +616,10 @@ export function install(rt) {
   const assembleLlm = options => assembleLlmStream(ctx, options, { signal: lifetime.signal, backoff: rt.config?.llmRetryBackoff })
 
   Object.assign(rt, {
-<<<<<<< HEAD
     catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
     defaultRef, defaultModel, defaultEffort, resolveModel, modelAccess, assertModelAccess, desiredModel, assertNotOffCli, reasoningOf, resolveEffort, desiredEffort,
     backgroundModel, cachedBackground: () => pickBackground(catalogCache.value), answersAside: answersAsideRef,
     selectSessionModel, applyModel, waitForModel, syncModels,
     dropCatalog: () => { catalogCache = { at: 0, value: [] } },
-=======
-    catalog, cachedCatalog: () => answerable(catalogCache.value), cachedDefault: () => pickDefault(catalogCache.value),
-    defaultRef, defaultModel, defaultBotModel, defaultEffort, isUsable, resolveModel, desiredModel, reasoningOf, resolveEffort, desiredEffort,
-    selectSessionModel, applyModel, waitForModel, syncModels, routeRefused, dropCatalog, assembleLlm,
->>>>>>> vendor/ds-bot-0.3.6-prepared
   })
 }

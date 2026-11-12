@@ -1,5 +1,4 @@
 // Approvals. A member's group Session is hidden, so DSH's approval card never shows
-<<<<<<< HEAD
 // there and the turn would wait forever: Omni answers those requests itself, from
 // the group chat. A Bot's own chat keeps DSH's card; its requests are only noted, so
 // the team view can say who is waiting. So does a running task a Bot started
@@ -7,12 +6,6 @@
 // (`taskId`) and title (`label`), so the Bot shows it needs the user, the parent's chat
 // can say which task waits, and the task's thread waits in amber. A subagent child's
 // ask is held under its Bot, where the person can answer it.
-=======
-// there and the turn would wait forever: Omni answers those requests itself, from
-// the group chat. A Bot's own chat keeps DSH's card, but Omni can answer those too
-// (IM chats, the phone app): the request is raced — whichever side answers first wins,
-// and the other card withdraws.
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { randomUUID } from 'node:crypto'
 
 const OUTCOMES = { allow: 'allowed-once', reject: 'rejected' }
@@ -33,22 +26,10 @@ export function install(rt) {
   const { ctx } = rt
   /** @type {Map<string, {id:string, sessionId:string, botId:string, child?:boolean, ownerSessionId?:string, roomId?:string, taskId?:string, label?:string, tool:string, reason:string, detail:{text?:string, code?:string}, at:number, answer?:(outcome:string)=>void}>} */
   const pending = new Map()
-<<<<<<< HEAD
   // A task a Bot of the team started that still runs, by its Session.
   const runningTask = (sessionId) => {
     const task = rt.state?.tasks?.[sessionId]
     return task?.status === 'working' && rt.botOf?.(task.from) !== undefined ? task : undefined
-=======
-  const approvalListeners = new Set()
-  const onApproval = (listener) => {
-    approvalListeners.add(listener)
-    return () => approvalListeners.delete(listener)
-  }
-  const emit = (kind, data) => {
-    for (const listener of approvalListeners) {
-      try { listener(kind, data) } catch (error) { rt.warn('omni-ui: approval listener failed: %s', error) }
-    }
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }
 
   // Ahead of DSH's own answerer, which would hold a hidden Session's request unseen.

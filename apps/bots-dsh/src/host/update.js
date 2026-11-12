@@ -238,11 +238,7 @@ export function install(rt) {
   /** Start reinstalling the newest version; the answer comes back through `check`. */
   function start() {
     if (status.phase === 'installing') return view()
-<<<<<<< HEAD
     if (!enabled || target === null) throw refusal('No Omni update is available')
-=======
-    if (target === null) throw new Error('No Omni update is available')
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const service = manager()
     if (typeof service?.installBundle !== 'function') throw refusal('The DSH plugin manager is not available in this profile')
     const chosen = target

@@ -12,15 +12,10 @@ import { createPets } from './pets.js'
 import { CODE_REFUSED } from './cli-login.js'
 import { install as installSide } from './side.js'
 import { handoffReply, questionReply, viewReply } from './parts.js'
-<<<<<<< HEAD
 import { defaultRelayLimit } from './groups.js'
 import { validateViewAnswer } from '../shared/views.js'
 import { normalizeAddressList } from './browser/address-policy.js'
 import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
-=======
-import { validateViewAnswer } from 'deep-view/core'
-import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 const STAGED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 const STAGED_MS = 30 * 60_000
@@ -70,7 +65,6 @@ export function install(rt) {
 
   // The DSH interface language of the last browser that asked for the team.
   let uiLocale
-<<<<<<< HEAD
   rt.uiLanguage = () => (uiLocale === undefined ? undefined : LANGUAGES[uiLocale.split('-')[0].toLowerCase()] ?? uiLocale)
   // Where the user allows an MCP server, in that browser's words (places.js builds it from the
   // interface's own strings, "Configurações > Recursos > Permitir" in pt-BR), so the Bot names
@@ -84,28 +78,15 @@ export function install(rt) {
   // a Cc, Cf, Zl or Zp character.
   let uiAllowPlace
   rt.allowPlace = () => uiAllowPlace ?? DEFAULT_ALLOW_PLACE
-=======
-  rt.uiLanguage = () => {
-    if (uiLocale === undefined) return undefined
-    const lower = uiLocale.toLowerCase()
-    return LANGUAGES[lower] ?? LANGUAGES[lower.split('-')[0]] ?? uiLocale
-  }
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
   // Photos staged by `stage-image`, kept until the message that names them is sent.
   const staged = new Map()
   const ok = value => ({ ok: true, value })
   const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
-<<<<<<< HEAD
   // Models come from DSH, not state.json, so a provider added in Harness settings
   // changes the view without a new revision. So do the permission presets DSH offers and
   // the Bots and groups whose Auto runs as workspace-write (permissions.js).
   const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.needsSignIn ? '?' : ''}${entry.needsAccount ? '~' : ''}${entry.covered ? '=' : ''}${entry.via ? `@${entry.via}` : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.cachedBackground?.() ?? ''}|${rt.permissionKey?.() ?? ''}`
-=======
-  // Models come from DSH, not state.json, so a provider added on the Models pages of Settings
-  // changes the view without a new revision.
-  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}`
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const view = () => ({
     revision: state.revision,
     workspaceId: state.workspaceId ?? null,
@@ -117,7 +98,6 @@ export function install(rt) {
     // Tasks a Bot started (agents.js), for their live cards in the chat.
     tasks: state.tasks ?? {},
     // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
-<<<<<<< HEAD
     // `waiting`: the Bot holds its greeting until the user picks its model.
     // `adoptionHistoryMatches` (adopted originals only): rollback's history guard
     // (agents.js rollbackAdoption) would pass, so the menu offers rollback only then.
@@ -132,18 +112,6 @@ export function install(rt) {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
       return { ...room, relayLimitDefault: defaultRelayLimit(room), parts, ...rt.permissionFallbackOf('room', room), ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
-=======
-    // `waiting`: the Bot holds its greeting until the user picks its model or fixes
-    // what failed it. `blocked`: the facts of a failure only the user can fix (turns.js).
-    bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => {
-      const tail = rt.chatTail(rt.chatOf(bot.id))
-      return {
-        ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
-        // `engine` is the Bot's local-agent route, present only on abots.
-        ...(rt.localAgentBadge?.(bot.model ?? bot.appliedModel) !== undefined ? { engine: rt.localAgentBadge(bot.model ?? bot.appliedModel) } : {}),
-        ...(tail ? { lastAt: tail.lastAt, preview: tail.preview } : {}),
-      }
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }),
     // `sessionId` is the group's own Session's current part, `ownParts` its earlier
     // ones; `parts` the members' hidden group Sessions and their earlier segments,
@@ -168,16 +136,9 @@ export function install(rt) {
     // Each Bot's side chats, in creation order. The answers never join the
     // model-visible history; the side panel reads them here.
     sideChats: rt.sideView?.() ?? {},
-<<<<<<< HEAD
     // The DSH bots (`kind: 'dsh'`) and the tasks record (`kind: 'tasks'`): plain dsh
     // Sessions, not Bots.
     agents: Object.values(state.agents).filter(agent => agent.adoptedBotId === undefined && agent.pendingCreation !== true),
-=======
-    // The team's DSH Agent (at most one): plain dsh Sessions, not Bots.
-    agents: Object.values(state.agents),
-    // Sidebar sections that group Bots, group chats and the DSH Agent by workflow.
-    sections: state.sections ?? [],
->>>>>>> vendor/ds-bot-0.3.6-prepared
     // Key names and who may use them; values never leave the host.
     secrets: rt.secretsView(),
     capabilities: rt.capabilityLibraryView(),
@@ -201,15 +162,8 @@ export function install(rt) {
     memory: rt.memoryEnabled !== false,
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
     readOnly: rt.readOnly() ?? null,
-<<<<<<< HEAD
     // Which selector routes each bot type may use (shared/routes.js); absent: all three.
     ...(rt.routePolicy === undefined ? {} : { routePolicy: rt.routePolicy }),
-=======
-    // IM connections (settings → IM): one per chat-app bot the user added.
-    im: rt.imView?.() ?? { connections: [], platforms: [] },
-    // The computer-use switch, the provider it mounts, and each Bot's level and app grants.
-    computer: rt.computerView?.() ?? { enabled: false },
->>>>>>> vendor/ds-bot-0.3.6-prepared
   })
   // What changes without a new revision, sent with every state answer. `learning`:
   // each Bot's pending skill proposals; `learningSettled`: the answered ones of its
@@ -227,7 +181,6 @@ export function install(rt) {
     learningSettled: rt.learningSettledView(),
     connectors: rt.connectorsView(),
     capabilityStatuses: rt.capabilityStatusesView(),
-<<<<<<< HEAD
     ...rt.extended.live(),
     // Per Bot whose model menu a plugin owns, that menu (host-models.js); absent otherwise.
     ...rt.hostModelsView?.(),
@@ -286,33 +239,6 @@ export function install(rt) {
     }
     return out
   }
-=======
-    phone: rt.phoneView(),
-    imStatus: rt.imStatusView?.() ?? {},
-    imVia: rt.imViaView?.() ?? {},
-    // Computer use live state: per-Bot control, leases, pending app cards and holds.
-    // Named apart from the state view's `computer`: the live answer merges into the
-    // same object and would wipe its `enabled` and `provider` fields.
-    computerLive: rt.computerLive?.() ?? {},
-  })
-  // The live fields' sources are spread across the host with no single change
-  // counter, so the serialized answer itself is the detector: a poll whose `live`
-  // still names it gets only the key back, not the fields again. The key carries
-  // a per-run prefix: a window can outlive the host, and a counter that restarts
-  // at 1 would let its stale key name a different answer.
-  const liveRun = randomUUID()
-  let liveSeq = 0
-  let liveCache = null
-  const liveAnswer = () => {
-    const value = live()
-    const json = JSON.stringify(value)
-    if (liveCache?.json === json) return liveCache
-    return liveCache = { key: `${liveRun}:${++liveSeq}`, value, json }
-  }
-  // What a host that only reads the team may still answer.
-  // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'group-rows', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents', 'local-agent-models', 'browser-frame', 'hello', 'notices', 'avatar', 'room-chat', 'usage-summary', 'image'])
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -357,7 +283,6 @@ export function install(rt) {
       if (body.thinking === true) state.prefs.thinking = true
       else if (body.thinking === false || body.thinking === null) delete state.prefs.thinking
     }
-<<<<<<< HEAD
     // The Bot browser's and web_fetch's address lists. Both default to empty, which
     // allows every address, including localhost, LAN and tailnet targets.
     for (const [key, label] of [['browserAllow', 'Allow list'], ['browserDeny', 'Deny list']]) {
@@ -389,20 +314,6 @@ export function install(rt) {
         if (entry.needsKey) throw invalid(`Model ${ref.slice(0, 80)} has no key yet: add one in Connect AI first`)
         state.prefs.backgroundModel = ref
       }
-=======
-    if (body.enterToSend !== undefined) {
-      if (body.enterToSend === false) state.prefs.enterToSend = false
-      else if (body.enterToSend === true || body.enterToSend === null) delete state.prefs.enterToSend
-    }
-    if (body.memoryAutoRecall !== undefined) {
-      if (body.memoryAutoRecall === false) state.prefs.memoryAutoRecall = false
-      else delete state.prefs.memoryAutoRecall
-    }
-    if (body.memoryLimits !== undefined) {
-      const sizes = Object.entries(body.memoryLimits ?? {}).filter(([scope, size]) => MEMORY_LIMIT_SCOPES.has(scope) && Number.isInteger(size) && size >= MEMORY_LIMIT_MIN && size <= MEMORY_LIMIT_MAX)
-      if (sizes.length === 0) delete state.prefs.memoryLimits
-      else state.prefs.memoryLimits = { ...state.prefs.memoryLimits, ...Object.fromEntries(sizes) }
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
     return rt.save()
   }
@@ -472,7 +383,6 @@ export function install(rt) {
       if (CLI_LOGIN.has(endpoint)) return ok(await rt.cliLoginActions[endpoint](body))
       if (endpoint.startsWith('space-')) return ok(await spaceReads.read(endpoint, body, handle))
       switch (endpoint) {
-<<<<<<< HEAD
         case 'agent-access':
           return ok(await agentAccess.owner('view'))
         case 'agent-token-create':
@@ -487,10 +397,7 @@ export function install(rt) {
           return ok(Object.values(state.rooms).map(roomConfig))
         case 'get-room':
           return ok(roomConfig(rt.own(state.rooms, body.id)))
-        case 'state':
-=======
         case 'state': {
->>>>>>> vendor/ds-bot-0.3.6-prepared
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (typeof body.allowPlace === 'string') {
             const place = body.allowPlace.replace(/[\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim()
@@ -573,7 +480,6 @@ export function install(rt) {
           return ok(await rt.earlierPage(String(body.sessionId ?? ''), body.cursor ?? undefined))
         case 'chat':
           await rt.load()
-<<<<<<< HEAD
           return ok(await rt.chatPage(String(body.botId ?? ''), body.cursor ?? undefined))
         // Advanced queries never activate a Session or run a model. The usage query
         // may refresh its own derived ledger; checkpoint is deliberately NOT a read.
@@ -591,9 +497,6 @@ export function install(rt) {
         case 'checkpoint-bot':
           await rt.load()
           return ok(await rt.checkpointBot(body.botId, { sessionId: body.sessionId }))
-=======
-          return ok(await rt.chatPage(String(body.botId ?? ''), body.cursor ?? undefined, body.steps === true))
->>>>>>> vendor/ds-bot-0.3.6-prepared
         // DSH's own whole-log figures for the current part of a Bot's chat, the ones its
         // status bar shows; a window without that bar shows them in the Bot's details.
         case 'run-stats': {
@@ -637,27 +540,10 @@ export function install(rt) {
         case 'update-bot':
           await rt.load()
           return ok(await rt.updateBot(body.id, body))
-<<<<<<< HEAD
         // A model on another route (parts.js): a new conversation with a handoff note.
         case 'switch-route':
           await rt.load()
           return ok(await rt.switchRoute(String(body?.id ?? ''), String(body?.model ?? ''), body?.effort))
-=======
-        // Give up one wait for a hand-off that will not come back: only that sub-work
-        // closes, with an explicit result for the work above it.
-        case 'abandon-work':
-          await rt.load()
-          if (rt.abandonWork?.(String(body.id ?? '')) !== true) return fail('That wait is no longer open', 'bot/stale')
-          return ok(true)
-        // The repair card's Retry, once the user fixed what failed the Bot's turn.
-        case 'resume': {
-          await rt.load()
-          const bot = rt.botOf(String(body.botId ?? ''))
-          if (bot === undefined) return fail('Unknown Bot', 'bot/not-found')
-          await rt.resumeBot(bot)
-          return ok(true)
-        }
->>>>>>> vendor/ds-bot-0.3.6-prepared
         // The avatar library: photos the user imported once, kept beside the team.
         case 'avatar-library':
           await rt.load()
@@ -838,17 +724,9 @@ export function install(rt) {
         case 'mail-sign-in-code':
           await rt.load()
           return ok(await rt.connectorEndpoint(endpoint, body))
-<<<<<<< HEAD
         case 'bot-fresh':
           await rt.load()
           return ok(await rt.startFresh(String(body?.id ?? '')))
-=======
-        case 'phone-set':
-        case 'phone-pair':
-        case 'phone-pair-cancel':
-        case 'phone-remove':
-          return ok(await rt.phoneEndpoint(endpoint, body))
->>>>>>> vendor/ds-bot-0.3.6-prepared
         case 'capability-save':
         case 'capability-delete':
         case 'capability-approve':
@@ -1121,14 +999,7 @@ export function install(rt) {
           await rt.diagnostics.clear()
           return ok(true)
         default:
-<<<<<<< HEAD
           if (added !== undefined) return ok(await added.fn(body, signal))
-=======
-          if (endpoint.startsWith('computer-')) {
-            await rt.load()
-            return ok(await rt.computerEndpoint(endpoint.slice('computer-'.length), body))
-          }
->>>>>>> vendor/ds-bot-0.3.6-prepared
           return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
       }
     } catch (error) {
@@ -1144,7 +1015,6 @@ export function install(rt) {
     }
   }
 
-<<<<<<< HEAD
   const agentAccess = createAgentAccess(rt, handle, { transaction: adminTransaction })
   rt.agentAccess = agentAccess
   ctx.effect(() => {
@@ -1210,54 +1080,6 @@ export function install(rt) {
     requestBody: 'streaming',
     fetch: request => agentAccess.fetch(request),
   }), 'omni-ui: MCP route')
-=======
-  rt.phoneServe(handle)
-
-  // How a user message reaches a Session: a Bot id, a group chat's id, or an earlier
-  // part of either resolves to its current part. `content` is the prompt blocks DSH
-  // takes (text, image, file receipts); `requestId` lands on the message's source.
-  async function sendUser({ sessionId: ref, content, requestId = randomUUID() }) {
-    const past = rt.pastOwners.get(ref)
-    const room = rt.roomOf(ref)
-    const sessionId = rt.botOf(ref) ? rt.chatOf(ref)
-      : room !== undefined ? rt.sessionOfRoom(room)
-        : past?.roomId === undefined && past !== undefined ? rt.chatOf(past.botId)
-          : past !== undefined ? rt.sessionOfRoom(rt.roomOf(past.roomId)) : ref
-    await rt.ensureCapabilities(sessionId)
-    await ctx.sessionController.prompt({
-      requestId,
-      sessionId,
-      mode: 'queue',
-      content,
-    }, AbortSignal.timeout(30_000))
-  }
-
-  // The user's answer to an ask_user card, from the web or an IM chat. A Bot id or an
-  // earlier part of its own chat means the current one.
-  async function answerQuestion(sessionRef, questionId, answer) {
-    const past = rt.pastOwners.get(sessionRef)
-    const sessionId = rt.botOf(sessionRef) ? rt.chatOf(sessionRef) : past && past.roomId === undefined ? rt.chatOf(past.botId) : sessionRef
-    const question = rt.own(state.questions, sessionId)
-    if (question === undefined || question.id !== questionId) throw Object.assign(new Error('This question is no longer open'), { code: 'bot/stale' })
-    const reply = questionReply(question, answer)
-    if (reply === undefined) throw Object.assign(new Error('Nothing to send'), { code: 'bot/invalid' })
-    // Claim the question before queueing so a second answer is refused.
-    delete state.questions[sessionId]
-    try {
-      await rt.ensureCapabilities(sessionId)
-      const agent = await rt.resolveAgent(sessionId)
-      agent.followup(createUserMessage({ content: [{ type: 'text', text: reply.text }], source: reply.source }))
-      await ctx.sessions.flush(agent.session)
-    } catch (error) {
-      state.questions[sessionId] ??= question
-      throw error
-    }
-    await rt.save()
-    return true
-  }
-
-  Object.assign(rt, { sendUser, answerQuestion })
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({

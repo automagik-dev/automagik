@@ -22,7 +22,6 @@ import { textOf } from './text.js'
 
 // Long enough for DSH to finish opening its workspaces after a start.
 export const RESUME_DELAY_MS = 3000
-<<<<<<< HEAD
 // A delivery waiting longer than this was not lost to a restart.
 const QUEUED_KEPT_MS = 24 * 60 * 60 * 1000
 const QUEUED_MAX = 50
@@ -39,8 +38,6 @@ const CUT_SUMMARY = 'A restart cut this task off and it was not picked up again.
 // that died, `aborted`/`disposed` when it stops the turn as it shuts down. Neither means the
 // work is done.
 export const cutByRestart = reason => reason?.kind === 'interrupted' || (reason?.kind === 'aborted' && reason.reason?.kind === 'disposed')
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 export const resumeText = record => [
   'DeepSeek Harness restarted while you were working on this, so your last turn stopped before it finished.',
@@ -364,7 +361,6 @@ export function install(rt) {
   // up, so a send that fails here, or a Session that cannot be opened, leaves them
   // for the next start instead of losing them.
   async function resendQueued(sessionId, list) {
-<<<<<<< HEAD
     // A Session that moved on to a new part since is reached at its current one. One no
     // Bot owns any more (a run whose record is gone) is dropped, not sent to the Bot's chat.
     const current = (args) => {
@@ -374,16 +370,11 @@ export function install(rt) {
     }
     const fresh = list.filter(item => Date.now() - item.at < QUEUED_KEPT_MS && rt.botOf(item.args?.toId) !== undefined
       && current(item.args) !== undefined && taken?.has(item.args.exchangeId) !== true)
-=======
-    const fresh = list.filter(item => rt.botOf(item.args?.toId) !== undefined
-      && sessionFor(sessionId, item.args) !== undefined && taken?.has(item.args.exchangeId) !== true)
->>>>>>> vendor/ds-bot-0.3.6-prepared
     if (fresh.length === 0) return
     const target = sessionFor(sessionId, fresh[0].args)
     const agent = await rt.resolveAgent(target)
     const waiting = new Set([...(agent.inbox?.nextStep ?? []), ...(agent.inbox?.nextTurn ?? [])].map(message => message.source?.exchangeId))
     for (const { args } of fresh) {
-<<<<<<< HEAD
       if (waiting.has(args.exchangeId) || taken?.has(args.exchangeId) === true) continue
       await rt.deliver({ ...args, sessionId: current(args), steer: false, resent: true })
       resent.add(current(args))
@@ -447,18 +438,6 @@ export function install(rt) {
       if (last?.type !== 'turn/end' || !cutByRestart(last.data?.reason)) continue
       Object.assign(task, { status: 'stopped', endedAt: last.time ?? Date.now(), summary: CUT_SUMMARY })
       await rt.save()
-=======
-      if (waiting.has(args.exchangeId)) continue
-      if (taken?.has(args.exchangeId) === true) {
-        forgetQueued(args.exchangeId)
-        continue
-      }
-      // A request that waited through a restart reaches its target late: the work
-      // it is for is marked, so the answer that comes back says so.
-      if (args.role === 'request' || args.role === 'stopped') rt.lateWork?.(args.exchangeId)
-      await deliver({ ...args, sessionId: sessionFor(sessionId, args), steer: false, resent: true })
-        .catch(error => rt.warn('omni-ui: sending again what %s was sent failed: %s', sessionId, error))
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
   }
 
@@ -602,11 +581,7 @@ export function install(rt) {
       if (first?.type === 'turn/end') {
         // The turn ended while Omni was not watching it: what it did is settled from
         // the Session's durable log.
-<<<<<<< HEAD
         await reconcileEnded(sessionId, record).catch(error => rt.warn('omni-ui: settling the work of %s failed: %s', sessionId, error))
-=======
-        await reconcileEnded(sessionId, record, first).catch(error => rt.warn('omni-ui: settling the work of %s failed: %s', sessionId, error))
->>>>>>> vendor/ds-bot-0.3.6-prepared
         continue
       }
       // Still running: noted again, as if it had started here.
@@ -622,7 +597,6 @@ export function install(rt) {
     for (const [sessionId, record] of cut) {
       await resumeTurn(sessionId, record).catch(error => rt.warn('omni-ui: picking up the turn of %s failed: %s', sessionId, error))
     }
-<<<<<<< HEAD
     await healCutSessions(new Set(Object.keys(noted)))
     finish({})
   }
@@ -633,18 +607,6 @@ export function install(rt) {
       rt.warn('omni-ui: picking up interrupted work failed: %s', error)
       finish({ failed: error?.message ?? String(error) })
     }), RESUME_DELAY_MS)
-=======
-    // What a group's members were asked for and will not pick up is settled now.
-    await rt.settleRoomBatches?.()
-  }
-
-  ctx.effect(() => {
-    const pending = Object.keys(interrupted.turns).length > 0 || Object.keys(interrupted.queued).length > 0
-    // With nothing to pick up, the group batches a restart left are settled at once.
-    const timer = pending
-      ? setTimeout(() => void resumeAll().catch(error => rt.warn('omni-ui: picking up interrupted work failed: %s', error)), RESUME_DELAY_MS)
-      : setTimeout(() => void rt.load().then(() => rt.settleRoomBatches?.()).catch(error => rt.warn('omni-ui: settling group batches failed: %s', error)), 0)
->>>>>>> vendor/ds-bot-0.3.6-prepared
     timer?.unref?.()
     // What the turns stopped by this shutdown left stays as last noted.
     return () => {
