@@ -20,6 +20,7 @@ export const OCR_RETRY_MS = 120_000
 export const OCR_CACHE_MAX = 500
 export const MAX_AVATAR_IMAGE = 160_000
 export const ROUTE = '/api/omni-ui'
+<<<<<<< HEAD
 // Pet sheets (pets.js), as bytes beside the JSON endpoints.
 export const PET_ROUTE = `${ROUTE}/pet`
 export const PET_CODEX_ROUTE = `${ROUTE}/pet-codex`
@@ -37,6 +38,8 @@ export const appBrowserBridge = () => process.env.AUTOMAGIK_APP_BROWSER === '1' 
 // drives no browser, leaves the Privacy page to Unfold and waits for Unfold to lead. The same
 // rule is unfold-bot-dsh's unfoldLeads and welcome-dsh's hostOf.
 export const inUnfoldInstance = (env = process.env) => [env.AUTOMAGIK_HOST, env.AUTOMAGIK_PRELOAD].some(value => String(value ?? '').trim().toLowerCase() === 'unfold')
+=======
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 export const MAX_EXCHANGES = 600
 // state.json is written whole on every save, so a long message between Bots or a long
 // group line keeps only its start there. The rest stays where it already is (a message
@@ -58,6 +61,9 @@ export const ROOM_STEP_GAP_MS = 30_000
 export const SOURCE_KIND = 'bot'
 // The fixed reply that opens a fresh conversation part; it is never shown or sent on.
 export const HANDOFF_ACK = 'Noted. I have my handoff note and carry on from here.'
+// A result that arrives after the user gave up waiting for it: it settled once
+// already, so it closes nothing and opens nothing, and its text says why it is late.
+export const LATE_ANSWER = '[Late answer: the user had already given up waiting for this work; its result was settled then.]\n\n'
 // An answer from a question card, in the shape DSH's own late question replies use.
 export const REPLY_KIND = 'user-question-reply'
 // DSH's snapshot of a referenced conversation, logged right after the user's message
@@ -71,21 +77,30 @@ export const ROOM_MODES = ['everyone', 'admin']
 export const ROOM_NAME_MAX = 60
 export const ROOM_NOTICE_MAX = 2000
 export const ROOM_MAX_MEMBERS = 12
+export const SECTION_NAME_MAX = 32
+export const SECTION_COLORS = ['blue', 'orange', 'green', 'violet', 'rose']
 
 // DSH bots: plain dsh entries in the sidebar, not Bots, and the one record that keeps the
 // Sessions of the tasks Bots start (agents.js). Their Sessions are ordinary root Sessions,
 // so the team tools must not be offered to them.
 export const AGENT_NAME = 'Tasks'
 export const AGENT_SESSION_TITLE_MAX = 80
+<<<<<<< HEAD
 export const DSH_BOT_NAME_MAX = 40
 // Every tool this plugin registers for Bots. `read_browser` only exists in the
 // Desktop profile, so a restriction filters this list down to registered names.
+=======
+// Every tool this plugin defines for Bot Sessions; tools.js registers them in
+// each Bot session's own scope. `read_browser` only exists in the Desktop
+// profile, so the list served to one session can be shorter.
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 export const TEAM_TOOLS = [
   'list_bots', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'list_bot_models',
   'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'show_view',
   'request_secret', 'list_secrets', 'group_relay', 'read_own_chat',
   'read_group_chat', 'remember', 'forget', 'recall', 'read_browser',
   'list_capabilities', 'save_capability', 'delete_capability',
+<<<<<<< HEAD
   'attach_capability', 'detach_capability',
   'find_chats', 'list_automations', 'save_automation', 'pause_automation', 'delete_automation',
   'generate_image',
@@ -94,9 +109,19 @@ export const TEAM_TOOLS = [
 // Team tools that take a while (an image takes up to two minutes): in a group they are work,
 // not a quick call.
 export const SLOW_TEAM_TOOLS = Object.freeze(['generate_image'])
+=======
+  'attach_capability', 'detach_capability', 'group_goal', 'list_connectors', 'request_connector',
+]
+// Consecutive automatic admin wakes with no goal progress before the goal waits
+// for the user instead of waking the admin again.
+export const GOAL_IDLE_NUDGES = 2
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 // A member still at work this long after its first tool call lets the round go on; it
 // posts its reply when the work is done.
 export const ROOM_WORK_GRACE_MS = 15_000
+// Consecutive Bot-to-Bot relays with no tool call and only repetitive or ack text
+// before the round parks the remaining calls and asks the user before continuing.
+export const ROOM_IDLE_RELAY_LIMIT = 6
 
 export const OWN_CHAT_LINE_MAX = 400
 // The message an anchor points at is shown whole (up to this), so a long draft takes
@@ -110,3 +135,5 @@ export const HISTORY_PAGES_MAX = 50
 export const HISTORY_TIMEOUT_MS = 20_000
 // Shown when an aside stops at the route's own output limit. The partial answer stays.
 export const ASIDE_LIMIT = 'Answer cut off at the output limit.'
+
+export const STEER_CUT = 'ds-bot/steer'

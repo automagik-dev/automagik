@@ -1,0 +1,13 @@
+apps/bots-dsh/src/host/files.js
+apps/bots-dsh/src/host/folders.js
+apps/bots-dsh/src/host/learning.js
+apps/bots-dsh/src/host/memory-copy.js
+apps/bots-dsh/src/host/memory-entries.js
+apps/bots-dsh/src/host/memory-pending.js
+apps/bots-dsh/src/host/memory-review.js
+apps/bots-dsh/src/host/memory-search.js
+apps/bots-dsh/src/host/memory-tidy.js
+apps/bots-dsh/src/host/memory.js
+apps/bots-dsh/src/host/permissions.js
+apps/bots-dsh/src/host/privacy.js
+apps/bots-dsh/src/host/private-bots.js

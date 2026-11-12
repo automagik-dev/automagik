@@ -58,7 +58,7 @@ async function saveShot(ctx, value) {
       })
       return { text: value.text, attachment }
     } catch (error) {
-      ctx.logger?.warn?.('ds-bot: screenshot could not be stored: %s', error?.message ?? error)
+      ctx.logger?.warn?.('omni-ui: screenshot could not be stored: %s', error?.message ?? error)
     }
   }
   return { text: `${value.text ?? ''} (The screenshot could not be attached.)` }
@@ -66,6 +66,7 @@ async function saveShot(ctx, value) {
 
 /**
  * @param {any} ctx
+<<<<<<< HEAD
  * @param {{
  *   toolDefs: any[],
  *   defineTool: Function,
@@ -95,6 +96,11 @@ export function mountBrowserPlugin(ctx, {
   playwrightUrl, executablePath, actionTimeout, authorize, completeFor, connect, getHold, onHold,
   subscribeHolds, openSession = openBotBrowser, addressPolicy, onAddressRefused, api,
 }) {
+=======
+ * @param {{ toolDefs: any[], defineTool: Function, keyOf: (exec: any) => Promise<string|undefined>, profileRoot: string, downloadRoot?: string, downloadRoots?: (botId: string) => Promise<string[]>, uploadRoots?: (botId: string) => Promise<string[]>, headless: boolean, playwrightUrl?: string, executablePath?: string, actionTimeout?: number, authorize?: (exec: any, botId: string, action: any) => Promise<void>, completeFor?: (exec: any) => Function, connect?: (botId: string, downloadRoots?: string[]) => Promise<string>, getHold?: (botId: string) => any, onHold?: (botId: string, hold: any) => void, subscribeHolds?: (listener: (botId: string, hold: any) => void) => (() => void) | undefined, openSession?: typeof openBotBrowser, api?: object, register?: (tool: any) => void }} options
+ */
+export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRoot, downloadRoot, downloadRoots, uploadRoots, headless, playwrightUrl, executablePath, actionTimeout, authorize, completeFor, connect, getHold, onHold, subscribeHolds, openSession = openBotBrowser, api, register }) {
+>>>>>>> vendor/ds-bot-0.3.6-prepared
   const sessions = new Map()
   // Each Bot's saved tabs (tabs.js), read once and then kept as its sessions save them.
   const savedTabs = new Map()
@@ -144,7 +150,7 @@ export function mountBrowserPlugin(ctx, {
     const open = [...sessions.values()]
     sessions.clear()
     await Promise.all(open.map(session => Promise.resolve(session).then(opened => opened.close(), () => {})))
-  }, 'ds-bot: browser plugin')
+  }, 'omni-ui: browser plugin')
 
   // Closes a Bot's browser and removes its profile directory; used when the Bot is deleted.
   async function drop(botId) {
@@ -155,8 +161,9 @@ export function mountBrowserPlugin(ctx, {
     await rm(join(profileRoot, botId), { recursive: true, force: true }).catch(() => {})
   }
 
+  const registerTool = register ?? (tool => ctx.tools.register(tool))
   for (const spec of toolDefs) {
-    ctx.tools.register(defineTool({
+    registerTool(defineTool({
       name: spec.name,
       description: spec.description,
       parameters: spec.parameters ?? {},
@@ -217,6 +224,10 @@ export function mountBrowserPlugin(ctx, {
   // An object return would be collected as an effect by cordis, so the api is an out-param.
   if (api) {
     api.drop = drop
+<<<<<<< HEAD
     api.savedTabs = savedTabsOf
+=======
+    api.frame = async botId => (await sessions.get(botId))?.frame?.()
+>>>>>>> vendor/ds-bot-0.3.6-prepared
   }
 }

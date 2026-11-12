@@ -1,9 +1,14 @@
+<<<<<<< HEAD
 // Settings → About Automagik: the version, updates for Automagik and DSH, the plugins' versions
 // and the links to the repository. The sidebar's cloud button shows the same update state.
 // Inside the Automagik app the page is the app's: its version, its update and its plugins come
 // from the app (desktop-update.js); in a plain DSH the Bot team's own update (Omni's) shows.
+=======
+// Settings → About Omni: the version, updates for Omni and DSH, and the links to
+// the repository. The sidebar's cloud button shows the same update state.
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 import { createElement as h, useEffect, useState } from 'react'
-import { GitHubMark } from './connectors.js'
+import { GitHubMark } from './connector-marks.js'
 import { whenText } from './feedback.js'
 import { dateLocale, hostText, t } from './i18n.js'
 import { StarLineIcon } from './icons.js'
@@ -19,6 +24,7 @@ const CHEER_MS = 1800
 
 const starCount = count => new Intl.NumberFormat(dateLocale(), { notation: 'compact', maximumFractionDigits: 1 }).format(count)
 
+<<<<<<< HEAD
 // Inside the Automagik app: the app says so itself (its bridge), or the host does.
 const inApp = (update, app) => Boolean(app.bridge) || update.source === 'app'
 
@@ -32,11 +38,18 @@ function botHint(update, app, versions) {
     if (updatesOff(versions)) return t('Updates are off in this copy of Automagik.')
     return (app.bridge ? updatePill(appState(app.state))?.label : null) ?? t('Updates come with the Automagik app.')
   }
+=======
+function botHint(update) {
+>>>>>>> vendor/ds-bot-0.3.6-prepared
   if (update.phase === 'installing') return t('Updating Omni…')
   if (update.phase === 'installed') return t('Restart DSH to start using Omni {version}.', { version: update.installed ?? update.latest })
   if (update.phase === 'updated') return t('Omni {version} is installed.', { version: update.installed ?? update.latest })
   if (update.phase === 'failed') return t('The update did not finish: {reason}', { reason: hostText(update.error ?? '') })
   if (update.available) return t('Omni {version} is available', { version: update.latest })
+<<<<<<< HEAD
+=======
+  if (update.source === 'app') return t('Updates come with the Omni app.')
+>>>>>>> vendor/ds-bot-0.3.6-prepared
   if (update.enabled === false) return t('Update checks are off.')
   if (update.source === 'path') return t('Installed from a local folder; update it there.')
   if (!update.checkedAt) return null
@@ -45,6 +58,26 @@ function botHint(update, app, versions) {
   return `${update.latest ? t('Up to date') : t('Could not check for updates.')} · ${checked}`
 }
 
+<<<<<<< HEAD
+=======
+// The Omni row in the desktop app shows the app's own update state, kept as ownApp on
+// the update value. Anything that is not a state object (DSH Desktop, DSH Web, an
+// unpackaged app) leaves the row with today's "comes with the app" text.
+export function ownAppRow(ownApp) {
+  if (ownApp === null || typeof ownApp !== 'object') return null
+  const version = typeof ownApp.version === 'string' ? ownApp.version : ''
+  switch (ownApp.phase) {
+    case 'checking': return { hint: t('Checking for updates…'), button: null }
+    case 'current': return { hint: t('Up to date'), button: 'check' }
+    case 'downloading': return { hint: t('Downloading {version}…', { version }), button: null }
+    case 'downloaded': return { hint: t('{version} is ready; it installs when you restart', { version }), button: 'restart' }
+    case 'available': return { hint: t('{version} is available', { version }), button: 'open' }
+    case 'failed': return { hint: t('Could not check for updates.'), button: 'check' }
+    default: return null
+  }
+}
+
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 function dshHint(dsh, shown) {
   if (dsh.phase === 'installing') return t('Updating DSH…')
   if (dsh.phase === 'installed') return t('Restart DSH to start using DSH {version}.', { version: dsh.installed ?? dsh.verified })
@@ -178,8 +211,13 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
     h('div', { key: 'hero', className: 'bt-about-hero' },
       h('span', { className: 'bt-about-mark' }, h(BotMark, { look: MAIN_LOOK, bot: { id: 'about' }, size: 52, state: markState, live: true, gaze: true, pokeable: true })),
       h('div', { className: 'bt-about-copy' },
+<<<<<<< HEAD
         h('span', { className: 'bt-about-name' }, 'Automagik'),
         version ? h('span', { className: 'bt-about-version' }, t('Version {version}', { version })) : null),
+=======
+        h('span', { className: 'bt-about-name' }, 'Omni'),
+        update.current ? h('span', { className: 'bt-about-version' }, t('Version {version}', { version: update.current })) : null),
+>>>>>>> vendor/ds-bot-0.3.6-prepared
       repo ? h('a', {
         className: 'bt-star', href: repo, target: '_blank', rel: 'noopener noreferrer', title: t('Star Omni on GitHub'),
         'aria-label': stars === null ? t('Star Omni on GitHub') : `${t('Star Omni on GitHub')} · ${t('{count} stars', { count: stars })}`,
@@ -188,12 +226,17 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
       stars === null ? null : h('span', { className: 'bt-star-count' }, starCount(stars))) : null),
     repo ? h('p', { key: 'ask', className: 'bt-about-ask' }, t('If Omni helps you, a star on GitHub helps more people find it.')) : null,
     h(Section, { key: 'updates', title: t('Updates') },
+<<<<<<< HEAD
       h(Row, { label: ours ? 'Automagik' : 'Omni', hint: botHint(update, app, versions) }, botControl, update.available && update.notesUrl ? h('a', linkProps(update.notesUrl), t("What's new")) : null),
       dsh?.current ? h(Row, { label: 'DeepSeek Harness', hint: dshHint(dsh, dshShown) }, dshControl)
         // With the plugin's own check off, the app still knows the runtime it carries.
         : ours && typeof versions?.dsh === 'string' ? h(Row, { label: 'DeepSeek Harness', hint: t('Version {version}', { version: versions.dsh }) }) : null,
       ...pluginRows({ app, Row })),
     plugins.length > 0 ? h(Section, { key: 'plugins', title: t('Plugins') }, ...plugins) : null,
+=======
+      h(Row, { label: 'Omni', hint: ownRow?.hint ?? botHint(update) }, botControl, update.available && update.notesUrl ? h('a', linkProps(update.notesUrl), t("What's new")) : null),
+      dsh?.current ? h(Row, { label: 'DeepSeek Harness', hint: dshHint(dsh, dshShown) }, dshControl) : null),
+>>>>>>> vendor/ds-bot-0.3.6-prepared
     h(Section, { key: 'links', title: t('Links') },
       repo ? h(Row, { label: t('Source code'), hint: repo.replace(/^https:\/\//, '') }, h('a', linkProps(repo), h(GitHubMark), t('Open'))) : null,
       update.notesUrl ? h(Row, { label: t('Release notes') }, h('a', linkProps(update.notesUrl), t('Open'))) : null,

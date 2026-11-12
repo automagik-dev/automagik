@@ -2,6 +2,7 @@
 
 Omni for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh): a team of long-lived Bots that talk to you, to each other and in group chats, with Omni as the Main Bot. With the Omni channels plugin, Omni also operates your Omni channels, chats and automations inside dsh; with the Omni canvas plugin, it shows what it found as live views in the chat (see [Three plugins](#three-plugins)). It is built on [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) (Apache-2.0, see `VENDORED.md`).
 
+<<<<<<< HEAD
 > Labs release. Features, tools and the saved data format can still change.
 
 The dsh versions it supports are the range in `engines.dsh` in its [`package.json`](package.json); dsh checks that range and does not load the plugin on a version outside it.
@@ -29,11 +30,17 @@ How they fit:
 - **Composer**: a Bot's composer changes with the model it runs on (`src/client/composer-packs.js`). Every Bot's chat shows the model that Bot runs on in its own model menu, which saves to that Bot alone: with thinking levels when the model has them, and on an agent over ACP (`acp-claude`, `acp-codex`) with the levels the agent offers for that model, or without any when it offers none. On a Bot whose plugin owns its model menu, it shows that menu. A group chat, where each member runs on its own model, and a Bot still waiting for its model show none. The plan cell and the activity and usage docks stay Omni's in every pack. Other plugins add a pack with `omni.registerComposerPack({ id, order, match(provider, target), available(env), cells: { permission, model }, hostFor })`.
 - **Data**: all three keep the team's one `state.json` and its lock (automations ride it); `omni.json` is the channels plugin's, in the same folder.
 - **Upgrading from one package**: a team linked to an Omni whose dsh has only this plugin shows a card in the sidebar footer that points to the plugin market for the channels plugin.
+=======
+> Early release (v0.2). Features, tools and the saved data format can still change.
+
+Tested with dsh `0.2.2-rc.1` (Web and Desktop).
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 
 ## Features
 
 - **Long-lived Bots**: each Bot is a dsh Session in the "DS Bot" workspace, with its own name, role, instructions and model.
 - **Working folders**: a Bot can work in a folder you choose instead of the team workspace, and a group chat can set one folder for all its members there. Pick it in the Bot's settings or details panel or in the group's settings, or ask a Bot (`update_bot`, `update_group`). After a change, the chat goes on in a fresh part that starts in the new folder. When a Bot sets a folder outside the team workspace, or adds a Bot to a group that works in one, it asks for your approval if those Bots can only write in their folder. Folders that hold dsh data (`$DSH_HOME`, the team's data) are refused. The team workspace itself moves in Settings > General > Locations; Bots and groups that work there go on in a fresh part in the new folder, and the old folder keeps its files.
+<<<<<<< HEAD
 - **Permission presets**: each Bot runs with its own dsh permission preset (Read only, Workspace or Full access), set in its details panel. A group chat can run all its members with one preset there, in place of their own: turn on **Same for every member** under Permissions in the group's settings. A new Bot starts with the team default, set under Permissions in Settings > Bots. Work a Bot opens never runs wider than the conversation that opens it. A task (`start_task`, a Genie wish) runs at the narrower of its own level and the level that conversation runs at when it starts it, such as a chat lowered with `/permission` or a read-only automation run. A Bot made with `create_bot` starts at the narrowest of its creator's level, that conversation's and its group's, and never gets a tool its creator does not have. A fresh Session a Bot's scheduled task opens starts no wider than that Bot. While a task you scheduled yourself also opens fresh Sessions, DeepSeek Harness does not say which task a fresh Session is for, so those keep the level they start with. A level that cannot be read or compared gives the narrowest one offered. What you start yourself is as before. While DSH's experimental Auto review plugin is on, **Auto review** is a preset too, marked Experimental and confirmed once when picked. Where Auto cannot hold (the plugin is off, or DSH refuses it), the Bot or group runs as Workspace and says so; a chat whose Session was left on Auto opens again once Auto review is back on. When DSH stops offering a saved level (an upgrade renames or drops it), the level stays saved and is not rewritten: a conversation that already runs is lowered to the narrowest level DSH still offers when that is known to allow less than what it has, and is otherwise left as it is; nothing new starts (a task, a greeting, a first turn in a group) until a level is picked or DSH offers the saved one again. Details and Settings → Feedback say which of these happened. Only you set permissions; Bots cannot change them.
 
   Auto works as Workspace on every supported route. Codex uses its own reviewer and Claude Code uses its `auto` mode. API Bots use their own model in a separate request for sandbox escalations; a granted step can leave the sandbox. Hermes, Antigravity and omp use the team's background model and are offered Auto only while one is available. Their own tools run outside DSH's sandbox.
@@ -69,6 +76,11 @@ How they fit:
 
 - **Bots work together**: `message_bot` sends a message to another Bot, `create_bot`, `update_bot` and `delete_bot` add, set up and remove Bots (including a profile photo from a local image file or a data URL), and `ask_user` asks you a question without blocking the other Bots. `show_view` draws a card in a Bot's own chat — text, metrics, tables, progress, choices, confirmations and short forms; an interactive card waits for your answer.
 - **Group chats**: members speak one at a time, and each one reads the latest messages first. A message can `@Name` a member to pass the turn on; type `@` to pick one from a list. **+ → Reference a chat** adds another Bot's chat to a message as context, and in a group the members who answer get it. A member with nothing new to add stays quiet (`[PASS]`). Each member has its own hidden Session per group, so a group never reads a Bot's private chat.
+=======
+- **Permission presets**: each Bot runs with its own dsh permission preset (Read only, Workspace or Full access), set in its details panel. A group chat can run all its members with one preset there, in place of their own: turn on **Same for every member** under Permissions in the group's settings. Only you set permissions; Bots cannot change them.
+- **Bots work together**: `message_bot` sends a message to another Bot, `create_bot` and `update_bot` add and set up Bots (including a profile photo from a local image file or a data URL), and `ask_user` asks you a question without blocking the other Bots. `show_view` draws a card in a Bot's own chat — text, metrics, tables, charts, inputs with local formulas, progress, choices, confirmations, short forms and sandboxed HTML; an interactive card waits for your answer. `/side` (or **Side chat** in the panel's `···` menu) opens a side chat in the right panel that answers from a snapshot of the Bot's chat without running tools or interrupting its work. A Bot can also be marked **Private** in its settings: other Bots cannot read its working folder, memory or chat, and its outbound sharing needs your approval.
+- **Group chats**: in admin-first mode the admin answers first and calls in other members with `@Name`; in all-members mode members speak in order. Members `@`-mentioned in the same message start work in parallel. Type `@` to pick a member from a list, or use **+ → Reference a chat** to attach another Bot's chat as context. A member with nothing new to add stays quiet (`[PASS]`). For multi-stage work, the admin can align on and run a group **Goal** (`group_goal`), assigning tasks per stage and checking evidence before advancing. Each member has its own hidden Session per group, so a group never reads a Bot's private chat.
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 - **Roles and permissions**:
 
   | Who | Can do |
@@ -92,6 +104,7 @@ How they fit:
 - **Side chat**: ask a Bot about its work while it runs, in the side panel (`/side`, or `/btw` as before), without stopping its turn or adding to its chat. Nothing runs to answer.
 - **Images**: for a model that cannot read images, a vision model first turns the image into text.
 - **Secrets**: a Bot asks for an API key or token with a card in its own chat and never sees the value. See [Secrets](#secrets).
+<<<<<<< HEAD
 - **Usage**: Settings → Usage shows token usage by time (24 hours to 12 months, or days picked on a calendar), by Bot and by model, with a page for each Bot and each model. Calls that a Session logs are read from the logs, so older chats count too. Calls that leave no log (checkpoints, handoff notes, the steward, image readings, dsh titles and compaction) are counted while they stream, from the time the plugin runs. Legacy aggregates can omit provider fields; they do not claim a cross-provider cache percentage. Tokens only, no cost.
 - **Official right sidebar**: every Bot chat can open Live as a tab in DSH's own pane, rather than a second fixed rail. DSH owns its collapse, focus, docking and narrow-screen behavior. Existing Browser, side-chat and plugin routes remain available.
 - **Advanced Bot**: Bot Settings has a per-Bot switch, initially off and saved across parts and restarts. It reveals supported native session controls, Context and Stats without changing identity, permissions, model access or context policy. Models and permissions remain managed by the canonical Bot controls. Ordinary DSH keeps its native conversation surface.
@@ -101,14 +114,23 @@ How they fit:
 - **Adopting a DSH bot**: **Adopt as Bot** adds team membership without replacing the DSH identity, native conversation surface, preset, avatar or capabilities. The newest Session becomes its team chat and earlier Sessions remain readable parts; nothing is renamed or recreated. `list_bots`, messages, groups, capabilities and tasks become available. Fresh parts, group member Sessions and tasks inherit its preset. The original DSH registration stays saved with an `adoptedBotId` reference, but is hidden from the standalone roster to avoid duplicate rows.
   - **Rollback**: the local `POST /api/omni-ui` endpoint `agent-bot-rollback`, payload `{ "agentId": "<original DSH id>" }`, removes only the added membership and restores the original registration and team-tool restrictions. It does not archive Sessions. Remove Main Bot/group roles first; rollback refuses new parts or tasks rather than discarding new team history. Ordinary Bot deletion refuses adopted registrations; roll back first. A failed adoption/rollback save restores the pre-operation records. This cannot reconstruct identities already removed by the older destructive implementation: those require the original registration from a backup and verified preset/avatar information; no identity is inferred from a Bot's name.
 - **Make it yours**: name, role, instructions, model and look (20 characters and 12 colors, or a photo from the ones you added) for each Bot. An adopted DSH identity wears DSH's blue whale until it has a look of its own; ordinary Bots retain their identity-derived defaults and a Genie keeps its genie-clay pet; a theme, an accent color and an avatar animation level (quiet, normal or lively) for the team. A pinned Bot or group chat shows a small pushpin in the sidebar. Settings has these pages: General (look), Bots (Main Bots and each Bot's settings), Group chats (each group's settings), Connectors, Capabilities, Scheduled tasks, Usage, Secrets, Feedback and About DS Bot (versions, updates and links).
+=======
+- **Usage**: Settings → Usage shows token usage by time (24 hours to 12 months, or days picked on a calendar), by Bot and by model, with a page for each Bot and each model. Calls that a Session logs are read from the logs, so older chats count too. Calls that leave no log (checkpoints, handoff notes, the steward, image readings, dsh titles and compaction) are counted while they stream, from the time the plugin runs. Tokens only, no cost.
+- **Make it yours**: name, role, instructions, model and look (20 characters and 12 colors, or your own photo from the reusable avatar library) for each Bot; a theme, an accent color, a message layout (bubble or flat) with width sliders, and an avatar animation level (quiet, normal or lively) for the team. A pinned Bot or group chat shows a small pushpin in the sidebar. Settings has these pages: General (look, default model for new Bots, Enter key preference, mode and locations), Models, Bots (Main Bots, each Bot's settings and retained private-Bot folders), Group chats (each group's settings), Connectors, Capabilities, Browser, Scheduled tasks, Usage, Secrets, Feedback and About DS Bot (versions, updates and links).
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 
 ## Install
 
 The [project page](../../README.md#install) has the full steps for dsh Desktop and dsh Web. In short:
 
+<<<<<<< HEAD
 - dsh Desktop: Settings → Plugins → add a `.tgz` of this package (`npm pack` in this folder).
 - Command line: `dsh plugin --profile web add /path/to/automagik-bots-dsh-<version>.tgz`.
 - Or skip dsh setup entirely: the Automagik desktop app ([`apps/desktop`](../desktop/README.md), `omni desktop` from Omni's CLI) ships dsh with this plugin on a home of its own.
+=======
+- dsh Desktop: Settings → Plugins → add `ds-bot` (npm), a `.tgz` file, or `github:Fei2411/DS-Bot#v<version>&path:/ds-bot`.
+- Command line: `dsh plugin --profile desktop add ds-bot` (or `--profile web`).
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 
 To work on the plugins from a checkout, add them to a dsh profile as linked dependencies and bundles (the channels and canvas plugins are optional):
 
@@ -178,6 +200,7 @@ The same card can carry DSH itself: a DS Bot release may name the DSH release it
 
 ## Models
 
+<<<<<<< HEAD
 Model providers are set up with dsh's `llm-pi-ai` plugin in `cordis.patch.yml`. Every Bot runs on one model of its own, from the models DSH serves. A new team's first Main Bot has none, and holds its greeting until it has one. With `@automagik/welcome-dsh`, finishing Connect AI with an AI on gives it (and the Omni Bot) the team's default model, and the greeting goes out then. Otherwise its chat offers that model with one press to start and a "change" link to the model menu; with no model that can run, the card offers ways to set one up. The team's default model is DSH's default model when it is served and its provider has its key, else the first model that can run (a provider's `default` alias after the models it names). While a chat holds only the greeting, one line under it names the model and its provider, with "change". Of the Claude models pi-ai serves on `anthropic`, the menus offer each family's newest (Opus, Sonnet, Haiku, Fable); the older versions and dated snapshots stay served, so a Bot already on one keeps it and its menu still shows it. The Create Bot form starts on the DSH default model. The Bot's details panel and settings (or a Main Bot's `update_bot`) change it; a Bot whose model is no longer served shows the card again. A team saved by an older version keeps the model each Bot last ran on.
 
 **Background model**: the jobs that run beside the chats use one model of the team's, never the Bot's agent: memory review and the memory panel, and, for a chat on an agent over ACP (`acp-claude`, `acp-codex`), the steward's call and the part's note and checkpoint. An agent answers only in its own chat, so it cannot take those. Other chats keep their own model for these, so the provider serves their prefix from cache. The model is the team's pick in Settings → Bots → Background jobs (`prefs.backgroundModel`, any model DSH serves that is not an agent), else DSH's default model (DeepSeek, unless the person chose another there) when it can run, else the first account connected here. A memory call that fails on it is tried once more on the Bot's own model, when that one is not an agent. DSH's own session titles and compaction summaries pick their model in DSH's config (`session-title-llm`'s `provider` and `model`, `compaction-basic`'s `summarizationProvider` and `summarizationModel`); those fields are not live settings, so this setting does not reach them.
@@ -272,6 +295,9 @@ existing account in the Bot's own CLI home. Terminal user settings are not impor
 isolation amendment records the settings migration.
 
 **Agents' tools and history**: what Claude Code and Codex see follows acp-dsh's `dshTools` (its README has the table): with it absent, both get the chat's history as a redacted replay, Claude Code gets the team's tools over the bridge, and Codex keeps only its own tools; the team's tools on Codex need an explicit `dshTools: true`.
+=======
+Model providers are set up in DS Bot's **Settings → Models** (or the Main Bot's setup card) and stored through dsh's `llm-pi-ai` plugin in `cordis.patch.yml` and `.credentials.yaml`. Every Bot runs on one model of its own, from the models DSH serves. A new team's first Main Bot starts on a model card when more than one provider is ready or none is configured yet, and greets the user once a usable model is connected. **Settings → General → New Bots** can set a team default model for newly created Bots: the Create Bot form starts on that team default model when it is served and usable (otherwise the DSH default model, or the first usable model), and a Main Bot's `create_bot` without a named model uses the team default model before falling back to the creator's own model. The Bot's details panel and settings (or a Main Bot's `update_bot`) change a Bot's model; a Bot whose model is no longer served falls back to its last working model or shows the card again. A team saved by an older version keeps the model each Bot last ran on.
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 
 - Give every model a `contextWindow`. DS Bot takes its lines from it: the usable window is the window minus the reply reserve (`maxTokens`), the hard line is 95% of that, and the check line is `checkRatio` of it. A model without `contextWindow` gets the adapter's default (262,144 tokens for `llm-pi-ai`), which may be wrong for that model; a model that reports no window at all counts as 500,000.
 - To send images, the provider needs `defaultInput: [ text, image ]`.
@@ -286,15 +312,20 @@ After each turn, a memory review reads what is new in the conversation and keeps
 - **Three scopes**: each Bot has its own memory; each group chat has a group memory, which its members read in that group only (not in their own chats, and not in other groups); and the team memory is read by every Bot. A Bot writes its own, and any member writes its group's memory from the group. Main Bots and group admins (of any group) also write the team memory; a Main Bot can read and change another Bot's memory when you ask.
 - **Tools**: `remember` saves an entry or replaces one (`replace`), `forget` removes one, and `recall` searches every entry, reads a topic whole, or lists what is saved. In a Bot's own chat they use its own memory by default; in a group chat, the group memory (`scope: "own"` for the Bot's own). The Bot adds the source (a part anchor such as `part 2 #1234`, which `read_own_chat` opens, or the group and the time) and the date; a Bot that writes for others is named with `by:`.
 - **Files**: `MEMORY.md` holds what every conversation needs, and details go in topic files linked from its `## Index` as `[[topic]]`.
-- **In the prompt**: the Bot's own and the team's `MEMORY.md` go into the Bot's system prompt, and in a group Session the group's after them. The section is frozen when a Session starts, so the provider's prompt cache holds; a change shows from the next part or checkpoint, and `recall` finds it at once.
-- **Fixed sizes**: an entry has at most 300 characters, a `MEMORY.md` 4,000, a topic 16,000, and a scope 40 topics. A save past a limit fails and says how to make room.
+- **In the prompt**: the Bot's own and the team's `MEMORY.md` go into the Bot's system prompt, frozen for the conversation part; in a group Session the group's `MEMORY.md` goes in as a snapshot message at the start of the Session instead. What others change later comes as a short update message before the next step, and a turn can bring up matching topic entries as a message. Both leave the prompt as it was, so the provider's prefix cache holds.
+- **Sizes**: only entry text counts. A `MEMORY.md` holds 12,000 characters in a group, 8,000 for a Bot and 4,000 for the team, changeable in Settings, and takes at most 2% of the model's usable window in the prompt. An entry has at most 300 characters and a topic 16,000. A save never fails for room: the oldest entries move to the topic `earlier`, and a full topic continues in a numbered one.
+- **Team memory**: what every Bot always reads takes only what the user says, through `always` on `remember` or the memory panel. Everything else written to the team waits in the topic `shared` for whoever needs it.
+- **Entries**: each has a short id, an optional `until` after which it no longer shows, and a pin the user sets, which automatic changes leave alone.
+- **Tidy**: once a day at most, a background pass merges repeats and archives what is over in each memory that changed, at most a fifth of its entries at a time. The memory panel shows each pass and undoes it whole.
+- **Between Bots**: a Bot can read a public Bot's memory with `recall`. Nothing of another Bot's reaches it unless it looks.
 - **Safety**: memory is data, not instructions. An entry that looks like a key or token is refused, and a Bot is told not to save what a web page, file or tool result asks it to remember.
-- **History**: files change in place, and `journal.jsonl` keeps every change with the line before and after. When a Bot or a group chat is deleted, its memory moves to `archive/`.
+- **History**: files change in place, and `journal.jsonl` keeps every change with the line before and after (a private Bot keeps its own `journal.jsonl` in its folder). When a Bot or a group chat is deleted, its memory moves to `archive/`.
 
-**The memory panel**: the details panel of a Bot, and of a group chat, has a Memory row with the entry count; Manage opens the memory panel. A Bot's panel shows its own memory and the team memory; a group's shows the group memory.
+**The memory panel**: the details panel of a Bot, and of a group chat, has a Memory row with the entry count; Manage opens the memory panel. A Bot's panel shows its own memory and the team memory; a group's shows the group memory. Each entry can be moved to the team memory, another Bot, or a group chat; it keeps its end date and pin, and in the team memory it starts as "Only when needed".
 
 - **Memory summary**: a model writes a short summary in prose from every entry, in the interface language: the Bot's, or for a group its admin's. It is written again when the entries change, and the ⋯ menu can regenerate it.
 - **All entries**: the ⋯ menu lists every entry by scope and topic, with its date and author, and the size of each `MEMORY.md`. Remove takes two clicks.
+- **Change history**: the ⋯ menu lists the changes recorded in `journal.jsonl` (newest first) and lets you undo an add, update or removal in two clicks while the entry still matches what that change left.
 - **Ask or update**: ask what the Bot remembers, or tell it what to add, correct or remove. One model call answers from the entries only, and its changes go through the same checks as the tools.
 - A line in the chat ("Memory updated") shows when a Bot changes memory and opens the panel. When memory changes in the background, the capsule at the top of the chat (the Bot's, or the group's) stretches to say "Memory updated" for a moment; clicking it opens the memory panel.
 
@@ -349,7 +380,11 @@ With both lists empty, prompt-injected channel text can still reach localhost se
 
 ## Bot browser
 
+<<<<<<< HEAD
 Every Bot has a browser of its own, on by default (`browserPlugin: false` turns it off). It is the Chrome, Edge, Chromium or Brave already on this computer, driven through `playwright-core`: nothing is downloaded. Without one, a Bot that needs a browser says so and asks you to install Chrome.
+=======
+In dsh Desktop and the desktop app, each Bot has its own browser panel in the right column (open a page from the Bot's details panel or the panel bar's `···` menu).
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 
 - **A profile per Bot**, in `browser-profiles/<id>/`: its sign-ins and cookies stay between runs and belong to that Bot only. Deleting a Bot deletes its profile.
 - **Tabs come back**: the Bot's open tabs (address and title) are saved there as they change and reopen at its next browser call after a crash or a restart. A browser that went away (closed, crashed) opens again at that call.
@@ -384,6 +419,10 @@ In dsh Desktop, a Bot's chat header also has a globe button. It opens that Bot's
   - It never reads the values of password, credit card (`autocomplete="cc-*"`) or one-time code fields.
   - Limits: 400,000 characters, 150,000 nodes, 5,000 rows per table, 3,000 links and controls, 1.5 seconds. A cut result says so.
   - It cannot read cross-origin iframes (one line with the address), closed shadow roots, canvas content (online editors, maps), or text in CSS `::before` / `::after`. On pages that render on demand, only the rendered part is read.
+<<<<<<< HEAD
+=======
+  - Without a browser plugin, `read_browser` is read-only. When a browser plugin (`refs`, `script` or `task`; see [`browser-plugins/`](../browser-plugins/)) is enabled in **Settings → Browser**, Bots can open, inspect and interact with pages in their own profile (`bot/browser-profiles/<botId>/`); in the desktop app they share the panel's tabs with you, hand off sign-in or payment steps via a chat card (`browser_handoff`), and yield whenever you take over.
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 - **Addresses**: http and https only. localhost and LAN addresses are allowed; cloud metadata addresses (such as `169.254.x.x`) and dsh's own ports are not.
 - The browser panel and the details drawer share the right column; opening one closes the other. Switching chats switches the panel to that Bot.
 
@@ -423,7 +462,12 @@ Files in `ui/`:
 | File | Content |
 |---|---|
 | `state.json` | The team: Bots, groups, Bot-to-Bot messages, preferences and open questions. A long message keeps only its first 2,000 characters here; all of it is in the Session it went to. |
+<<<<<<< HEAD
 | `group-lines/` | Long group lines, up to the 20,000 characters a member reads, one file per line; each is removed when its line leaves the group's latest 60 lines or the group is deleted |
+=======
+| `ledger/` | Everything said in each group, whole, one append-only file per group (`group-<id>.jsonl`); removed with the group. `state.json` keeps only a group's latest 60 lines, cut to their start |
+| `handoff-results/` | The whole result of a piece of work a Bot handed on, when it is longer than the 2,000 characters `state.json` keeps, one file per result; each is removed once the answer it went into has gone up |
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 | `state.lock` | The dsh that is using this data (pid and host), its mtime bumped as a heartbeat. It is removed when that dsh exits; a leftover whose heartbeat has stopped is taken over by the next dsh to load. |
 | `chat-index.sqlite` | Full-text index of older chat parts (`read_own_chat`); rebuilt if deleted |
 | `usage.sqlite` | Token counts for the Usage page; rebuilt from the Session logs if deleted, losing only the calls outside the logs and the names of deleted Bots |
@@ -474,7 +518,11 @@ dev/check.sh                             # all checks (see below)
 - **Ports**: every script takes `SLOT=n` (0-9, default 0) so that several people or sessions on one machine do not collide: Web bench `31n0` and mock `88n0`, smoke `31n1` and `88n1`, Desktop mock `88n2`, and so on. A Desktop uses about 1 GB of memory; stop it when you are done.
 - **Real models** (these cost tokens): `dev/steward-eval.mjs` sends hand-written conversation endings through the context steward's own prompt to an OpenAI-compatible route (or, with `--api messages`, an Anthropic Messages route such as DeepSeek's official one) and checks each decision. `dev/llm-tap.mjs <port> <upstream base URL> <log.jsonl> [body dir]` is a logging pass-through for either format: point a provider's `baseURL` at it, and it writes one JSON line per call (steward, checkpoint, handoff note or main turn, the Bot's name, token usage, the answer, and where the request first differs from the same Bot's previous one, which is what a provider's cache can reuse; never headers). With a body dir it also saves every request body. Each file explains its use at the top.
 - **Screenshots**: `dev/ui-shots.mjs` works for both apps (`desktop <dsh repo> <dir> <renderer port>` or `web <dsh repo> <dir> <bench name> <web port>`).
+<<<<<<< HEAD
 - `bun run test` (Node runs the tests, as it runs DSH) loads the `@deepseek-ai/*` packages from the deepseek-harness checkout, else from `dev/harness` (`bun run harness`). The channels and canvas plugins' tests also load this plugin's `index.js`, `test/fake-ctx.js` and committed `client.js` from this folder, to compose the team with their own runtimes.
+=======
+- `npm test` loads the `@deepseek-ai/*` packages from `dev/harness/` (`npm run harness`) or `DSH_HARNESS`.
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 
 ## Layout
 

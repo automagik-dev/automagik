@@ -1,5 +1,5 @@
-// Browser storage keys, under this plugin's own prefix. A DSH may run upstream DS Bot
-// beside Omni on the same origin, and DS Bot keeps its own values under ds-bot: and its
+// Browser storage keys, under this plugin's own prefix. A DSH may run upstream Omni
+// beside Omni on the same origin, and Omni keeps its own values under omni-ui: and its
 // earlier names, so Omni never reads, moves or removes keys outside its prefix.
 export const STORAGE = {
   unread: 'omni-ui:unread',
@@ -9,14 +9,23 @@ export const STORAGE = {
   surface: 'omni-ui:surface',
   agentSessions: 'omni-ui:agent-sessions',
   browserWidth: 'omni-ui:browser-width',
+<<<<<<< HEAD
   browsers: 'omni-ui.browser.v2',
   permissionAsked: 'omni-ui:permission-asked',
+=======
+  sidebar: 'omni-ui:sidebar',
+  browsers: 'omni-ui.browser.v2',
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 }
 
-// No legacy names: the keys before this prefix were shared with DS Bot.
+// No legacy names: the keys before this prefix were shared with Omni.
 const LEGACY_PREFIXES = []
 // The v1 store kept one page per Bot; v2 keeps a tab strip per Bot.
+<<<<<<< HEAD
 const LEGACY_BROWSER_KEYS = []
+=======
+const LEGACY_BROWSER_KEYS = ['omni-ui.browser.v1', 'dsh-bot.browser.v1']
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 // The saved theme only paints the first frame before the team loads; it follows the
 // host's rename of the theme ids.
 const LEGACY_THEMES = { grok: 'mono' }

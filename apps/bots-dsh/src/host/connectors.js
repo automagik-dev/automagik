@@ -100,13 +100,13 @@ export function install(rt) {
       await unmount()
       mount = { token }
       status = { state: 'error', error: reason(error) }
-      rt.warn('ds-bot: GitHub connector failed: %s', status.error)
+      rt.warn('omni-ui: GitHub connector failed: %s', status.error)
     }
   }
 
   // One change at a time; `force` connects again even when the token is the same.
   const sync = (force = false) => {
-    queue = queue.then(() => reconcile(force)).catch(error => { rt.warn('ds-bot: connectors: %s', reason(error)) })
+    queue = queue.then(() => reconcile(force)).catch(error => { rt.warn('omni-ui: connectors: %s', reason(error)) })
     return queue
   }
 
@@ -165,7 +165,7 @@ export function install(rt) {
       stopped = true
       void unmount()
     }
-  }, 'ds-bot: connectors')
+  }, 'omni-ui: connectors')
 
   Object.assign(rt, { connectorsView, connectorEndpoint, secretsChanged: () => { void sync() } })
 }

@@ -1,0 +1,33 @@
+{
+  "phase": "Step 1 only; unresolved; not a shippable merge",
+  "head": "8ff30182c39875bcc7339765eb2dd02652c1460d",
+  "mergeHead": "d2e08a545cbe542954164e7f4b1aac60a9611bfb",
+  "rawVendor": "abfe3341ffa393d668be5cc6a643170c5f3d44cf",
+  "upstream": "a66cc737cfb6c3d8a2597e748cded6cab1206dd3",
+  "baseVendor": "a10155871639cf8b14cd73f58965ba4485cc5a29",
+  "counts": {
+    "A": {
+      "assigned": 104,
+      "conflicts": 18
+    },
+    "B": {
+      "assigned": 13,
+      "conflicts": 4
+    },
+    "C": {
+      "assigned": 55,
+      "conflicts": 6
+    },
+    "D": {
+      "assigned": 224,
+      "conflicts": 30
+    },
+    "E": {
+      "assigned": 452,
+      "conflicts": 49
+    }
+  },
+  "conflicts": 107,
+  "snapshotFiles": 2722,
+  "checkpointBranch": "merge/ds-bot-0.3.6-snapshot"
+}

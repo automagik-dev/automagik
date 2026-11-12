@@ -111,13 +111,13 @@ export function install(rt) {
     const saved = typeof owner?.model === 'string' ? splitRef(owner.model).provider : undefined
     if (leavesCli(failed, fallback) && saved === failed.provider && rt.sessionWide?.(failedIn, agent.session) === true) {
       rt.warn(
-        'ds-bot: %s failed on %s (%s); it stays there, at Full access no other model takes over',
+        'omni-ui: %s failed on %s (%s); it stays there, at Full access no other model takes over',
         owner.name ?? agent.id, label(failed), failure.code,
       )
       try {
         agent.session.append('user/message', stayNotice(failed), { surfaceOp: 'append' })
       } catch (error) {
-        rt.warn('ds-bot: the notice that the Bot stays on its CLI was not written: %s', error)
+        rt.warn('omni-ui: the notice that the Bot stays on its CLI was not written: %s', error)
       }
       return decided
     }
@@ -128,7 +128,7 @@ export function install(rt) {
     try {
       agent.model.select({ provider: fallback.provider, model: fallback.model })
     } catch (error) {
-      rt.warn('ds-bot: the fallback route was not recorded: %s', error)
+      rt.warn('omni-ui: the fallback route was not recorded: %s', error)
       return decided
     }
     if (!restore.has(agent.id)) {
@@ -142,7 +142,7 @@ export function install(rt) {
     const sessionId = agent.session?.id
     if (sessionId !== undefined && typeof turn === 'number') armed.set(sessionId, turn)
     rt.warn(
-      'ds-bot: %s failed on %s (%s); the next turn continues on %s',
+      'omni-ui: %s failed on %s (%s); the next turn continues on %s',
       rt.botOf?.(agent.id)?.name ?? agent.id, label(failed), failure.code, label(fallback),
     )
     wake(agent, fallbackNotice(failed, fallback, failure), turn)
@@ -153,7 +153,7 @@ export function install(rt) {
   function unarm(agent, error) {
     const sessionId = agent.session?.id
     if (sessionId !== undefined) armed.delete(sessionId)
-    rt.warn('ds-bot: the fallback turn was not woken: %s', error)
+    rt.warn('omni-ui: the fallback turn was not woken: %s', error)
   }
   function send(agent, notice) {
     try {
@@ -206,7 +206,7 @@ export function install(rt) {
       try {
         pending.agent.model.select(pending.route)
       } catch (error) {
-        rt.warn('ds-bot: the Bot\'s own model was not restored: %s', error)
+        rt.warn('omni-ui: the Bot\'s own model was not restored: %s', error)
       }
     }
   })

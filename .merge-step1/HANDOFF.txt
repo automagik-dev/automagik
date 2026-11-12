@@ -1,0 +1,14 @@
+Owner lists are repo-relative and disjoint. They cover the plugin's full tracked inventory, including unchanged supporting files and deletions, so owners can integrate clean additions without crossing lists. They are permission boundaries, not requests to edit every file.
+All test files belong to E. A-D send their regression requirements to E; do not edit tests outside the list. D alone owns every client source file. No subagents.
+A owns shared runtime integration: channel.js, constants.js, prompt.js, store.js, roster.js, parts.js, usage.js, and group/ledger/goals. B and C send required shared changes to A.
+B owns memory, learning, private Bots, existing desktop privacy, permissions, folders and files. Daily cleanup/archive movement stays OFF; private Bots opt-in; learning ON.
+C owns connectors, browser, Computer use, Office, secrets and capabilities. Computer use starts OFF per Bot. Upstream phone/IM modules are assigned C for the agreed removal or integration decisions; Pocket and Omni retain their lanes.
+D owns all client files, including clean additions. Keep our sidebar, settings seat, route-first model picker and Spanish strings for the pack. The NOT SET UP text change is the explicit service-default trap only.
+E owns mechanics, all tests, docs, dependency locks and generated artifacts. Keep package-lock deleted; update Bun lock and license notices, including upstream root NOTICE additions. Update VENDORED.md and .upstream-sha after assembly.
+E holds index.js, but the lead integrates module order only in Step 3, after A-D. Both privacy modules must remain installed with different names. client.js is unresolved and MUST be rebuilt, never hand-merged. office.js also needs its proper rebuild; upstream link build needs removing with the unused phone layer.
+Usage v4 already has an incoming additive, shape-based upgrade. A must compose marks.listed with our usage_details and retain all existing live rows. E must prove upgrades from both version-3 shapes and older supported formats.
+Store version 2 must retain our fail-closed reader and upgrade 0/1 without rewriting acp-* model identifiers. Old state-version assertions and connector CIMD/default fixtures need updating by E.
+Generated bundles retain upstream text until the Step 3 rebuild. The clean source scan is not a claim that bundles or the assembled product are ready to ship.
+No file is unassigned. Cross-owner contracts are the shared runtime files, tests, index.js module order, connector state/UI, memory/private-Bot hooks, and final generated artifacts. Coordinate by passing requirements to the named owner.
+Step 3 waits for the user's word, owner deliveries and the merged F1-F5 fix pack. Do not assemble, finish the merge, rebuild bundles, gate or open a PR yet.
+Before the PR may merge, the user supplies a COPY of today's real data folder for the required upgrade proof. Never use live data.

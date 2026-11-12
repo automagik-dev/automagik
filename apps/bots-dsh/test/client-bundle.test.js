@@ -27,7 +27,11 @@ test('client.js registers a factory that exports apply and inject', () => {
 
   const requested = []
   const platform = {
+<<<<<<< HEAD
     'react': { createElement: () => null, Fragment: Symbol('Fragment'), useState: initial => [initial, () => {}], useEffect: () => {}, useMemo: make => make(), useRef: current => ({ current }), createContext: value => ({ Provider: () => null, _currentValue: value }), Component: class {} },
+=======
+    'react': { Component: class {}, createElement: () => null, Fragment: Symbol('Fragment'), useState: initial => [initial, () => {}], useEffect: () => {}, useMemo: make => make(), useCallback: fn => fn, useRef: current => ({ current }), useId: () => 'id', useSyncExternalStore: (sub, get) => get(), createContext: initial => ({ value: initial, Provider: () => null }), useContext: ctx => ctx.value },
+>>>>>>> vendor/ds-bot-0.3.6-prepared
     'react-dom': { createPortal: node => node },
     '@deepseek-ai/dsh-client-ui-primitives': { MarkdownText: () => null },
   }

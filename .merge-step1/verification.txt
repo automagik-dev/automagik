@@ -1,0 +1,4 @@
+Source scan: no ACP route migration, upstream service defaults, upstream brand text or storage prefix.
+General settings preserved; guarded test command; no build-link step; state 2 reads 0/1/2; usage 4 has no table drops; privacy modules and tests separated.
+Syntax checks passed for the six clean trap modules and the prepared store/usage sources.
+All 107 conflicts have exactly one owner. No unrelated paths changed. No gate, services or mutants run.

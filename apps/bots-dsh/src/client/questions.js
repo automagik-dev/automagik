@@ -1,6 +1,12 @@
 import { createElement as h, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { CloseIcon, CheckIcon } from './icons.js'
+<<<<<<< HEAD
 import { hostText, t } from './i18n.js'
+=======
+import { CellEmpty } from './cell-empty.js'
+import { sendsOnEnter } from './enter-key.js'
+import { t } from './i18n.js'
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 import { useDockHold } from './card-hold.js'
 import { createSource, heldCardKey } from './sources.js'
 
@@ -61,7 +67,7 @@ export function useOptionKeys(count, onPick, ownRef) {
 
 // A question shows two ways: as a bubble in the transcript, and raised when it
 // sits in the dock above the composer.
-function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false, ownAnswer = false, raised = false }) {
+function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false, ownAnswer = false, raised = false, enterToSend = true }) {
   const [own, setOwn] = useState('')
   const [picked, setPicked] = useState([])
   const ownRef = useRef(null)
@@ -93,7 +99,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
     'aria-keyshortcuts': hints ? ownLetter?.toLowerCase() : undefined,
     onChange: (event) => { if (!busy) { onInteract?.(); setOwn(event.target.value) } },
     onKeyDown: (event) => {
-      if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+      if (event.key !== 'Enter' || !enterToSend || event.shiftKey || event.nativeEvent.isComposing) return
       event.preventDefault()
       submit()
     },
@@ -145,9 +151,16 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
     foot)
 }
 
-// The answered card left in the transcript: the chosen rows, muted, with a check.
-export function SettledQuestion({ question, answer }) {
+// How a card closed without an answer on it reads on its badge.
+export const closedLabel = closed => t(closed === 'replied' ? 'Answered by message' : 'Dismissed')
+
+// The settled card left in the transcript, read-only and compact: the question,
+// muted, and only what the user chose, each under the letter it had on the card;
+// an own answer takes the letter after the options. A card closed without an
+// answer (`closed`, or no answer) keeps only the question and a badge.
+export function SettledQuestion({ question, answer, closed }) {
   const options = optionsOf(question)
+<<<<<<< HEAD
   const wording = wordingOf(question), prompt = wording.prompt
   const chosen = [...(answer.selected ?? []), ...(answer.custom ? [answer.custom] : [])]
   if (chosen.length === 0) {
@@ -165,6 +178,24 @@ export function SettledQuestion({ question, answer }) {
         h('span', { className: 'bt-q-body' }, h('span', { className: 'bt-q-label' }, wording.label(label))),
         h('span', { className: 'bt-q-check', title: t('Selected') }, h(CheckIcon)))
     })))
+=======
+  const prompt = question?.question ?? ''
+  const selected = Array.isArray(answer?.selected) ? answer.selected : []
+  const custom = typeof answer?.custom === 'string' ? answer.custom.trim() : ''
+  const answered = closed === undefined && (selected.length > 0 || custom !== '')
+  const chosen = answered ? [
+    ...selected.map(label => ({ label, at: options.findIndex(option => option.label === label) })),
+    ...(custom !== '' ? [{ label: custom, at: options.length }] : []),
+  ] : []
+  return h('div', { className: answered ? 'bt-q bt-q-settled bt-q-answered' : 'bt-q bt-q-settled bt-q-dismissed', role: 'group', 'aria-label': prompt },
+    h('div', { className: 'bt-q-head' },
+      h('div', { className: 'bt-q-text' }, prompt ? h('p', { className: 'bt-q-title' }, prompt) : null),
+      answered ? null : h('span', { className: 'bt-q-badge' }, closedLabel(closed))),
+    chosen.length > 0 ? h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Your answer') }, chosen.map(({ label, at }, index) =>
+      h('div', { key: `${label}-${index}`, className: 'bt-q-opt', title: t('Selected') },
+        at >= 0 ? h('span', { className: 'bt-key', 'aria-hidden': true }, keyLetter(at)) : null,
+        h('span', { className: 'bt-q-body' }, h('span', { className: 'bt-q-label' }, label))))) : null)
+>>>>>>> vendor/ds-bot-0.3.6-prepared
 }
 
 export function QuestionCard({ matched }) {
@@ -187,12 +218,12 @@ export function QuestionCard({ matched }) {
   return h(QuestionView, { key: index, question, onAnswer, onDismiss: () => pending.dismiss(), ownAnswer: question.intent?.kind !== 'approval', raised: true })
 }
 
-export function PendingQuestion({ sessionId, question, actions, inline }) {
+export function PendingQuestion({ sessionId, question, actions, inline, enterToSend = true }) {
   const [answered, setAnswered] = useState(null)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const hold = useDockHold(sessionId, 'question', question.id, actions, inline)
-  if (answered === question.id) return null
+  if (answered === question.id) return h(CellEmpty)
   const run = (make) => {
     if (busyRef.current) return
     hold()
@@ -208,7 +239,7 @@ export function PendingQuestion({ sessionId, question, actions, inline }) {
   const onAnswer = answer => run(() => actions.answerQuestion(sessionId, question.id, { selected: answer.selected ?? [], custom: answer.custom ?? '' }))
   const onDismiss = () => run(() => actions.dismissQuestion(sessionId))
   return h('div', { className: inline ? 'bt-q-inline' : 'bt-q-dock' },
-    h(QuestionView, { key: question.id, question, onAnswer, onDismiss, onInteract: hold, busy, ownAnswer: question.allowCustom === true, raised: !inline }))
+    h(QuestionView, { key: question.id, question, onAnswer, onDismiss, onInteract: hold, busy, ownAnswer: question.allowCustom === true, raised: !inline, enterToSend }))
 }
 
 // Questions asked by a tool call render inline at that call (see ToolCell); the dock
@@ -216,19 +247,26 @@ export function PendingQuestion({ sessionId, question, actions, inline }) {
 // loads. A card the user starts editing stays in the dock until it closes.
 export function QuestionDock({ sessionId, useRoster, useCards, useHeldCards, actions }) {
   const question = useRoster(value => value.questions?.[sessionId])
+  const enterToSend = useRoster(value => sendsOnEnter(value.prefs))
   const drawn = useCards?.(state => state[sessionId]?.[question?.callId] > 0) === true
   const held = useHeldCards?.(state => state[sessionId]?.[heldCardKey('question', question?.id)] > 0) === true
-  if (question === undefined || (question.callId && drawn && !held)) return null
-  return h(PendingQuestion, { key: JSON.stringify([sessionId, question.id]), sessionId, question, actions, inline: false })
+  const inPart = (question?.callSessionId ?? sessionId) === sessionId
+  if (question === undefined || (inPart && question.callId && drawn && !held)) return null
+  return h(PendingQuestion, { key: JSON.stringify([sessionId, question.id]), sessionId, question, actions, inline: false, enterToSend })
 }
 
 // An answered card in the transcript: the question stays where it was asked, with the
 // answer marked.
 export function AnsweredCell({ node }) {
   const data = node.data ?? {}
-  const questions = Array.isArray(data.questions) ? data.questions : []
+  // The reply text is ds-bot's own payload and keeps each question's options; the
+  // pairs DSH reads out of it may drop them.
+  let sent = null
+  try { sent = typeof data.text === 'string' ? JSON.parse(data.text) : null } catch { sent = null }
+  const asked = Array.isArray(sent?.questions) ? sent.questions.filter(item => typeof item?.id === 'string' && typeof item.question === 'string') : []
+  const questions = (Array.isArray(data.questions) ? data.questions : []).map(question => ({ ...asked.find(item => item.id === question.id), ...question }))
   if (questions.length === 0) {
-    return data.text ? h('div', { className: 'bt-urow' }, h('div', { className: 'bt-ububble' }, data.text)) : null
+    return data.text ? h('div', { className: 'bt-urow' }, h('div', { className: 'bt-ububble' }, data.text)) : h(CellEmpty)
   }
   const answers = Array.isArray(data.answers) ? data.answers : []
   return h('div', { className: 'bt-q-inline' }, questions.map(question => h(SettledQuestion, {

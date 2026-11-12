@@ -1,7 +1,13 @@
 {
+<<<<<<< HEAD
   "name": "@automagik/bots-dsh",
   "version": "3.136.2",
   "description": "Omni for DeepSeek Harness: a team of long-lived Bots with Omni as the Main Bot; its channels and canvases come with @automagik/omni-channels-dsh and @automagik/omni-canvas-dsh",
+=======
+  "name": "ds-bot",
+  "version": "0.3.6",
+  "description": "DS Bot: a team of long-lived Bots for DeepSeek Harness, with Main Bots, Bot-to-Bot messages and group chats",
+>>>>>>> vendor/ds-bot-0.3.6-prepared
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -33,8 +39,14 @@
     "index.js",
     "src/host/",
     "src/shared/",
+    "src/office/",
     "client.js",
+<<<<<<< HEAD
     "locale/",
+=======
+    "link.js",
+    "office.js",
+>>>>>>> vendor/ds-bot-0.3.6-prepared
     "web-search.js",
     "cordis.patch.yml",
     "README.md",
@@ -43,7 +55,7 @@
   ],
   "scripts": {
     "build": "node scripts/build-client.mjs",
-    "test": "node --import ./test/harness-resolve.mjs --test \"test/*.test.js\"",
+    "test": "node ../../scripts/test-guard.mjs --import ./test/harness-resolve.mjs --test --test-timeout=120000 --test-concurrency=2 \"test/*.test.js\"",
     "lint": "node scripts/lint.mjs",
     "harness": "bun install --cwd dev/harness --no-save --no-summary",
     "check": "sh dev/check.sh",
@@ -56,6 +68,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-scope": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/dsh-web": "*"
   },
@@ -68,11 +81,28 @@
     }
   },
   "devDependencies": {
+<<<<<<< HEAD
     "@modelcontextprotocol/sdk": "1.32.2",
     "esbuild": "0.28.2"
   },
   "engines": {
     "dsh": ">=0.2.2-rc.2 <0.3.0-0",
     "node": ">=24.9"
+=======
+    "@xmldom/xmldom": "0.9.12",
+    "esbuild": "0.28.2",
+    "qrcode-generator": "2.0.4"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "deep-view": "0.1.2",
+    "imapflow": "2.9.1",
+    "jpeg-js": "0.4.4",
+    "mailparser": "3.12.4",
+    "nodemailer": "10.2.1",
+    "playwright-core": "1.64.1",
+    "pngjs": "7.0.0",
+    "ws": "8.18.3"
+>>>>>>> vendor/ds-bot-0.3.6-prepared
   }
 }

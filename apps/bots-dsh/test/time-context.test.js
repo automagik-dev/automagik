@@ -78,16 +78,25 @@ test('a loaded DSH clock gets no second clock in either listener order', async (
     const ctx = fakeContext({
       services: {
         sessionProjections: {
+<<<<<<< HEAD
           // dsh 0.2.2 hands back a handle whose stateOf reads that unit's fold.
           register: (definition) => {
             projections.set(definition.key, definition)
             return { stateOf: () => definition.init(), dispose: async () => {} }
+=======
+          // DSH 0.2.2's clock reads its state through the handle register returns.
+          register: (definition) => {
+            projections.set(definition.key, definition)
+            return { stateOf: () => definition.init() }
+>>>>>>> vendor/ds-bot-0.3.6-prepared
           },
           stateOf: (_session, key) => projections.get(key)?.init(),
         },
       },
     })
     ctx.sessionProjections = ctx.get('sessionProjections')
+    // DSH 0.2.2's clock checks that its plugin is still loaded before each step.
+    ctx.fiber = { assertActive() {} }
     // Prepended listeners run last-registered first.
     ctx.on = (name, listener) => { ctx.listeners.set(name, [listener, ...(ctx.listeners.get(name) ?? [])]) }
     const rt = { ctx, config: { timeZone: 'UTC' }, load: async () => {}, isBotSession: () => true, async* eventsBackwards() {} }
