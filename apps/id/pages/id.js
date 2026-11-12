@@ -423,7 +423,7 @@
       // Asked to create: the new account's sign-in is reported with `created`, not the query.
       const omitted = mustCreate;
       try {
-        if (omitted && signedIn) { await call('/api/auth/sign-out', {}); signedIn = false; }
+        if (signedIn) { await call('/api/auth/sign-out', {}); signedIn = false; }
         const options = await call('/api/auth/passkey/generate-register-options');
         const credential = await navigator.credentials.create({ publicKey: creationOptions(options) });
         mood('work');

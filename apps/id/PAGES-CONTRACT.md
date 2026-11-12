@@ -109,6 +109,10 @@ Authentication:
 
 Account creation:
 
+**Create a passkey** always creates a fresh account. If a session is active, the
+page signs out before requesting registration options. Both registration steps
+ignore session identity while retaining the WebAuthn challenge cookie.
+
 1. `GET /api/auth/passkey/generate-register-options`, no body. Optional query
    `authenticatorAttachment=platform` or `cross-platform`; omit for broad support.
    Response is `PublicKeyCredentialCreationOptionsJSON`: `{challenge, rp: {id,

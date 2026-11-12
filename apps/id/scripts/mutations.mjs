@@ -3,6 +3,11 @@ import { spawnSync } from 'node:child_process';
 
 const mutations = [
   {
+    name: 'drop the sign-out before Create a passkey',
+    test: 'signed-in Create a passkey creates a fresh account',
+    edits: [['pages/id.js', "if (signedIn) { await call('/api/auth/sign-out', {}); signedIn = false; }", '']],
+  },
+  {
     name: 'drop the inbound bearer check',
     test: 'WhatsApp bearer check',
     edits: [['src/whatsapp.ts', 'if (!authorized)', 'if (false)']],
@@ -72,8 +77,13 @@ const mutations = [
   },
 ];
 
+const selectedMutation = process.env.ID_MUTATION;
+if (selectedMutation && !mutations.some(mutation => mutation.name === selectedMutation)) {
+  throw new Error('Unknown mutation name');
+}
 await mkdir('.wrangler', { recursive: true });
 for (const [index, mutation] of mutations.entries()) {
+  if (selectedMutation && mutation.name !== selectedMutation) continue;
   const announcement = `Mutation check: ${mutation.name}.`;
   process.stdout.write(`${announcement}\n`);
   const originals = new Map();

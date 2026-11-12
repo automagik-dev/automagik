@@ -3,6 +3,7 @@ import {
   oauthProviderOpenIdConfigMetadata,
 } from '@better-auth/oauth-provider';
 import { createAuth, type Env } from './auth';
+import { getCookies } from 'better-auth/cookies';
 import { inbound, readChallenge, whatsappEnabled } from './whatsapp';
 
 function publicData(value: unknown): unknown {
@@ -91,6 +92,20 @@ export default {
     ]);
     if (!url.pathname.startsWith('/api/auth/') || !allowed.has(path)) {
       return new Response('Not found', { status: 404 });
+    }
+    if (path === '/passkey/generate-register-options' || path === '/passkey/verify-registration') {
+      // These routes create an account. Keep the ceremony cookie, but ignore session identity
+      // in both steps so the passkey plugin cannot enroll into the current account.
+      const cookies = getCookies(auth.options);
+      const sessionNames = [cookies.sessionToken.name, cookies.sessionData.name];
+      const headers = new Headers(request.headers);
+      const ceremonyCookies = (headers.get('cookie') ?? '').split(';').filter(part => {
+        const name = part.trim().split('=')[0];
+        return !sessionNames.some(sessionName => name === sessionName || name.startsWith(`${sessionName}.`));
+      }).join(';');
+      headers.set('cookie', ceremonyCookies);
+      headers.delete('authorization');
+      request = new Request(request, { headers });
     }
     const response = await auth.handler(request);
     if (response.headers.get('content-type')?.includes('application/json')) {

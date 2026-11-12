@@ -415,6 +415,21 @@ describe('Worker + D1 identity', () => {
     }
     expect((await request('/api/auth/whatsapp/start', { oauth_query: 'invalid' }, { mf })).status).toBe(400);
   });
+  test('registering with a session creates a fresh user and preserves the original passkey owner', async () => {
+    const first = await signup();
+    const second = await signup(); // Deliberately keep the first session cookie in both requests.
+    expect(second.userId).not.toBe(first.userId);
+    const db = await runtime.getD1Database('DB');
+    const owners = await db.prepare('SELECT userId, count(*) AS n FROM passkey GROUP BY userId').all<{
+      userId: string; n: number;
+    }>();
+    expect(owners.results).toHaveLength(2);
+    expect(owners.results.find(owner => owner.userId === first.userId)?.n).toBe(1);
+    expect(owners.results.find(owner => owner.userId === second.userId)?.n).toBe(1);
+    const current = await jsonOK(await request('/api/auth/get-session'));
+    expect(current.user.id).toBe(second.userId);
+  });
+
   test('internal email stays out of response headers and bodies, including encoded JWTs', async () => {
     const { userId } = await signup();
     const db = await runtime.getD1Database('DB');

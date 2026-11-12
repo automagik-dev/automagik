@@ -457,6 +457,35 @@ describe('pages: a real browser on the real Worker', () => {
     return { context, page, check, landed };
   }
 
+  test('signed-in Create a passkey creates a fresh account and revokes the original session', async ({ skip }) => {
+    if (!(await chromium())) return skip();
+    const { origin } = await world();
+    const { context, page, check, landed } = await visitor(origin, '192.0.2.25');
+    try {
+      await page.goto(`${origin}/sign-in`);
+      await page.locator('#create-passkey').click();
+      await page.locator('#sign-out').waitFor();
+      const original = await (await context.request.get(`${origin}/api/auth/get-session`)).json();
+      expect(original.user.id).toBeTruthy();
+      const originalCookie = (await context.cookies(origin))
+        .map((cookie: { name: string; value: string }) => `${cookie.name}=${cookie.value}`).join('; ');
+      const readOriginal = () => fetch(`${origin}/api/auth/get-session`, { headers: { cookie: originalCookie } });
+      expect((await (await readOriginal()).json() as any).user.id).toBe(original.user.id);
+      check();
+
+      await page.goto(authorize(origin, { prompt: 'login' }));
+      await page.locator('#create-passkey').click();
+      expect((await landed(exits[0])).get('code')).toBeTruthy();
+      const current = await (await context.request.get(`${origin}/api/auth/get-session`)).json();
+      expect(current.user.id).not.toBe(original.user.id);
+      // A replacement cookie alone would leave the original session replayable.
+      expect((await (await readOriginal()).json()) === null).toBe(true);
+      check();
+    } finally {
+      await context.close();
+    }
+  }, 60000);
+
   test('passkey account, sign-in, allow, cancel and the ways back in', async ({ skip }) => {
     if (!(await chromium())) return skip();
     const { origin } = await world();
