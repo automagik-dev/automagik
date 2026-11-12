@@ -615,12 +615,24 @@
         }
       ]
     },
+    "modelUsage": {
+      "description": "One model's usage on a row (R1b): ordered by tokens.total descending, ties by model name. A model name takes at most 40 bytes as JSON (quotes and escapes included), ending with the 3-byte ellipsis when cut. cost_usd is null when none of the model's tokens on the row is priced or reported (unknown, never 0).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "calls", "tokens", "cost_usd"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "calls": { "type": "integer", "minimum": 1 },
+        "tokens": { "$ref": "#/$defs/tokens", "properties": { "total": { "type": "integer", "minimum": 1 } } },
+        "cost_usd": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
     "branchRow": {
       "description": "A branch row: the repo and branch total over the window (attribution.precision branch_window), whatever --by asks (RFC 0021 D2).",
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "branch", "requested", "state", "reason", "tokens", "cost", "token_precision",
+        "branch", "requested", "state", "reason", "tokens", "cost", "models", "models_omitted", "token_precision",
         "attribution", "activity", "incomplete_sources"
       ],
       "properties": {
@@ -635,6 +647,17 @@
         },
         "tokens": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/tokens" }] },
         "cost": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/cost" }] },
+        "models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Per-model usage on the row, ordered by tokens.total descending, ties by model name; at most 8, and trimmed further only when needed to keep the row within its 2,304-byte bound.",
+          "items": { "$ref": "#/$defs/modelUsage" }
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Models with usage on the row left out past the 8-model cap or the 2,304-byte row bound: none is dropped silently."
+        },
         "token_precision": { "enum": [null, "exact", "mixed", "total_only"] },
         "attribution": {
           "$ref": "#/$defs/attribution",
@@ -653,6 +676,14 @@
         "incomplete_sources": { "type": "array", "items": { "type": "string" } }
       },
       "allOf": [
+        {
+          "if": { "anyOf": [{ "properties": { "state": { "const": "zero" } } }, { "properties": { "tokens": { "type": "null" } } }] },
+          "then": { "properties": { "models": { "type": "array", "maxItems": 0 }, "models_omitted": { "const": 0 } } }
+        },
+        {
+          "if": { "properties": { "state": { "enum": ["measured", "stale"] }, "models": { "maxItems": 0 }, "tokens": { "type": "object", "properties": { "total": { "minimum": 1 } } } } },
+          "then": { "properties": { "models_omitted": { "minimum": 1 } } }
+        },
         {
           "if": { "properties": { "tokens": { "type": "null" } } },
           "then": { "properties": { "attribution": { "properties": { "actor": false } } } }
@@ -795,7 +826,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "task", "actors", "actors_omitted", "state", "reason", "tokens", "cost", "token_precision",
+        "task", "actors", "actors_omitted", "state", "reason", "tokens", "cost", "models", "models_omitted", "token_precision",
         "attribution", "activity", "incomplete_sources"
       ],
       "properties": {
@@ -810,6 +841,17 @@
         "reason": { "enum": [null, "task_ambiguous", "ingestion_stale"] },
         "tokens": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/tokens" }] },
         "cost": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/cost" }] },
+        "models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Per-model usage on the row, ordered by tokens.total descending, ties by model name; at most 8, and trimmed further only when needed to keep the row within its 2,304-byte bound.",
+          "items": { "$ref": "#/$defs/modelUsage" }
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Models with usage on the row left out past the 8-model cap or the 2,304-byte row bound: none is dropped silently."
+        },
         "token_precision": { "enum": [null, "exact", "mixed", "total_only"] },
         "attribution": {
           "$ref": "#/$defs/attribution",
@@ -829,6 +871,14 @@
         "incomplete_sources": { "type": "array", "items": { "type": "string" } }
       },
       "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "missing" } } },
+          "then": { "properties": { "models": { "type": "array", "maxItems": 0 }, "models_omitted": { "const": 0 } } }
+        },
+        {
+          "if": { "properties": { "state": { "enum": ["measured", "stale"] }, "models": { "maxItems": 0 } } },
+          "then": { "properties": { "models_omitted": { "minimum": 1 } } }
+        },
         {
           "if": { "properties": { "state": { "const": "measured" } } },
           "then": { "properties": { "reason": { "const": null } } }
@@ -909,7 +959,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "bot", "kind", "role", "squad", "unrecorded", "harness", "state", "reason", "tokens", "cost",
+        "bot", "kind", "role", "squad", "unrecorded", "harness", "state", "reason", "tokens", "cost", "models", "models_omitted",
         "token_precision", "attribution", "activity", "incomplete_sources"
       ],
       "properties": {
@@ -926,6 +976,17 @@
         "reason": { "enum": [null, "ingestion_stale"] },
         "tokens": { "$ref": "#/$defs/tokens" },
         "cost": { "$ref": "#/$defs/cost" },
+        "models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Per-model usage on the row, ordered by tokens.total descending, ties by model name; at most 8, and trimmed further only when needed to keep the row within its 2,304-byte bound.",
+          "items": { "$ref": "#/$defs/modelUsage" }
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Models with usage on the row left out past the 8-model cap or the 2,304-byte row bound: none is dropped silently."
+        },
         "token_precision": { "enum": ["exact", "mixed", "total_only"] },
         "attribution": {
           "$ref": "#/$defs/attribution",
@@ -946,6 +1007,10 @@
         "incomplete_sources": { "type": "array", "items": { "type": "string" } }
       },
       "allOf": [
+        {
+          "if": { "properties": { "models": { "maxItems": 0 } } },
+          "then": { "properties": { "models_omitted": { "minimum": 1 } } }
+        },
         {
           "if": { "properties": { "state": { "const": "measured" } } },
           "then": { "properties": { "reason": { "const": null } } }

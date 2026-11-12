@@ -51,6 +51,7 @@ pub const LABEL_CHARS: usize = 200;
 /// `unpriced_models` keeps the models with the most unpriced tokens, each name cut to this many
 /// bytes as JSON; `tokens_unpriced` still counts every one.
 pub const UNPRICED_MODELS_MAX: usize = 8;
+pub const MODELS_MAX: usize = 8;
 pub const MODEL_NAME_BYTES: usize = 40;
 /// A user's string quoted in an error message is cut to this many characters.
 const QUOTED_CHARS: usize = 64;
@@ -401,6 +402,8 @@ struct BranchRow {
     reason: Option<&'static str>,
     tokens: Option<TokensOut>,
     cost: Option<Cost>,
+    models: Vec<ModelOut>,
+    models_omitted: usize,
     token_precision: Option<&'static str>,
     attribution: Attribution,
     activity: Option<Activity>,
@@ -454,6 +457,18 @@ struct Cost {
     unpriced_models_omitted: usize,
 }
 
+/// One model's usage on a row (R1b, #1098): ordered by `tokens.total` descending, ties by
+/// `model` ascending. `cost_usd` is `None` (`null`) when none of the model's calls on the row
+/// is priced or reported (unknown, never 0).
+#[derive(Serialize, Clone)]
+struct ModelOut {
+    model: String,
+    calls: i64,
+    tokens: TokensOut,
+    #[serde(serialize_with = "usd")]
+    cost_usd: Option<f64>,
+}
+
 /// A bot row (RFC 0021 (d)): the attributed usage of one bot key in the repo and window.
 #[derive(Serialize)]
 struct BotRow {
@@ -467,6 +482,8 @@ struct BotRow {
     reason: Option<&'static str>,
     tokens: TokensOut,
     cost: Cost,
+    models: Vec<ModelOut>,
+    models_omitted: usize,
     token_precision: &'static str,
     attribution: Attribution,
     activity: Activity,
@@ -487,6 +504,8 @@ struct TaskRow {
     reason: Option<&'static str>,
     tokens: Option<TokensOut>,
     cost: Option<Cost>,
+    models: Vec<ModelOut>,
+    models_omitted: usize,
     token_precision: Option<&'static str>,
     attribution: Attribution,
     activity: Option<Activity>,
@@ -1152,6 +1171,7 @@ pub(crate) struct UsageRead {
     pub(crate) branch: Option<String>,
     pub(crate) harness: String,
     pub(crate) model: String,
+    pub(crate) events: i64,
     pub(crate) hour_ms: i64,
     pub(crate) tokens: TokensOut,
     pub(crate) total_only: bool,
@@ -1372,6 +1392,7 @@ struct TaskCall {
 impl TaskCall {
     fn parts(&self) -> CallParts<'_> {
         CallParts {
+            calls: 1,
             tokens: &self.tokens,
             class: self.class,
             branch_basis: self.branch_basis,
@@ -1752,7 +1773,7 @@ pub(crate) fn scan_usage(
            actor_state, basis, branch_basis, ",
     );
     sql.push_str(if reason { "reason" } else { "NULL" });
-    sql.push_str(", bot, kind, role, squad, unrecorded FROM usage WHERE ");
+    sql.push_str(", bot, kind, role, squad, unrecorded, events FROM usage WHERE ");
     if let Some(rs) = repos.filter(|rs| !rs.is_empty()) {
         let names: Vec<String> = (1..=rs.len()).map(|i| format!("?{i}")).collect();
         sql.push_str(&format!("repo IN ({}) AND ", names.join(", ")));
@@ -1838,6 +1859,7 @@ pub(crate) fn scan_usage(
             branch,
             harness,
             model: r.get(3)?,
+            events: nonneg(r.get(23)?).max(1),
             hour_ms,
             tokens: t,
             total_only: r.get::<_, String>(12)? == "total_only",
@@ -1895,6 +1917,7 @@ impl TokensOut {
 /// The fields one call contributes to an accumulator, whichever source it came from: an hourly
 /// rollup (RFC 0018 (a)) or a per-call evidence row (`--by task`, RFC 0018 M3).
 struct CallParts<'a> {
+    calls: i64,
     tokens: &'a TokensOut,
     class: Class,
     branch_basis: BranchBasis,
@@ -1908,6 +1931,7 @@ struct CallParts<'a> {
 impl UsageRead {
     fn parts(&self) -> CallParts<'_> {
         CallParts {
+            calls: self.events.max(1),
             tokens: &self.tokens,
             class: self.class,
             branch_basis: self.branch_basis,
@@ -1918,6 +1942,14 @@ impl UsageRead {
             total_only: self.total_only,
         }
     }
+}
+
+#[derive(Default)]
+struct ModelAcc {
+    calls: i64,
+    tokens: TokensOut,
+    usd: f64,
+    tokens_priced: i64,
 }
 
 /// What a branch's usage in the window adds up to.
@@ -1934,6 +1966,7 @@ struct Acc {
     tokens_reported: i64,
     tokens_unpriced: i64,
     unpriced: BTreeMap<String, i64>,
+    models: BTreeMap<String, ModelAcc>,
     actor: ActorOut,
 }
 
@@ -1970,6 +2003,9 @@ impl Acc {
         if t.total == 0 {
             return;
         }
+        let m = self.models.entry(r.model.to_string()).or_default();
+        m.calls = m.calls.saturating_add(r.calls.max(1));
+        m.tokens.add(t);
         self.tokens.add(t);
         self.actor.count(r.class, r.branch_basis, t.total);
         self.hours.insert(r.hour_ms);
@@ -1982,11 +2018,16 @@ impl Acc {
         if let Some(u) = r.reported_usd {
             self.usd_reported += u;
             self.tokens_reported = self.tokens_reported.saturating_add(t.total);
+            m.usd += u;
+            m.tokens_priced = m.tokens_priced.saturating_add(t.total);
         } else if let Some(p) = prices.get(r.model) {
             let split = split_total(t);
             if split > 0 {
-                self.usd_estimated += p.cost(&t.as_event_tokens());
+                let est = p.cost(&t.as_event_tokens());
+                self.usd_estimated += est;
                 self.tokens_priced = self.tokens_priced.saturating_add(split);
+                m.usd += est;
+                m.tokens_priced = m.tokens_priced.saturating_add(split);
             }
             self.tokens_unpriced = self.tokens_unpriced.saturating_add(t.unsplit);
         } else {
@@ -1994,6 +2035,28 @@ impl Acc {
             let n = self.unpriced.entry(r.model.to_string()).or_default();
             *n = n.saturating_add(t.total);
         }
+    }
+
+    fn models(&self) -> (Vec<ModelOut>, usize) {
+        let mut list: Vec<(&String, &ModelAcc)> = self.models.iter().collect();
+        list.sort_by(|a, b| {
+            b.1.tokens
+                .total
+                .cmp(&a.1.tokens.total)
+                .then_with(|| a.0.cmp(b.0))
+        });
+        let omitted = list.len().saturating_sub(MODELS_MAX);
+        let out = list
+            .into_iter()
+            .take(MODELS_MAX)
+            .map(|(name, m)| ModelOut {
+                model: json_bounded(name, MODEL_NAME_BYTES),
+                calls: m.calls,
+                tokens: m.tokens,
+                cost_usd: (m.tokens_priced > 0).then_some(m.usd),
+            })
+            .collect();
+        (out, omitted)
     }
 
     fn cost(&self) -> Cost {
@@ -2541,7 +2604,8 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                     } else {
                         ("measured", None)
                     };
-                    Row::Bot(Box::new(BotRow {
+                    let (models, models_omitted) = acc.models();
+                    let mut row = BotRow {
                         unrecorded: key.unrecorded(),
                         bot: key.bot,
                         kind: key.kind,
@@ -2552,6 +2616,8 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                         reason,
                         tokens: acc.tokens,
                         cost: acc.cost(),
+                        models,
+                        models_omitted,
                         token_precision: acc.precision(),
                         attribution: Attribution {
                             precision: "actor_interval",
@@ -2562,7 +2628,12 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                         },
                         activity: acc.activity(),
                         incomplete_sources: incomplete.clone(),
-                    }))
+                    };
+                    while json(&row).len() > ROW_BYTES && !row.models.is_empty() {
+                        row.models.pop();
+                        row.models_omitted += 1;
+                    }
+                    Row::Bot(Box::new(row))
                 })
                 .collect()
         }
@@ -2757,13 +2828,16 @@ fn branch_rows(req: &Request, by_branch: &BTreeMap<&str, Acc>, c: &BranchCtx<'_>
                     ),
                 )
             };
-            Row::Branch(Box::new(BranchRow {
+            let (models, models_omitted) = if found { acc.models() } else { (Vec::new(), 0) };
+            let mut row = BranchRow {
                 branch: branch.to_string(),
                 requested,
                 state,
                 reason,
                 tokens,
                 cost,
+                models,
+                models_omitted,
                 token_precision: precision,
                 attribution: Attribution {
                     precision: "branch_window",
@@ -2774,7 +2848,12 @@ fn branch_rows(req: &Request, by_branch: &BTreeMap<&str, Acc>, c: &BranchCtx<'_>
                 },
                 activity,
                 incomplete_sources: c.incomplete.to_vec(),
-            }))
+            };
+            while json(&row).len() > ROW_BYTES && !row.models.is_empty() {
+                row.models.pop();
+                row.models_omitted += 1;
+            }
+            Row::Branch(Box::new(row))
         })
         .collect()
 }
@@ -2813,6 +2892,11 @@ fn task_rows(
             let token_precision = e.acc.precision();
             let activity = e.acc.activity();
             let actor = e.acc.actor;
+            let (models, models_omitted) = if found {
+                e.acc.models()
+            } else {
+                (Vec::new(), 0)
+            };
             let mut row = TaskRow {
                 task,
                 actors: if found {
@@ -2825,6 +2909,8 @@ fn task_rows(
                 reason,
                 tokens: found.then_some(e.acc.tokens),
                 cost: found.then_some(cost),
+                models,
+                models_omitted,
                 token_precision: found.then_some(token_precision),
                 attribution: Attribution {
                     precision: "task_interval",
@@ -2842,9 +2928,13 @@ fn task_rows(
         .collect()
 }
 
-/// A row never grows past RFC 0018's row bound: the trailing actor keys are left out (and
-/// counted) rather than cut, so two bots never read as one and a reader shows "at least".
+/// Keep RFC 0018's row bound by omitting trailing models first, then actor keys. Every
+/// omission is counted, so two bots never read as one and a reader shows "at least".
 fn fit_task_actors(row: &mut TaskRow) {
+    while json(row).len() > ROW_BYTES && !row.models.is_empty() {
+        row.models.pop();
+        row.models_omitted += 1;
+    }
     while json(row).len() > ROW_BYTES && !row.actors.is_empty() {
         row.actors.pop();
         row.actors_omitted += 1;
@@ -3094,6 +3184,18 @@ mod tests {
                 unpriced_models: (0..UNPRICED_MODELS_MAX).map(|i| format!("m{i}")).collect(),
                 unpriced_models_omitted: 0,
             }),
+            models: (0..MODELS_MAX)
+                .map(|i| ModelOut {
+                    model: format!("m{i}"),
+                    calls: 1,
+                    tokens: TokensOut {
+                        total: 1,
+                        ..TokensOut::default()
+                    },
+                    cost_usd: None,
+                })
+                .collect(),
+            models_omitted: 0,
             token_precision: Some("exact"),
             attribution: Attribution {
                 precision: "task_interval",
@@ -3113,6 +3215,8 @@ mod tests {
         let all: Vec<String> = row.actors.iter().map(|a| a.bot.clone()).collect();
         let total = row.tokens.as_ref().unwrap().total;
         fit_task_actors(&mut row);
+        assert!(row.models.is_empty(), "models are omitted before actors");
+        assert_eq!(row.models_omitted, MODELS_MAX);
         assert!(
             json(&row).len() <= ROW_BYTES,
             "a task row of {} bytes",

@@ -6,10 +6,10 @@
   "status": "too_large",
   "error": {
     "code": "too_large",
-    "message": "the answer would take 609869 bytes; the most one answer takes is 458752",
+    "message": "the answer would take 921869 bytes; the most one answer takes is 458752",
     "limit_bytes": 458752,
-    "needed_bytes": 609869,
-    "rows_fit": 360
+    "needed_bytes": 921869,
+    "rows_fit": 229
   },
   "generated_at": "2026-11-08T20:00:05Z",
   "as_of": null,

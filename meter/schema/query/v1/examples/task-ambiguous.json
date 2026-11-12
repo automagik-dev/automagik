@@ -115,6 +115,8 @@
       "reason": "task_ambiguous",
       "tokens": null,
       "cost": null,
+      "models": [],
+      "models_omitted": 0,
       "token_precision": null,
       "attribution": {
         "precision": "task_interval",
