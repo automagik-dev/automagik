@@ -165,7 +165,7 @@ const notAllowed = path => `Working in ${path} was not allowed, so nothing chang
 
 // Model an already registered workspace that contains or equals a protected root.
 // The desktop case nests a separate protected root inside the default workspace.
-async function dataWorkspace(t, layout) {
+async function dataWorkspace(t, layout, services = {}) {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-work-dir-')))
   const dsh = join(root, 'dsh')
   const home = join(dsh, 'bot')
@@ -177,7 +177,7 @@ async function dataWorkspace(t, layout) {
     if (previous === undefined) delete process.env.DS_BOT_USER_DSH_HOME
     else process.env.DS_BOT_USER_DSH_HOME = previous
   })
-  const env = await start({ root, workspaces: [{ id: 'w9', path: workspace }], team: { ...TEAM, workspaceId: 'w9' } })
+  const env = await start({ root, services, workspaces: [{ id: 'w9', path: workspace }], team: { ...TEAM, workspaceId: 'w9' } })
   t.after(env.stop)
   assert.equal(env.ctx.workspaceRegistry.get('w9').path, workspace)
   const guarded = [dsh, join(dsh, 'profiles'), home, join(home, 'memory')]
@@ -188,16 +188,28 @@ async function dataWorkspace(t, layout) {
 
 test('data-root working folders stay guarded when the workspace contains or equals them', async (t) => {
   for (const layout of ['parent', 'dsh', 'team', 'desktop']) await t.test(layout, async (t) => {
-    const env = await dataWorkspace(t, layout)
+    const { service, sets } = folderService()
+    const env = await dataWorkspace(t, layout, { workingDirectory: service })
+    const agent = env.agentOf('b')
+    const cwd = service.get(agent.session)
     for (const path of env.guarded) {
       const result = await env.call('update-bot', { id: 'b', workDir: path })
       assert.equal(result.error?.message, `${path} holds DeepSeek Harness data, so Bots cannot work there`)
       assert.equal(env.state().bots.b.workDir, undefined)
+      assert.deepEqual(await changeDirectory(env.ctx, service, agent, path), {
+        error: `${path} holds DeepSeek Harness data, so Bots cannot work there`, ran: false,
+      })
+      assert.equal(service.get(agent.session), cwd)
+      assert.equal(env.state().bots.b.workDir, undefined)
+      assert.deepEqual(sets, [])
     }
     // Realpath resolution must keep a link to guarded data closed as well.
     const link = join(env.root, 'data-link')
     symlinkSync(join(env.home, 'memory'), link, 'junction')
     assert.match((await env.call('update-bot', { id: 'b', workDir: link })).error?.message, /holds DeepSeek Harness data/)
+    assert.deepEqual(await changeDirectory(env.ctx, service, agent, link), {
+      error: `${join(env.home, 'memory')} holds DeepSeek Harness data, so Bots cannot work there`, ran: false,
+    })
     // A matching name prefix is not containment in the protected DSH root.
     const sibling = env.dsh + '2'
     mkdirSync(sibling)
