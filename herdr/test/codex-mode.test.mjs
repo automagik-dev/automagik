@@ -588,6 +588,8 @@ test("#1142 a protected root that can't be resolved withholds every --add-dir an
     ["a resolver error", { home: H, resolve: () => { throw new Error("no"); } }]]) {
     const where = codexWhere({ resolve: canonHere, same: sameHere, ...opts });
     assert.ok(where.unproved.length, label);
+    assert.equal(where.canon(join(H, "plain")), null, `${label}: canon proves nothing`);
+    assert.equal(codexDirAllowed(join(H, "plain"), where), false, `${label}: nor does the folder rule allow a canonical folder`);
     assert.deepEqual(codexClean(narrow, where).argv, ["codex"], `${label}: even a narrow folder`);
     assert.deepEqual(codexGrantPlan({ where, home: opts.home, env: {}, isDir: isDirHere }).dirs, [], label);
     assert.match(codexCleanNote(["codex"], where), /can't be resolved, so it starts with its working folder only: no --add-dir and no derived folder/, label);
@@ -622,6 +624,13 @@ test("#1142 by object identity: an alias the paths don't show is refused, here (
   // The probe proves test -ef first, and never reads a failed test as "different".
   assert.equal(sameThere("unsupported\n", pairs)(join(root, "shared"), home), null);
   assert.equal(sameThere("1\n", pairs)(join(root, "shared"), home), null, "an answer that doesn't cover every pair proves nothing");
+  assert.equal(sameThere("1\n", pairs)(...pairs[0]), null, "not even for the pair it would answer");
+  // A dangling link is unknown (never "different"); a missing path is another object, here and there.
+  symlinkSync(join(root, "nowhere"), join(root, "dangling-id"));
+  const edge = [[join(root, "dangling-id"), home], [join(root, "missing"), home], [join(root, "missing"), join(root, "missing-too")]];
+  const e = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", home, ...edge.flat()], { encoding: "utf8" });
+  assert.deepEqual(edge.map(([a, b]) => sameThere(e.stdout, edge)(a, b)), [null, false, false], "there");
+  assert.deepEqual(edge.slice(1).map(([a, b]) => sameHere(a, b)), [false, false], "here: two missing paths are not one object");
   const odd = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", join(root, "nowhere"), join(root, "shared"), home], { encoding: "utf8" });
   assert.equal(odd.stdout.trim(), "unsupported", "no folder to prove test -ef on");
 });
@@ -663,6 +672,15 @@ test("#1142 a Codex seat on a linked machine whose HOME is an alias: both core f
   const held = cli("start", "Dev");
   assert.deepEqual(addDirs(held.argv), []);
   assert.match(held.r.stderr, /vm: Codex's derived folders were withheld: 1 folder\(s\) they must stay out of can't be resolved there/);
+  // The same seat started on this computer, its GOPATH a dangling link here.
+  exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
+  symlinkSync(join(root, "nowhere"), join(root, "gp-here"));
+  writeFileSync(logPath, "");
+  const here = spawnSync(process.execPath, [CLI, "start", "Dev", "--project", project, "--json"], { cwd: root, encoding: "utf8",
+    env: { ...env, ...blank, HERDR_APP_HOME: app, GOPATH: join(root, "gp-here") } });
+  assert.equal(here.status, 0, here.stderr);
+  assert.deepEqual(addDirs(launched(readJsonLines(logPath).find((c) => c[0] === "run"))), []);
+  assert.match(here.stderr, /Codex's derived folders were withheld: 1 folder\(s\) they must stay out of can't be resolved here/);
 });
 
 test("#1142 a template worker keeps the owner's command as written, never with the pack's folders; a Codex option after its -- is refused", (t) => {
