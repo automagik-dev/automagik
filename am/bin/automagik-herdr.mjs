@@ -28,7 +28,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, codexGrants, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
   promptByMessage, sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -37,9 +37,9 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   prAskDue, prBranchKey, prBranches, prChecksPath, prChecksText, prLikely, prRowsFor, readPrChecks,
   sessionRow, stableGuardDir, stableKillDir, stableRootOf,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
-  taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
+  taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, codexTemplateWarning, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
-import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, maskedArgv,
+import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperCwd, helperPlan, launchChange, ledgerSession, maskedArgv,
   isPaneIdle, pendingDialog, paneCommand, planText as restartText, restartAnswer, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { SERVICE_WAIT_S, UNIT_NAME, agyCandidates, agyHistoryPath, countsLine, discoversSession, dshHomeOf, dshSessionOf, dshSessionsDir, isBareShell, ledgerRivals,
   pickSession, reportLine, reviveOrder, reviveTargets, sameBoot, sweptSince, unitIsOurs, unitPath, unitText } from "../revive.js";
@@ -154,10 +154,33 @@ async function hcJson(args) {
   if (r.code !== 0) throw new CliError(`hc ${args.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`);
   return parsed(r, args);
 }
-/** `hc get <t> --json`, or null when hc says there is no such terminal (hc itself missing still throws). */
+/** hc's exit code for "no such terminal" (hc --skill: 3 not_found). */
+export const HC_NOT_FOUND = 3;
+/**
+ * What a failed hc call said, safe to print: its error's kind and message when it printed one as
+ * JSON (hc --skill: `{error: {kind, message, hint}}` on stderr), else its first line; the home
+ * folder written as ~, cut to 300 characters.
+ */
+export function hcFailure(r, homeDir = home()) {
+  const text = String(r?.stderr || r?.stdout || "").trim();
+  let said = text.split("\n")[0];
+  try {
+    const e = JSON.parse(text)?.error;
+    if (e && typeof e === "object") said = [e.kind, e.message].filter((x) => typeof x === "string" && x).join(": ") || said;
+  } catch { /* not JSON: its first line */ }
+  if (homeDir && homeDir !== "/") said = said.split(homeDir).join("~");
+  return `${said || "no message"}${r?.killed ? " (timed out)" : ""} (exit ${r?.code ?? "?"})`.slice(0, 300);
+}
+/**
+ * `hc get <t> --json`, or null when hc says there is no such terminal: only its not_found exit
+ * (3). Any other failure (the core unreachable, a sandbox that blocks its socket, a timeout) and
+ * an answer that isn't JSON throw, so a failed lookup never reads as a missing pane (#1125).
+ */
 async function hcGet(terminal, { timeout } = {}) {
   const r = await hc(["get", terminal, "--json"], { timeout });
-  return r.code === 0 ? parsed(r, ["get", terminal]) : null;
+  if (r.code === HC_NOT_FOUND) return null;
+  if (r.code !== 0) throw new CliError(`hc get ${terminal} failed: ${hcFailure(r)}`);
+  return parsed(r, ["get", terminal]);
 }
 const local = (address) => typeof address === "string" && !address.includes("/");
 
@@ -1550,9 +1573,9 @@ function autoModeOf(bot, local = true) {
   const key = resolveAgent(bot.agent ?? "", agentTable());
   if (!key) return null;
   const args = autoModeArgs(key, bot, agentTable()[key]?.run ?? []);
+  // Codex's launch mode has no opt-out (#1125): a source's own approval words are left out.
   const note = args.length ? AUTO_MODE[key].what
-    : key === "codex" && bot.codexAuto === false ? "off for this bot (codexAuto is false)"
-      : AUTO_MODE[key] ? "its own run words already pick its approvals" : (AUTO_MODE_NONE[key] ?? "none this pack knows");
+    : AUTO_MODE[key] ? "its own run words already pick its approvals" : (AUTO_MODE_NONE[key] ?? "none this pack knows");
   return { args, note, ...(key === "antigravity" && local ? { sandbox: hostAgySandbox() } : {}) };
 }
 
@@ -2450,7 +2473,8 @@ async function placementOf(key, seen = null) {
   const mine = rows.filter((r) => keys.get(r.cwd) === key);
   const shows = (place) => !seen || spacePlace(seen.spaces.filter((s) => s.id === place.space), seen.keys, key) !== null;
   for (const r of mine) {
-    const place = placementFrom([await hcGet(r.address)].filter(Boolean));
+    // A pane hc can't answer for gives no place here (the window still decides).
+    const place = placementFrom([await hcGet(r.address).catch(() => null)].filter(Boolean));
     if (place && shows(place)) return place;
   }
   if (seen) return spacePlace(seen.spaces, seen.keys, key);
@@ -2984,7 +3008,10 @@ async function seatOnMachine(project, bot, over = {}) {
   const briefingHome = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
   const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, briefingHome.dir,
     agentKey === "dsh-tui" ? Boolean(remoteGuard) : null);
-  const argv = briefed.argv;
+  // #1125: a Codex seat there gets the folders that machine derives for its folder (codexGrantsOn).
+  const codexHere = agentKey === "codex" ? await codexGrantsOn(machine, over.cwd ?? key) : null;
+  const argv = codexHere ? withCodexGrants(briefed.argv, codexHere.dirs) : briefed.argv;
+  const codexNotes = [codexHere?.warning, agentKey === "codex" ? codexCleanNote(agent.run) : null].filter(Boolean);
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = briefingHook(agentKey) && briefingHome.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, briefingHome.dir)
     : { written: false, warnings: [] };
@@ -3004,7 +3031,7 @@ async function seatOnMachine(project, bot, over = {}) {
     parent: ["--no-parent"], argv, labels, path: there.path, env, agent: agentKey, guard: remoteGuard });
   args.splice(1, 0, "--on", machine);
   const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...briefingHome.warnings, ...briefed.warnings, ...hook.warnings,
-    ...(agySettings?.warnings ?? [])];
+    ...(agySettings?.warnings ?? []), ...codexNotes];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
     const r = await hc(args, callBound());
@@ -3233,6 +3260,46 @@ async function restartOnMachine(opts, project, bot, entry) {
     agent: plan.agent, model: plan.model, session: session ? SESSION_MASK : null, note: plan.note, saved } : seat.address;
 }
 
+/**
+ * The folders a Codex launch in `cwd` on this computer may write besides it (#1125,
+ * models.js codexGrants): `cwd`'s git common dir (its main checkout's .git for a linked
+ * worktree), herdr-core's state and data folders and the tool caches, from this process's
+ * environment, each only when it is a folder here. Never fails: a folder git can't answer for
+ * just has no git grant.
+ */
+async function localCodexGrants(cwd) {
+  const common = cwd ? (await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd))?.trim() : null;
+  return codexGrants({ home: home(), env: process.env, gitCommonDir: common || null, isDir });
+}
+
+// The environment words codexGrants reads, printed on a linked machine one per line as NAME=value
+// (printenv per name: never the whole environment).
+const GRANT_VARS = ["HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH", "GOMODCACHE", "GOCACHE",
+  "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"];
+const GRANT_PROBE = `for k in ${GRANT_VARS.join(" ")}; do v=$(printenv "$k") && printf '%s=%s\\n' "$k" "$v"; done; `
+  + `g=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && printf 'GIT_COMMON_DIR=%s\\n' "$g"; true`;
+
+/**
+ * localCodexGrants on `machine`, asked there through hc (its own environment and git, then which
+ * of the folders are there). { dirs, warning }: no grants and one warning when it can't be asked.
+ */
+async function codexGrantsOn(machine, cwd) {
+  const away = (why) => ({ dirs: [], warning: `Codex's extra folders on ${machine} couldn't be resolved (${why}): it starts with its working folder only.` });
+  const r = await remoteIo.exec("sh", ["-c", GRANT_PROBE], machine, { cwd });
+  if (r.code !== 0) return away(r.code === -1 ? "no answer" : `exit ${r.code}`);
+  const env = {};
+  for (const line of String(r.stdout ?? "").split("\n")) {
+    const eq = line.indexOf("=");
+    if (eq > 0) env[line.slice(0, eq)] = line.slice(eq + 1);
+  }
+  const candidates = codexGrants({ home: env.HOME ?? null, env, gitCommonDir: env.GIT_COMMON_DIR ?? null, isDir: () => true });
+  if (!candidates.length) return { dirs: [], warning: null };
+  const there = await remoteIo.exec("sh", ["-c", 'for d do [ -d "$d" ] && printf "%s\\n" "$d"; done; true', "sh", ...candidates], machine);
+  if (there.code !== 0) return away(there.code === -1 ? "no answer" : `exit ${there.code}`);
+  const found = new Set(String(there.stdout ?? "").split("\n").filter(Boolean));
+  return { dirs: candidates.filter((d) => found.has(d)), warning: null };
+}
+
 /** The agent a bot starts on, from Herdr's table: refused when it isn't one, or isn't installed. */
 function startableAgent(bot, agentKey = bot.agent) {
   const agent = agentTable()[agentKey];
@@ -3293,7 +3360,7 @@ async function launchSeat(project, bot, over = {}) {
   const labels = { ...paneLabels(file, bot.id, carry, lead ? leadPane(await liveRows(lead))?.labels ?? null : null), ...carry }; // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // A Start's command, on a new session whose id Herdr chooses (Claude), unless it picks its own.
-  const source = over.argv ?? [...launchRun(agentKey, agent.run, bot), ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
+  const source = over.argv ?? [...launchRun(agentKey, agent.run, bot, home()), ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
   const chosen = !over.argv && choosesSession(agentKey) && !ownsSession(source) ? newSessionId() : null;
   const session = over.argv ? (over.session ?? null) : chosen;
   if (session && agentKey === "claude") labels[SESSION_LABEL] = session;
@@ -3304,7 +3371,12 @@ async function launchSeat(project, bot, over = {}) {
   // #955: a roster that names Antigravity's auto mode on a host that can't run it is told so.
   const modeWarning = agentKey === "antigravity" ? agyModeWarning({ name: bot.name, explicit: bot.agyMode ?? null, sandbox: hostAgySandbox() }) : null;
   if (modeWarning) briefed.warnings.push(modeWarning);
-  const argv = briefed.argv;
+  // #1125: a Codex seat runs the pack's Codex launch mode, with an --add-dir for each folder this
+  // launch in `cwd` may write (unless a restart's template plan carries them already); a
+  // programs.json run's own approval and sandbox words were left out, and that is said.
+  const cleaned = agentKey === "codex" ? codexCleanNote(agent.run, home()) : null;
+  if (cleaned) briefed.warnings.push(cleaned);
+  const argv = agentKey === "codex" && !over.granted ? withCodexGrants(briefed.argv, await localCodexGrants(cwd)) : briefed.argv;
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
   // here. Always passed (#213): without it the pane has herdr-core's PATH, which may lack node.
@@ -3456,8 +3528,17 @@ async function agentUp(terminal, ms = RESTART_WAIT_MS) {
   const until = Date.now() + ms;
   let since = null;
   for (;;) {
-    const get = await hcGet(terminal);
-    if (!get || get.state === "finished") return { state: "ended", get };
+    // A failed lookup (not "no such terminal") is no answer yet: asked again until the deadline,
+    // never read as an ended pane (#1125).
+    let get;
+    try { get = await hcGet(terminal); } catch { get = undefined; }
+    if (get === null || get?.state === "finished") return { state: "ended", get };
+    if (get === undefined) {
+      since = null;
+      if (Date.now() >= until) return { state: "late", get: null };
+      await later(250);
+      continue;
+    }
     if (get.state === "live" && agentInForeground(get)) {
       since ??= Date.now();
       if (Date.now() - since >= (get.reported === true ? RESTART_SETTLE_MS : RESTART_STABLE_MS)) return { state: "live", get };
@@ -4018,6 +4099,12 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
     }
     treeWarnings.push(`--force: ${nested.join(", ")} ${one ? "ends" : "end"} with ${one ? "its parent" : "their parents"} and ${one ? "isn't" : "aren't"} run again.`);
   }
+  // #1125: the folders each helper may write when it runs Codex again, from the folder it runs in.
+  const grantsAt = new Map();
+  for (const h of doomed) {
+    const cwd = helperCwd({ get: h, worker: workerRowOf(ledger, h.address), realpath: realDir });
+    if (cwd && !grantsAt.has(cwd)) grantsAt.set(cwd, await localCodexGrants(cwd));
+  }
   const planOf = (h, fresh = null) => {
     const worker = workerRowOf(ledger, h.address);
     // #939, revive only: a helper hc kept as a bare shell names its agent by its launch command.
@@ -4037,10 +4124,11 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
     holdId(knownSession(h, agentKey)?.session);
     return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
       agents, fresh, bot: agyBot, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir, homeDir: home() },
-      launchAgent: revive && isBareShell(h) }), worker, binding, proxyIdentity,
+      launchAgent: revive && isBareShell(h), grants: grantsAt.get(helperCwd({ get: h, worker, realpath: realDir })) ?? [] }), worker, binding, proxyIdentity,
       createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
   };
   let tree = doomed.map((h) => planOf(h));
+  for (const p of tree) if (p.warning) treeWarnings.push(p.warning);
   const broken = tree.filter((p) => p.error).map((p) => p.error);
   const gone = tree.filter((p) => !p.error && !isDir(p.cwd)).map((p) => `${p.replaced}'s folder ${p.cwd} isn't there`);
   if (broken.length || gone.length) {
@@ -4388,8 +4476,11 @@ async function cmdRestart(opts, [ref]) {
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? ghost?.cwd ?? null;
   const cwd = wanted ?? (oldCwd && isDir(oldCwd) ? (realDir(oldCwd) ?? oldCwd) : key);
   const planned = {
-    bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot),
+    bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot, home()),
     runningAgent, session: known?.session ?? null,
+    // #1125: the folders a Codex seat in `cwd` may write, for a template plan's words (launchSeat
+    // adds them to an agent row's).
+    grants: (entry?.agent ?? bot.agent) === "codex" ? await localCodexGrants(cwd) : [],
     fresh: opts.fresh || !was, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
     agy: { appHomeDir: appHome(), folder: cwd, realpath: realDir, homeDir: home() },
@@ -4453,7 +4544,7 @@ async function cmdRestart(opts, [ref]) {
   }
   let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place,
     carry: { ...carry, ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, session: sessionOfPlan(plan, resumeId),
-    replacing: old ? held.binding : null });
+    replacing: old ? held.binding : null, granted: plan.granted });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   // A direct restart supersedes a queued one only once it really started: its watcher must not
   // start a second replacement while this one hands the bot over.
@@ -4483,6 +4574,8 @@ async function cmdRestart(opts, [ref]) {
   // The sidebar's Restart shows only --json's warnings: why it didn't resume goes there too
   // (the text answer says it in its own line).
   if (sharedNote) warnings.push(`${bot.name} starts on a new conversation: ${sharedNote}.`);
+  // #1125: a Codex seat's template set aside for its agent row, by name and flag names.
+  if (plan.templateNote) say(`${bot.name}: ${plan.templateNote}.`);
   if (movedFrom && movedFrom !== wanted && plan.mode === "resume" && plan.agent !== "claude") {
     say(`${seat.terminal} runs in ${wanted}, not ${movedFrom}: ${plan.agent} finds its last conversation by folder${resumeId ? "" : ", so it may not find it there"}.`);
   }
@@ -4509,7 +4602,8 @@ async function cmdRestart(opts, [ref]) {
       say(`${bot.name} starts on a new conversation: ${note}.`);
       const again = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place,
         carry: { ...carriedLabels(old), ...(plan.template ? { [WORKER_TEMPLATE_LABEL]: plan.template } : {}),
-          ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, session: sessionOfPlan(plan, null), replacing: held.binding });
+          ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, session: sessionOfPlan(plan, null), replacing: held.binding,
+        granted: plan.granted });
       if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
       for (const w of again.hook.warnings) say(w);
       seat = again;
@@ -5198,8 +5292,15 @@ function definedIn(key, botId, { strict = false } = {}) {
 async function callingBot(opts) {
   const self = process.env.HC_TERMINAL_ID;
   if (!self) throw new CliError("Only a bot starts workers, from its own pane: HC_TERMINAL_ID isn't set here, so this isn't a bot's pane.");
-  const me = await hcGet(self);
-  if (!me) throw new CliError(`${self} isn't a terminal hc knows; start workers from a bot's pane.`);
+  // Three answers, told apart (#1125): no such terminal (hc's not_found), a lookup that failed (the
+  // core unreachable, a sandbox blocking hc's socket or folders), and an answer that isn't JSON.
+  let me;
+  try { me = await hcGet(self); } catch (e) {
+    throw new CliError(`hc couldn't look up this pane (${self}), so it can't be checked as a bot's: ${e?.message ?? e}. `
+      + "Nothing was started. In a Codex pane, hc needs the sandbox's network access and herdr-core's state and data "
+      + "folders (the pack's Codex launch gives both, #1125); restart the bot if it predates that.");
+  }
+  if (!me) throw new CliError(`${self} isn't a terminal hc knows (hc get: not found); start workers from a bot's pane.`);
   const address = me.address ?? self;
   // Named before the ledger is read: its one-time label import looks in a --project too.
   const named = opts.project !== undefined ? await namedKeyOf(opts.project) : null;
@@ -5970,7 +6071,7 @@ async function cmdWorker(opts, rest) {
     }
   }
   const override = !swap && Object.values(given).some((v) => v !== undefined);
-  const plan = workerPlan(bot, pick, agents);
+  const plan = workerPlan(bot, pick, agents, home());
   if (plan.error) throw new CliError(plan.error, 2);
   warnings.push(...plan.warnings);
   // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
@@ -5983,6 +6084,10 @@ async function cmdWorker(opts, rest) {
     const t = await templateRuns(plan.template, agents);
     runs = t.runs;
     templateCommand = t.command?.trim() ? t.command : null;
+    // #1125: a worker template owns its command (the owner's exception, bypass included): never
+    // rewritten or refused here; one that runs Codex without --no-daemon is named, with the fix.
+    const noDaemon = templateCommand ? codexTemplateWarning(plan.template, templateCommand, agents) : null;
+    if (noDaemon) warnings.push(noDaemon);
     if (runs === "claude") {
       templateArgv = t.command?.trim() ? commandArgv({ shell: t.command }, [task]) : null;
       if (!templateArgv) {
@@ -6016,6 +6121,8 @@ async function cmdWorker(opts, rest) {
   // --session-id, labelled and in its start row; a template's own command is left as it is.
   const session = !plan.template && choosesSession(plan.agent) && !ownsSession(plan.argv) ? newSessionId() : null;
   const launchArgv = session ? [...plan.argv, ...sessionIdArgs(plan.agent, session)] : plan.argv;
+  // The argv the worker runs, set once its worktree is known (a Codex worker's grants come from it).
+  let workerArgv = launchArgv;
   // Held across a fetch and git worktree add (60 s each) and the hc calls, so a second call on
   // this worktree waits for the first's start rather than failing; kept fresh while held. A
   // task's worker takes its name's lock first (taskLock), so a second call for the task on
@@ -6106,8 +6213,11 @@ async function cmdWorker(opts, rest) {
     if (runPath?.note) warnings.push(runPath.note);
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
+    // #1125: a Codex worker may write its worktree's git common dir (the main checkout's .git),
+    // herdr-core's folders and the tool caches, resolved from the worktree it runs in.
+    workerArgv = plan.agent === "codex" ? withCodexGrants(launchArgv, await localCodexGrants(place.worktree)) : launchArgv;
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
-      agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: launchArgv, session, task, template: plan.template,
+      agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: workerArgv, session, task, template: plan.template,
       templateArgv,
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead,
@@ -6153,7 +6263,7 @@ async function cmdWorker(opts, rest) {
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
     base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, pid,
-    argv: maskedArgv(launchArgv, session),
+    argv: maskedArgv(workerArgv, session),
     warnings: [...fileWarnings, ...warnings],
     task: taskId ?? null, project: project.key, lead, baseCommit: base, swap, override, override_requested: overrideRequested };
   if (opts.json) return out;

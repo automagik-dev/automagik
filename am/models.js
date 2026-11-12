@@ -419,15 +419,165 @@ export function agyModeArgs(agentKey, mode = null) {
 // stop TUI startup at "Hooks need review" for a person to answer, and the pack never passes
 // --dangerously-bypass-hook-trust (it would run an untrusted hook's commands in a worktree).
 // The pack puts both on every Codex launch it makes, so an unattended bot or worker never stops
-// at an approval prompt or a hook review only a person can answer (#946). A bot's
-// `codexAuto: false` opts out, and an hc template owns a worker's command: neither flag reaches one.
+// at an approval prompt or a hook review only a person can answer (#946).
 export const CODEX_AUTO_ARGS = Object.freeze(["--approve-for-me", "--disable", "hooks"]);
 
-/** Whether a launch of `agentKey` for `bot` passes Codex's auto mode: a Codex seat or worker, unless its bot opted out. */
-export const codexAutoOn = (agentKey, bot) => agentKey === "codex" && bot?.codexAuto !== false;
+// One Codex launch mode on every machine (#1125, the owner's ruling of 10 and 12 Nov): every
+// Codex seat and every worker the pack starts with --agent codex runs the auto mode above with
+// the workspace-write sandbox on, never --dangerously-bypass-approvals-and-sandbox. Two more
+// words make it usable there. `--no-daemon`: hc --skill says Codex must run with it (templates
+// included), or its commands run in Codex's shared background server, outside hc and with the
+// environment of whichever pane started that server (HC_TERMINAL_ID included). The sandbox's
+// own `network_access`: on, so hc's socket and GitHub (gh, git's transport) answer. The folders
+// it may write besides its working folder are derived per launch (codexGrants, withCodexGrants).
+// A bot's `codexAuto: false` no longer opts out (model.js warns), and the source's own approval
+// and sandbox words are left out by name (codexClean). An hc worker template owns its command,
+// bypass included: the owner's exception for template workers (#1125), never a seat's.
+export const CODEX_NETWORK = "sandbox_workspace_write.network_access=true";
+export const CODEX_MODE_ARGS = Object.freeze([...CODEX_AUTO_ARGS, "--no-daemon", "-c", CODEX_NETWORK]);
 
-/** The words Codex's auto mode adds, [] for every other agent and for a bot whose `codexAuto` is false. */
-export const codexAutoArgs = (agentKey, bot) => (codexAutoOn(agentKey, bot) ? [...CODEX_AUTO_ARGS] : []);
+/** Whether a launch of `agentKey` passes Codex's launch mode: every Codex seat and worker the pack builds (#1125: no opt-out). */
+export const codexAutoOn = (agentKey) => agentKey === "codex";
+
+/** The words Codex's launch mode adds, [] for every other agent. */
+export const codexAutoArgs = (agentKey) => (codexAutoOn(agentKey) ? [...CODEX_MODE_ARGS] : []);
+
+// The words a Codex source may carry that pick its approvals or its sandbox, or run its commands
+// outside the pane (checked against codex-cli 0.167.0 on 2026-11-12). Codex refuses
+// --approve-for-me beside -a, -s or the bypass flag; a `-c default_permissions=…` overrides it
+// (the effective sandbox becomes danger-full-access), so those keys go too.
+const CODEX_PACK_WORDS = new Set(["--approve-for-me", "--no-daemon"]);
+const CODEX_BYPASS = new Set(["--dangerously-bypass-approvals-and-sandbox", "--yolo"]);
+const CODEX_VALUED = [["-a", "--ask-for-approval"], ["-s", "--sandbox"], [null, "--remote"], [null, "--remote-auth-token-env"]];
+const CODEX_CONFIG_KEYS = ["sandbox_mode", "approval_policy", "approvals_reviewer", "sandbox_workspace_write",
+  "default_permissions", "permission_profile", "permissions"];
+// Codex's other flags that take a value: the word after one is never read as a flag here.
+const CODEX_TAKES_VALUE = new Set(["-m", "--model", "-p", "--profile", "-C", "--cd", "-i", "--image", "--enable", "--disable",
+  "--local-provider", "--add-dir"]);
+
+/** `-c`/`--config`'s key=value at `words[i]` in any form: { key, span } (span: words it takes), or null. */
+function codexConfigAt(words, i) {
+  const w = words[i];
+  let text = null, span = 1;
+  if (w === "-c" || w === "--config") { text = words[i + 1] ?? ""; span = 2; }
+  else if (w.startsWith("--config=")) text = w.slice("--config=".length);
+  else if (w.startsWith("-c")) text = w.slice(w[2] === "=" ? 3 : 2);
+  if (text === null) return null;
+  return { key: text.split("=")[0].trim().replace(/^["']|["']$/g, ""), text, span };
+}
+
+/** The approval or sandbox flag at `w` in any form (`-a x`, `-ax`, `-a=x`, `--sandbox=x`): { flag (as written, no value), next }, or null. */
+function codexValuedAt(w) {
+  for (const [short, long] of CODEX_VALUED) {
+    if (w === long || (short && w === short)) return { flag: w, next: true };
+    if (w.startsWith(`${long}=`)) return { flag: long, next: false };
+    if (short && w.startsWith(short) && w.length > 2) return { flag: short, next: false };
+  }
+  return null;
+}
+
+/** Whether `dir` is the filesystem root, `home` or a folder above it: a grant that wide is never passed. */
+export const homeWide = (dir, home) => {
+  const d = String(dir ?? "").replace(/\/+$/, "") || "/";
+  const h = typeof home === "string" && home ? home.replace(/\/+$/, "") : null;
+  return d === "/" || (h !== null && (d === h || h.startsWith(`${d}/`)));
+};
+
+/**
+ * A Codex source's words (`run`, Herdr's table with programs.json applied) without the ones that
+ * pick its approvals or sandbox: bypass and --yolo, -a/--ask-for-approval and -s/--sandbox in
+ * their separate, joined and `=` forms, -c/--config for the keys CODEX_CONFIG_KEYS names (and
+ * any key under one), --remote (another app server: outside the pane, #1125), and an --add-dir
+ * of the root, `home` or a folder above it. The pack's own --approve-for-me, --no-daemon and
+ * network word go quietly (launchRun puts them back once). Every other word stays as it is, after a `--` too.
+ * Returns { argv, dropped } (`dropped`: the flags left out, by name, `-c sandbox_mode` style:
+ * never a value).
+ */
+export function codexClean(run, home = null) {
+  const words = Array.isArray(run) ? run.map(String) : [];
+  const argv = [], dropped = [];
+  const drop = (name) => { if (!dropped.includes(name)) dropped.push(name); };
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i];
+    if (w === "--") { argv.push(...words.slice(i)); break; }
+    if (CODEX_PACK_WORDS.has(w)) continue;
+    if (CODEX_BYPASS.has(w)) { drop(w); continue; }
+    const valued = codexValuedAt(w);
+    if (valued) { drop(valued.flag); if (valued.next) i += 1; continue; }
+    const config = codexConfigAt(words, i);
+    if (config) {
+      // The pack's own network word goes quietly, as --approve-for-me does: launchRun adds it once.
+      if (config.text.trim() === CODEX_NETWORK) { i += config.span - 1; continue; }
+      const key = CODEX_CONFIG_KEYS.find((k) => config.key === k || config.key.startsWith(`${k}.`));
+      if (key) drop(`-c ${key}`);
+      else argv.push(...words.slice(i, i + config.span));
+      i += config.span - 1;
+      continue;
+    }
+    const addDir = w === "--add-dir" ? words[i + 1] : w.startsWith("--add-dir=") ? w.slice("--add-dir=".length) : undefined;
+    if (addDir !== undefined && homeWide(addDir, home)) { drop("--add-dir"); if (w === "--add-dir") i += 1; continue; }
+    argv.push(w);
+    if (CODEX_TAKES_VALUE.has(w) && i + 1 < words.length) argv.push(words[++i]);
+  }
+  return { argv, dropped };
+}
+
+/** One line naming what codexClean left out of `run` (flag names only), or null when nothing. */
+export function codexCleanNote(run, home = null, where = "programs.json's Codex command") {
+  const { dropped } = codexClean(run, home);
+  return dropped.length ? `${where} names ${dropped.join(", ")}: left out. Every Codex seat and worker runs in auto mode `
+    + "(--approve-for-me) with its sandbox on (#1125)." : null;
+}
+
+/**
+ * The folders a Codex launch may write besides its working folder (#1125): each one only when it
+ * is a folder there (`isDir`), absolute, and never the root, `home` or a folder above it, nor a
+ * whole XDG or cache folder. `gitCommonDir`: the launch checkout's git common dir (its own .git,
+ * or the main checkout's for a linked worktree; Codex keeps a working folder's .git read-only).
+ * Then herdr-core's state and data folders (XDG_STATE_HOME, XDG_DATA_HOME, else under `home`),
+ * which hc needs to reach its core, and the tool caches a build here writes: Go's module and
+ * build caches (GOMODCACHE, GOCACHE, else GOPATH's), npm's (npm_config_cache), pnpm's store and
+ * cache, and Bun's install cache (BUN_INSTALL_CACHE_DIR, BUN_INSTALL). `env` is the launch's
+ * environment (process.env here, or the linked machine's). Pure: `isDir` answers for the machine.
+ */
+export function codexGrants({ home = null, env = {}, gitCommonDir = null, isDir = () => false }) {
+  const h = typeof home === "string" && home.startsWith("/") ? home.replace(/\/+$/, "") : null;
+  const abs = (p) => (typeof p === "string" && p.startsWith("/") && !p.split("/").includes("..") ? p.replace(/\/+$/, "") || "/" : null);
+  const at = (base, rest) => (base ? `${base}/${rest}` : null);
+  const xdg = (name, fallback) => abs(env[name]) ?? at(h, fallback);
+  const state = xdg("XDG_STATE_HOME", ".local/state"), data = xdg("XDG_DATA_HOME", ".local/share");
+  const cache = xdg("XDG_CACHE_HOME", ".cache"), config = xdg("XDG_CONFIG_HOME", ".config");
+  const gopath = abs(String(env.GOPATH ?? "").split(":")[0]) ?? at(h, "go");
+  const bun = abs(env.BUN_INSTALL) ?? at(h, ".bun");
+  // Never a whole XDG folder, nor ~/.local, nor GOPATH or Bun's own folder.
+  const general = new Set([state, data, cache, config, at(h, ".local"), gopath, bun].filter(Boolean));
+  const candidates = [abs(gitCommonDir), at(state, "herdr-core"), at(data, "herdr-core"),
+    abs(env.GOMODCACHE) ?? at(gopath, "pkg/mod"), abs(env.GOCACHE) ?? at(cache, "go-build"),
+    abs(env.npm_config_cache) ?? abs(env.NPM_CONFIG_CACHE) ?? at(h, ".npm"),
+    at(data, "pnpm/store"), at(cache, "pnpm"),
+    abs(env.BUN_INSTALL_CACHE_DIR) ?? at(bun, "install/cache")];
+  const out = [];
+  for (const dir of candidates) {
+    if (!dir || out.includes(dir) || homeWide(dir, h) || general.has(dir)) continue;
+    let there = false;
+    try { there = isDir(dir) === true; } catch { there = false; }
+    if (there) out.push(dir);
+  }
+  return out;
+}
+
+/**
+ * `argv` with an `--add-dir <dir>` for each of `dirs` right after the pack's Codex mode words
+ * (CODEX_MODE_ARGS, as launchRun puts them), so they land before any subcommand (`resume`) and
+ * the task. An argv without those words (a template's command, another agent) is returned as it is.
+ */
+export function withCodexGrants(argv, dirs = []) {
+  const words = Array.isArray(argv) ? [...argv] : [];
+  const n = CODEX_MODE_ARGS.length;
+  const at = words.findIndex((_, i) => CODEX_MODE_ARGS.every((m, k) => words[i + k] === m));
+  if (at < 0 || !dirs.length) return words;
+  return [...words.slice(0, at + n), ...dirs.flatMap((d) => ["--add-dir", d]), ...words.slice(at + n)];
+}
 
 /** agy's flag that answers every permission request itself; its --settings deny list still holds. */
 export const AGY_SKIP_PERMISSIONS = "--dangerously-skip-permissions";
@@ -446,9 +596,10 @@ export const AUTO_MODE = Object.freeze({
   claude: Object.freeze({ args: Object.freeze(["--permission-mode", "auto"]),
     own: Object.freeze(["--permission-mode", "--dangerously-skip-permissions"]),
     what: "Claude Code's auto mode: its classifier answers permission requests" }),
-  codex: Object.freeze({ args: CODEX_AUTO_ARGS,
+  codex: Object.freeze({ args: CODEX_MODE_ARGS,
     own: Object.freeze(["--approve-for-me", "-a", "--ask-for-approval", "--yolo", "--dangerously-bypass-approvals-and-sandbox"]),
-    what: "Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox, with hooks off" }),
+    what: "Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox with network on, "
+      + "outside Codex's shared server (--no-daemon), with hooks off" }),
   antigravity: Object.freeze({ args: Object.freeze([AGY_SKIP_PERMISSIONS]),
     own: Object.freeze([AGY_SKIP_PERMISSIONS]),
     what: "no permission prompts; the launch's deny list still refuses what it names" }),
@@ -487,13 +638,14 @@ function runNames(run, flags) {
 
 /**
  * The words `agentKey`'s automatic mode adds to `run` for `bot`: AUTO_MODE's, [] for an agent
- * with none, for a Codex bot whose `codexAuto` is false, and for a run that already picks its
- * own approvals (a programs.json override).
+ * with none and for a run that already picks its own approvals (a programs.json override).
+ * Codex always gets its launch mode (#1125): launchRun leaves the source's own approval and
+ * sandbox words out instead.
  */
 export function autoModeArgs(agentKey, bot = null, run = []) {
   const mode = AUTO_MODE[agentKey];
+  if (agentKey === "codex") return codexAutoArgs(agentKey);
   if (!mode || runNames(run, mode.own)) return [];
-  if (agentKey === "codex") return codexAutoArgs(agentKey, bot);
   return [...mode.args];
 }
 
@@ -501,9 +653,15 @@ export function autoModeArgs(agentKey, bot = null, run = []) {
  * The words `agentKey` starts with: the given run (Herdr's table, programs.json applied) and the
  * flags this pack adds for that agent's automatic mode. They are added here, so a bot's start,
  * its restart and its workers all take them from the definition, never from an old pane's command.
+ * A Codex run loses its own approval and sandbox words first (codexClean, #1125; `home`, when
+ * the caller knows it, also stops an --add-dir of the person's home folder); the mode words go
+ * before a `--` in it, so they stay options.
  */
-export function launchRun(agentKey, run, bot) {
-  return [...run, ...autoModeArgs(agentKey, bot, run)];
+export function launchRun(agentKey, run, bot, home = null) {
+  if (agentKey !== "codex") return [...run, ...autoModeArgs(agentKey, bot, run)];
+  const { argv } = codexClean(run, home);
+  const cut = argv.indexOf("--");
+  return cut < 0 ? [...argv, ...CODEX_MODE_ARGS] : [...argv.slice(0, cut), ...CODEX_MODE_ARGS, ...argv.slice(cut)];
 }
 
 /**

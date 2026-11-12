@@ -5,8 +5,8 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, effortArgs, hasEffortFlag, launchRun, modelArgs, modelRefusal,
-  promptArgs, resolveAgent } from "./models.js";
+import { AGENTS, AGY_MODE_DEFAULT, CODEX_NETWORK, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, codexClean, codexCleanNote, effortArgs,
+  hasEffortFlag, launchRun, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
 
@@ -273,11 +273,13 @@ export const EFFORT_SHAPE = /^[a-z][a-z0-9-]{0,31}$/;
  * names one. The bot's own model pin is its seat's, never its workers'. An Antigravity worker
  * always gets `--mode` (the bot's `worker.agyMode`, auto by default; an unknown one is refused).
  * A model or effort the agent has no flag for is left out with a warning. `agents`: the table
- * Herdr starts from.
+ * Herdr starts from. A Codex worker runs the pack's Codex launch mode (#1125); its source's own
+ * approval and sandbox words are left out with a warning naming them (`home`: the person's home
+ * folder, so an --add-dir of it goes too).
  * Returns { template, agent, model, effort, agyMode, argv, warnings } (template null, or agent,
  * model, effort, agyMode and argv null) or { error }.
  */
-export function workerPlan(bot, pick = {}, agents = AGENTS) {
+export function workerPlan(bot, pick = {}, agents = AGENTS, home = null) {
   const warnings = [];
   const defaults = bot?.worker && typeof bot.worker === "object" ? bot.worker : {};
   const picked = ["agent", "model", "effort"].filter((k) => pick[k]);
@@ -337,7 +339,9 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     warnings.push(`${agents[agent].name} has no effort flag; effort ${effort} left out.`);
     effort = null;
   }
-  const argv = [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
+  const cleaned = agent === "codex" ? codexCleanNote(agents[agent].run, home) : null;
+  if (cleaned) warnings.push(cleaned);
+  const argv = [...launchRun(agent, agents[agent].run, bot, home), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
   return { template: null, agent, model, effort, agyMode, argv, warnings };
 }
 
@@ -467,9 +471,10 @@ function shellCommands(text) {
  * assignments and the wrappers env, exec and nohup; a shell's `-c` script is followed the same
  * way, a few levels deep. A word in argument position is never a program.
  */
-function commandPrograms(text, depth = 0) {
+function commandRuns(text, depth = 0) {
   const out = [];
-  for (const words of shellCommands(text)) {
+  const commands = shellCommands(text);
+  commands.forEach((words, n) => {
     let i = 0;
     for (;;) {
       while (i < words.length && ASSIGNMENT.test(words[i])) i += 1;
@@ -485,16 +490,20 @@ function commandPrograms(text, depth = 0) {
       }
       if (name === "exec" || name === "nohup") { i += 1; continue; }
       if (SHELLS.has(name) && words[i + 1] === "-c" && typeof words[i + 2] === "string") {
-        if (depth < 4) out.push(...commandPrograms(words[i + 2], depth + 1));
+        if (depth < 4) out.push(...commandRuns(words[i + 2], depth + 1));
         i = words.length;
         break;
       }
       break;
     }
-    if (i < words.length) out.push(shellBase(words[i]));
-  }
+    // `last`: the command string's last simple command, at its top level (where "$@" lands).
+    if (i < words.length) out.push({ program: shellBase(words[i]), args: words.slice(i + 1), last: depth === 0 && n === commands.length - 1 });
+  });
   return out;
 }
+
+/** The programs a command string runs (commandRuns), in order. */
+const commandPrograms = (text) => commandRuns(text).map((r) => r.program);
 
 /** The agent key `program` names (a key, an agent's run[0] or a match name), or null. */
 function agentOfProgram(program, agents) {
@@ -518,6 +527,43 @@ export function templateAgent(command, agents = AGENTS) {
     if (key) found.add(key);
   }
   return found.size === 1 ? [...found][0] : null;
+}
+
+/**
+ * What a shell command that runs Codex (an hc template's, a helper's) says about the pack's
+ * Codex launch mode (#1125), read from its words, never changed: null when it runs no Codex
+ * (or another agent too). `conflicts`: the flags in it that pick Codex's approvals or sandbox
+ * (models.js codexClean, by name: bypass, -a, -s, the -c keys, --remote); `missing`: the pack
+ * mode words it lacks, in the order the mode has them (`--approve-for-me`, `--disable hooks`,
+ * `--no-daemon`, network on); `single`: Codex runs once, as the top-level last simple command,
+ * so words after the command (through "$@") reach it.
+ */
+export function codexCommandCheck(command, agents = AGENTS) {
+  const text = String(command ?? "");
+  if (templateAgent(text, agents) !== "codex") return null;
+  const runs = commandRuns(text).filter((r) => agentOfProgram(r.program, agents) === "codex");
+  const all = (test) => runs.length > 0 && runs.every((r) => test(r.args));
+  const pair = (args, flag, value) => args.some((w, i) => (w === flag && args[i + 1] === value) || w === `${flag}=${value}`);
+  const config = (args, value) => pair(args, "-c", value) || pair(args, "--config", value) || args.includes(`-c${value}`);
+  const missing = [];
+  if (!all((a) => a.includes("--approve-for-me"))) missing.push("--approve-for-me");
+  if (!all((a) => pair(a, "--disable", "hooks") || config(a, "features.hooks=false"))) missing.push("--disable", "hooks");
+  if (!all((a) => a.includes("--no-daemon"))) missing.push("--no-daemon");
+  if (!all((a) => config(a, CODEX_NETWORK))) missing.push("-c", CODEX_NETWORK);
+  const conflicts = [...new Set(runs.flatMap((r) => codexClean(["codex", ...r.args]).dropped))];
+  return { conflicts, missing, single: runs.length === 1 && runs[0].last };
+}
+
+/**
+ * The warning for a worker template whose command runs Codex without --no-daemon (#1125): hc
+ * says Codex must run with it, or its commands run outside hc. The owner's template exception
+ * keeps the command as it is (never rewritten, rerouted or refused): this names the fix.
+ */
+export function codexTemplateWarning(template, command, agents = AGENTS) {
+  const check = codexCommandCheck(command, agents);
+  if (!check || !check.missing.includes("--no-daemon")) return null;
+  return `Template ${template} runs Codex without --no-daemon, so its commands may run in Codex's shared server, outside hc `
+    + `(hc --skill). Add --no-daemon to the codex command in that template's file (hc templates lists it).`;
 }
 
 /** The env program agent workers start under, by its full path (macOS and Linux both have it). */
