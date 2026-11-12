@@ -10,9 +10,9 @@ matches its digest.
 
 | Part | Version | Source |
 |---|---|---|
-| DeepSeek Harness (`@deepseek-ai/dsh`) | 0.2.2-rc.1 | The runtime used for these captures, then pinned by the Bot team's harness and the desktop app (`apps/bots-dsh/dev/harness`, `apps/desktop/runtime`) |
-| `@automagik/bots-dsh` (the Bot team) | 3.127.14 | This repository at release commit `c57acbed`; the script refuses to run if any shipped file differs from it |
-| `@automagik/welcome-dsh` (the welcome) | 3.127.14 | Same release commit, same check |
+| DeepSeek Harness (`@deepseek-ai/dsh`) | 0.2.2-rc.2 | The runtime the Bot team's harness declares (`apps/bots-dsh/dev/harness`), which the desktop app ships too (`apps/desktop/runtime`) |
+| `@automagik/bots-dsh` (the Bot team) | 3.135.0 | This repository at release commit `aabe26a1`; the script refuses to run if any shipped file differs from it |
+| `@automagik/welcome-dsh` (the welcome) | 3.135.0 | Same release commit, same check |
 | `@automagik/genie-dsh` (Genie) | 0.1.4 | `automagik-si/genie` at `39402fb1`, `plugins/genie-dsh`: the commit `marketplace/automagik.json` pins, exported with `git archive` |
 
 Omni's plugins are not part of the capture (see *Left out*). The manifest records the exact
@@ -201,3 +201,17 @@ is dark. On phone-width screens the home and Desktop pages show the phone-width 
 instead of a shrunken window. `assets/art/manifest.json` records each file's source, the
 source's SHA-256, the rectangle and the output's SHA-256; the page test checks all of them,
 and that every capture-derived file's source digest matches this manifest.
+
+## Re-capture, 2026-11-12
+
+Every app screen was recorded again, with the same scripts and the same scenario, from
+release 3.135.0 on runtime 0.2.2-rc.2, where the app shows the approved full-body Genie
+(the `genie-clay` pet) and the approved logo. `capture.mjs` made
+the welcome, chat and wish-thread pictures and `theme.mjs` the four `app-stage-*` ones; no
+picture changed size, so the crops in `assets/art/` keep their rectangles. The manifest
+holds the new checkout, pins and digests.
+
+The six Pocket screens were recorded again from the same checkout, by the steps above. The
+app's build bundles the same Genie sheet, which now shows in the sample Bot chat's header.
+The two `pocket-code-*` pictures came out byte-for-byte as before. `code-sidebar.png` is the
+pack's share image and did not change.
