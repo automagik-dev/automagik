@@ -229,21 +229,22 @@ No credential is read or copied between programs. The background model is not mo
 
 **The model menu** lists only what is set up, as connection, then model, then thinking level: a provider whose key is stored, an agent whose CLI is signed in, and a DSH sign-in other than Claude's or ChatGPT's that is stored. A connection is named by its brand and how it connects: "DeepSeek", "Anthropic · API key", "OpenAI · API key", "Claude Code", "Codex"; two connections that would read the same also show their route id. DSH's own Claude Pro/Max or ChatGPT sign-in route is never offered (the catalog marks it `covered`), nor is a model whose key or sign-in is missing (`needsKey`, `needsSignIn`). The model a Bot is on stays shown even when it cannot run, marked unavailable, and a new Bot never starts on one: the team's default skips them, and DSH's default on a covered plan route is read as the same model on that plan's CLI. The jobs beside the chats keep their own rule (the background model above).
 
-**Images**: `generate_image` draws with an OpenAI API key (the Images API) exactly as before; without one, through the Codex CLI on its own ChatGPT sign-in (acp-dsh's `generateImage`, a one-off read-only Codex session using Codex's image tool), so a ChatGPT plan draws with no DSH sign-in. A ChatGPT grant an earlier version stored through DSH's `openai-codex` sign-in is read last, only so a person who signed in that way keeps drawing; Automagik no longer offers that sign-in. Nothing reads or copies the CLI's sign-in. A Bot on an agent (Codex) can also make an image with the agent's own tool: acp-dsh hands its PNG, from the call's own update, to the Bot team's keeper (`acpAgents.keepImages`), the chat shows it in the same image card, it is saved in the same images folder, and the agent's link to its own local copy leaves the reply. While any image is made (either path), the card is Omni painting: Omni's clay art with no card behind it, swaying, its face changing every 0.9 s, four dabs of the theme's colours around it, and "Painting your image…" with the seconds so far; a partial image, then the finished one, fades in where Omni was. With reduced motion Omni stands still and the dabs are gone. A call that fails or is stopped says the image was not made, and why.
+**Images**: `generate_image` draws with an OpenAI API key (the Images API) exactly as before; without one, through the Codex CLI on its own ChatGPT sign-in (acp-dsh's `generateImage`, a one-off Codex session with a per-draw permission profile using Codex's image tool), so a ChatGPT plan draws with no DSH sign-in. A ChatGPT grant an earlier version stored through DSH's `openai-codex` sign-in is read last, only so a person who signed in that way keeps drawing; Automagik no longer offers that sign-in. Nothing reads or copies the CLI's sign-in. A Bot on an agent (Codex) can also make an image with the agent's own tool: acp-dsh hands its PNG, from the call's own update, to the Bot team's keeper (`acpAgents.keepImages`), the chat shows it in the same image card, it is saved in the same images folder, and the agent's link to its own local copy leaves the reply. While any image is made (either path), the card is Omni painting: Omni's clay art with no card behind it, swaying, its face changing every 0.9 s, four dabs of the theme's colours around it, and "Painting your image…" with the seconds so far; a partial image, then the finished one, fades in where Omni was. With reduced motion Omni stands still and the dabs are gone. A call that fails or is stopped says the image was not made, and why.
 
-**Codex image security (#870): accepted risk.** Codex drawing stays enabled. codex-acp's
-`read-only` mode can read the whole disk wherever the OS user has read access. An injected
-drawing request could read a local file into the returned picture; the image tool can use
-local image files as input. The picture is shown in chat, so other viewers could see that
-content. An empty working folder and the tool checks do not isolate file reads.
+**Codex image security (#870).** Each one-off draw selects a fresh permission profile that
+denies file reads outside its empty scratch folder where Codex enforces profiles (Seatbelt on
+macOS, bubblewrap on Linux, the Windows sandbox). The folder and config are removed afterwards.
+An adapter that lacks the mode or rejects it falls back to `read-only`, logs one warning and
+marks the result internally as not isolated. The owner keeps this fallback enabled with the
+file disclosure risk accepted: an injected request could use a readable local image as input
+and return its contents in a picture shown in chat. A Codex Bot's own image tool in ordinary
+chat is outside the per-draw profile and retains that risk under its chat permissions.
 
 An OpenAI API key routes `generate_image` through the Images API instead of its one-off
-Codex fallback. The API receives the prompt without starting a local Codex session; keep
-secrets out of the prompt. A Bot running on Codex can still use its own image tool even with
-that key configured. Use a different Bot model or turn Codex off in the agent settings to
-avoid that route. Avoid sending outside messages or other untrusted text to Codex drawing,
-but do not treat prompt review as a file access control. The narrow-sandbox work remains
-open in [#870](https://github.com/automagik-si/automagik/issues/870); see the
+Codex session. Prompt text still reaches the model; keep secrets out of it. A Bot running on
+Codex can still use its own image tool despite that key. Use a different Bot model or turn
+Codex off to avoid that route. Avoid sending untrusted outside text to Codex drawing; prompt
+review is not a file access control. See the
 [ACP image security notes](../acp-dsh/README.md#images-through-codex).
 
 **Fallback**: when a Bot's model fails a request and nothing earlier answers it (DSH's own retries of the same model, or a move to a fresh part for a full or stuck chat), the step runs again on the fallback model: `fallbackModel`, else the team's default model (DeepSeek's, out of the box). The rest of that turn stays there, and a notice in the chat says which model failed and why; the next turn is back on the Bot's own model. A full context, a stop, and a fallback that fails too end the turn as before. It covers every Session of the team: a Bot's chat, a group seat, a task.
