@@ -901,7 +901,7 @@ test('Remote Hermes Details explains remote limits and its full-access confirmat
   assert.match(popup().textContent, /still asks you before answering each Hermes approval question\. Full access does not answer for you/)
   await click(button(popup(), 'Give full access'))
   assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'danger-full-access' } }])
-  assert.equal(document.querySelector('.bt-perm-confirm'), null)
+  assert.equal(document.querySelectorAll('.bt-perm-confirm').length, 0)
 })
 
 test('Remote Hermes composer levels use the remote explanation for known and custom restrictive levels', async t => {
@@ -979,13 +979,13 @@ test('Choose in the chat is a visible link that reopens the real permission card
   await act(() => page.root.render(React.createElement(React.Fragment, null,
     React.createElement(page.BotPanel, { pane: { id: bot.id, view: 'details' }, leaving: false, roster, actions, ...panelProps }),
     React.createElement(page.PermissionChoiceDock, { sessionId: bot.id, useRoster: hook(roster), actions }))))
-  assert.equal(card(page.document), null, 'a saved level has no card until requested')
+  assert.equal(Boolean(card(page.document)), false, 'a saved level has no card until requested')
   const choose = button(page.document.querySelector('.bt-drawer-permission'), 'Choose in the chat')
   assert.equal(choose.style.textDecoration, 'underline')
   await page.click(choose)
   remoteList(card(page.document))
   await page.click(button(card(page.document), 'Not now'))
-  assert.equal(card(page.document), null)
+  assert.equal(Boolean(card(page.document)), false)
   await page.click(choose)
   assert.ok(card(page.document), 'the Details control also reopens a dismissed card')
   assert.deepEqual(saves, [], 'reopening never changes the saved level')

@@ -195,7 +195,7 @@ test('a permission question offers its fixed answers and nothing to type; any ot
     try { check(view.render()) } finally { view.unmount(); card.unmount() }
   }
   ask({ kind: 'approval', approve: 'Allow once', reject: 'Deny' }, form => {
-    assert.equal(field(form), undefined, 'no typed answer can stand in for yes or no')
+    assert.equal(Boolean(field(form)), false, 'no typed answer can stand in for yes or no')
     assert.equal(options(form).length, 2)
     options(form)[1].props.onClick()
   })

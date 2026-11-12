@@ -12,12 +12,26 @@ import { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
 import { install } from '../src/host/hermes-remote.js'
 import { fallbackFor } from '../src/host/fallback.js'
 import { routeOf, selectorRouteOf, crossesHarness } from '../src/shared/routes.js'
+import { markOf, judgeOf } from '../src/shared/permission-levels.js'
 import { contractPin, differences, USED_METHODS } from '../scripts/hermes-contract.mjs'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 import { desktop8Session } from './fixtures/hermes-desktop8.mjs'
 
 // All addresses and secrets are generated per test. No network or Hermes process is used.
+// A wait that ends. A frame that never comes fails the test after five seconds, or at once
+// with the error of the work it waited on, instead of polling for ever.
+async function until(predicate, what, work) {
+  let failed
+  work?.then(undefined, error => { failed = error ?? Error(`Failed before ${what}`) })
+  const deadline = Date.now() + 5000
+  while (!predicate()) {
+    if (failed) throw failed
+    assert.ok(Date.now() < deadline, `Timed out waiting for ${what}`)
+    await new Promise(resolve => setImmediate(resolve))
+  }
+}
+
 function fixture(t, overrides = {}) {
   const credential = overrides.credential ?? randomUUID(), ticket = randomUUID()
   const address = `https://${randomUUID()}.invalid`
@@ -186,6 +200,14 @@ test('ignored Stop stays unknown; an interrupt acknowledgment does not prove rem
   assert.equal((await f.run.next()).text, LOST)
 })
 
+test('Auto is not a level of a Remote Hermes chat: its route has no Auto mark, so no judge is offered there', () => {
+  // Auto is offered only for a model with a mark (auto.js autoOffer); a judge that answered a
+  // Hermes question would answer for the person.
+  assert.equal(markOf('hermes-remote/sample-model'), undefined)
+  assert.equal(judgeOf(markOf('hermes-remote/sample-model')), undefined)
+  assert.equal(routeOf('hermes-remote').connectedBy, 'hermes-remote')
+})
+
 test('no chat level answers a Hermes question for the person: an asking level uses the approval card, a never-ask level a chat question', async () => {
   const agent = { session: {} }
   const ask = async (policy, sandbox, preset, { card = 'allowed-once', pick = { selected: ['Allow once'] }, questions = true } = {}) => {
@@ -320,7 +342,7 @@ test('DSH adapter produces a real mirror tool card then continues the same remot
   const options = markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: 'sample-chat', messages: [{ role: 'user', content: 'Sample' }] })
   const stream = adapter.stream(options)
   const first = stream.next()
-  while (!f.sent.some(frame => frame.method === 'prompt.submit')) await new Promise(resolve => setImmediate(resolve))
+  await until(() => f.sent.some(frame => frame.method === 'prompt.submit'), 'the prompt to be submitted', first)
   f.socket().event('tool.start', { tool_id: 'sample-tool', name: 'Sample tool', args: {} })
   const chunks = [(await first).value]
   for await (const chunk of stream) chunks.push(chunk)
@@ -405,7 +427,7 @@ test('real adapter signal Stop keeps socket open for interrupt and honours the c
   const controller = new AbortController()
   const stream = rt.hermesRemote.adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, signal: controller.signal, messages: [{ role: 'user', content: 'Sample' }] }))
   const first = stream.next()
-  while (!f.sent.some(frame => frame.method === 'prompt.submit')) await new Promise(resolve => setImmediate(resolve))
+  await until(() => f.sent.some(frame => frame.method === 'prompt.submit'), 'the prompt to be submitted', first)
   controller.abort()
   await first
   await stream.return()
@@ -761,7 +783,7 @@ test('reconcile fences old approval before awaiting resume and can answer a reus
   const oldQuestion = f.run.control({ id: currentRequest.id, method: 'approval', epoch: 'epoch-a', params: { session_id: f.snapshot.session_id, request_id: 'old', command: 'Old command' } })
   f.wire.epoch = 'epoch-b'
   const reconciling = f.run.reconcile({ answerQuestions: true })
-  while (!resumeFrame) await new Promise(resolve => setImmediate(resolve))
+  await until(() => resumeFrame, 'the resume frame', reconciling)
   resolveOldQuestion('once')
   await oldQuestion
   assert.ok(!f.sent.some(frame => frame.id === currentRequest.id))

@@ -96,8 +96,8 @@ test('Settings names the saved computer and profile, shows no key, and More open
   assert.match(document.body.textContent, /example\.invalid/)
   assert.match(document.body.textContent, /Profile: sample-profile/)
   assert.doesNotMatch(document.body.textContent, /Key saved|approval/i)
-  assert.equal(document.querySelector('input[type="password"]'), null)
-  assert.equal(document.querySelector('h3'), null, 'the dialog owns the single page title')
+  assert.equal(document.querySelectorAll('input[type="password"]').length, 0)
+  assert.equal(document.querySelectorAll('h3').length, 0, 'the dialog owns the single page title')
   assert.deepEqual([...document.querySelectorAll('section button')].map(node => node.textContent), ['Change computer', 'More', 'Disconnect'])
   await click('More')
   await waitFor(() => document.querySelector('[data-step=more]'), 'the optional settings')
@@ -115,8 +115,8 @@ test('new setup opens on the computer list; an address and its token are behind 
   await click('Set up connection')
   await waitFor(() => document.querySelector('[data-step=host]'), 'the computer list')
   assert.match(document.body.textContent, /Choose a computer/)
-  assert.equal(document.querySelector('input[aria-label="Session token"]'), null)
-  assert.equal(document.querySelector('input[aria-label="Remote address"]'), null)
+  assert.equal(document.querySelectorAll('input[aria-label="Session token"]').length, 0)
+  assert.equal(document.querySelectorAll('input[aria-label="Remote address"]').length, 0)
   assert.deepEqual([...document.querySelectorAll('.bt-hw-foot button')].map(node => node.textContent.replace(/[→←]/g, '').trim()), ['Cancel', 'Connect'])
   await click('Cancel')
   await click('More')
@@ -273,7 +273,7 @@ test('the wizard shows honest progress, asks for a profile only when there are s
   const pending = deferred()
   const render = await startWizard(t, { 'hermes-remote-test': () => pending.promise })
   const { document, click, calls, opened } = render
-  assert.equal(document.querySelector('.bt-hw-steps'), null, 'no list of steps in front of the person')
+  assert.equal(document.querySelectorAll('.bt-hw-steps').length, 0, 'no list of steps in front of the person')
   const secret = await enterToken(render)
   assert.equal(document.querySelector('input[aria-label="Session token"]').type, 'password')
   await click('Connect')
@@ -316,14 +316,14 @@ test('first use is three things: pick an SSH host, Connect, and the chat opens',
     assert.match(document.querySelector('.bt-hw-content h2').textContent, /Choose a computer/)
     // No route choice, no address or sign-in fields, no optional SSH fields, no test button.
     assert.doesNotMatch(document.body.textContent, /How would you like to connect|Remote address|Session token|Test connection|Test SSH connection/)
-    for (const label of ['User (optional)', 'Port (optional)', 'Key file path', 'Hermes path (optional)', 'Remote address', 'Session token']) assert.equal(document.querySelector(`input[aria-label="${label}"]`), null, label)
+    for (const label of ['User (optional)', 'Port (optional)', 'Key file path', 'Hermes path (optional)', 'Remote address', 'Session token']) assert.equal(document.querySelectorAll(`input[aria-label="${label}"]`).length, 0, label)
     await waitFor(() => document.querySelectorAll('.bt-hw-host-choice').length === 2, 'hosts from the SSH config')
     assert.equal([...document.querySelectorAll('.bt-hw-foot button')].at(-1).disabled, true, 'nothing to connect to yet')
     await click('Use SSH host sample-box')
     await click('Connect')
     await waitFor(() => calls.some(call => call.endpoint === 'hermes-remote-save'), 'the connection to be kept')
     // One profile is not a choice: the picker never shows, and no button is needed.
-    assert.equal(document.querySelector('[data-step=profile]'), null)
+    assert.equal(document.querySelectorAll('[data-step=profile]').length, 0)
     assert.equal(document.querySelectorAll('[role=radio]').length, 0)
     assert.ok(document.querySelector('[data-step=working][data-status=saving]'))
     assert.match(document.body.textContent, /Opening the chat…/)
@@ -345,7 +345,7 @@ test('an address saved before never puts the options form first: setup still ope
   for (const props of [{ more: false }, { more: false, edit: true, initialView: { ...connectedView() } }]) {
     const render = await startWizard(t, { 'hermes-remote': leftover, 'hermes-remote-ssh-hosts': sampleHosts, 'hermes-remote-test': oneProfile }, { props })
     assert.ok(render.document.querySelector('[data-step=host]'))
-    assert.equal(render.document.querySelector('input[aria-label="Remote address"]'), null)
+    assert.equal(render.document.querySelectorAll('input[aria-label="Remote address"]').length, 0)
     assert.equal([...render.document.querySelectorAll('.bt-hw-foot button')].at(-1).disabled, true, 'an address is not a computer to connect to here')
     await waitFor(() => render.document.querySelectorAll('.bt-hw-host-choice').length === 2, 'hosts from the SSH config')
     await render.click('Use SSH host other-box'); await render.click('Connect')
@@ -407,7 +407,7 @@ test('each real error names what went wrong and its one fix in one line, with th
     assert.equal(fixes[0].textContent, fix)
     assert.ok(!fix.includes('\n') && fix.length <= 120, 'the fix is one line')
     // Nothing else is said until the person asks for it.
-    assert.equal(render.document.querySelector('.bt-hw-details'), null)
+    assert.equal(render.document.querySelectorAll('.bt-hw-details').length, 0)
     assert.equal(render.document.querySelectorAll('.bt-hw-failed p, .bt-hw-facts, .bt-hw-lines').length, 0)
     // A typed sign-in is forgotten after a failure, so that screen leads back to enter it.
     assert.deepEqual([...render.document.querySelectorAll('.bt-hw-foot button')].map(node => node.textContent.replace(/[→←]/g, '').trim()), mode === 'ssh' ? ['More options', 'Try again'] : ['Cancel', 'More options'])
@@ -428,13 +428,13 @@ test('Details opened on one failure are closed again on the next one', async t =
   await fill('SSH host or config name', 'sample-box')
   await click('Connect')
   await waitFor(() => document.querySelector('[data-status=error]'), 'the first failure')
-  assert.equal(document.querySelector('.bt-hw-details'), null)
+  assert.equal(document.querySelectorAll('.bt-hw-details').length, 0)
   assert.equal(document.querySelector('.bt-hw-details-toggle').getAttribute('aria-expanded'), 'false')
   await click('Details')
   assert.ok(document.querySelector('.bt-hw-details'), 'Details open when asked for')
   await click('Try again')
   await waitFor(() => tests() === 2 && document.querySelector('[data-status=error]'), 'the second failure')
-  assert.equal(document.querySelector('.bt-hw-details'), null, 'a new failure starts with its one fix only')
+  assert.equal(document.querySelectorAll('.bt-hw-details').length, 0, 'a new failure starts with its one fix only')
   assert.equal(document.querySelector('.bt-hw-details-toggle').getAttribute('aria-expanded'), 'false')
 })
 
@@ -478,7 +478,7 @@ test('SSH uses optional config defaults and a path reference, with clear strict 
   assert.equal(render.document.querySelector('input[aria-label="Port (optional)"]').value, '')
   await render.click('Choose file…')
   assert.equal(render.document.querySelector('input[aria-label="Key file path"]').type, 'text')
-  assert.equal(render.document.querySelector('input[type=file]'), null, 'a private key can never be uploaded')
+  assert.equal(render.document.querySelectorAll('input[type=file]').length, 0, 'a private key can never be uploaded')
   await render.click('Use this path')
   await render.click('Connect')
   await waitFor(() => render.document.querySelector('[data-status=error]'), 'SSH host-key error frame')
@@ -514,7 +514,7 @@ test('saved Remote Hermes connects in one click without another setup or passwor
   assert.equal(render.opened[0].modelRef, 'hermes-remote/sample-model')
   assert.equal(render.calls.filter(call => call.endpoint === 'hermes-remote-connect').length, 1)
   assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-test' || call.endpoint === 'hermes-remote-save'))
-  assert.equal(render.document.querySelector('input[type=password]'), null)
+  assert.equal(render.document.querySelectorAll('input[type=password]').length, 0)
 })
 
 test('Cancel aborts a pending test and discards only test resources', async t => {
@@ -660,7 +660,7 @@ test('Escape fences a saved-route completion while the model catalog refresh is 
   await refresh.promise
   await new Promise(resolve => setImmediate(resolve))
   flushSync(() => {})
-  assert.equal(render.document.querySelector('.bt-model-confirm'), null)
+  assert.equal(render.document.querySelectorAll('.bt-model-confirm').length, 0)
   assert.equal(picked.length, 0)
 })
 
@@ -863,7 +863,7 @@ test('the computer list shows fourteen searchable aliases and keeps the larger k
   await render.click('Use SSH host sample-12')
   const input = label => render.document.querySelector(`input[aria-label="${label}"]`)
   assert.equal(input('SSH host or config name').value, 'sample-12', 'connect with the alias, not the resolved display hostname')
-  assert.equal(input('User (optional)'), null, 'the optional SSH fields are not on this screen')
+  assert.equal(Boolean(input('User (optional)')), false, 'the optional SSH fields are not on this screen')
   await render.fill('Search SSH hosts', 'other-170.example.invalid')
   assert.match(render.document.body.textContent, /No SSH hosts match your search/)
   await render.click('Other hosts you have connected to')
@@ -902,7 +902,7 @@ for (const failure of [false, true]) {
     } }, { props: { more: false } })
     
     await waitFor(() => render.document.body.textContent.includes(failure ? 'Saved SSH hosts could not be listed.' : 'No saved SSH hosts.'), 'optional host list result')
-    assert.equal(render.document.querySelector('.bt-hw-other-hosts'), null)
+    assert.equal(render.document.querySelectorAll('.bt-hw-other-hosts').length, 0)
     await render.fill('SSH host or config name', 'manual.example.invalid')
     await render.click('Connect')
     await waitFor(() => render.document.querySelector('[data-step=profile]'), 'manual SSH connection')
@@ -925,7 +925,7 @@ test('leaving the computer list aborts only its host-list request, fences late r
   assert.equal(testSignal.aborted, false)
   list.resolve(hostInventory())
   await new Promise(resolve => setImmediate(resolve))
-  assert.equal(render.document.querySelector('.bt-hw-host-picker'), null, 'late host replies cannot restore the list')
+  assert.equal(render.document.querySelectorAll('.bt-hw-host-picker').length, 0, 'late host replies cannot restore the list')
   testing.resolve(testView())
   await waitFor(() => render.document.querySelector('[data-step=profile]'), 'connection test result')
   assert.equal(testSignal.aborted, false)
@@ -943,9 +943,9 @@ test('leaving the computer list or unmounting aborts the optional list without r
   assert.equal(signals[0].aborted, true)
   lists[0].resolve(hostInventory())
   await new Promise(resolve => setImmediate(resolve))
-  assert.equal(render.document.querySelector('.bt-hw-host-picker'), null)
+  assert.equal(render.document.querySelectorAll('.bt-hw-host-picker').length, 0)
   await render.click('More options')
-  assert.equal(render.document.querySelector('.bt-hw-host-picker'), null, 'the optional settings read no host list')
+  assert.equal(render.document.querySelectorAll('.bt-hw-host-picker').length, 0, 'the optional settings read no host list')
   assert.equal(signals.length, 1)
   await render.click('Back')
   await waitFor(() => signals.length === 2, 'fresh SSH list after returning')
@@ -967,7 +967,7 @@ async function failedSshTest(t, code, failure, overrides = {}) {
   // The one fix is on the screen; what stopped, the rows and the last lines are behind Details.
   const fix = render.document.querySelector('.bt-hw-error-note')?.textContent ?? ''
   if (render.document.querySelector('.bt-hw-details-toggle')) {
-    assert.equal(render.document.querySelector('.bt-hw-details'), null)
+    assert.equal(render.document.querySelectorAll('.bt-hw-details').length, 0)
     await render.click('Details')
   }
   const text = selector => render.document.querySelector(selector)?.textContent ?? ''
@@ -1079,7 +1079,7 @@ test('only an unknown kind shows the generic SSH screen, with the host and what 
   assert.equal(render.document.querySelector('.bt-hw-lines pre').textContent, 'A sample line SSH said')
   const silent = await failedSshTest(t, 'bot/hermes-ssh', { kind: 'unknown', stage: 'ssh-sign-in' })
   assert.equal(silent.text('.bt-hw-details>p'), 'This is not one of the failures Automagik knows, and SSH said nothing more.')
-  assert.equal(silent.document.querySelector('.bt-hw-lines'), null)
+  assert.equal(silent.document.querySelectorAll('.bt-hw-lines').length, 0)
 })
 
 test('a new host shows its key and is trusted only by the button, then tested again', async t => {
@@ -1091,7 +1091,7 @@ test('a new host shows its key and is trusted only by the button, then tested ag
   })
   assert.equal(render.text('.bt-hw-content h2'), 'Trust this SSH host?')
   assert.equal(render.text('.bt-hw-ask h3'), 'sample-box is new to this computer')
-  assert.equal(render.document.querySelector('.bt-hw-failed'), null, 'a new host is a question, not a fault')
+  assert.equal(render.document.querySelectorAll('.bt-hw-failed').length, 0, 'a new host is a question, not a fault')
   assert.deepEqual(render.rows, { 'SSH host': 'sample-box', 'Key type': 'ssh-ed25519', Fingerprint: fingerprint }, 'a question shows the key, not a failed step')
   assert.match(render.text('.bt-hw-note'), /Only this exact key is saved to your known hosts\. If sample-box ever shows a different key, the connection is refused\./)
   assert.deepEqual(render.buttons(), ['Back', 'Trust this host'])
