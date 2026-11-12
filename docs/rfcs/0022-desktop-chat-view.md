@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Queued (answers: Q1-Q8, 2026-11-09: Q2 by the owner, the rest by Chat, Q6 re-decided and Decided 9 (H before phase 1) after review; no question open; only the RFC: #847; amended by RFC 0028 (Draft): Code workers on a host-side grant beside delivery H, the rejection kept) |
+| Status | Queued (answers: Q1-Q8, 2026-11-09: Q2 by the owner, the rest by Chat, Q6 re-decided and Decided 9 (H before phase 1) after review; only the RFC: #847; amended by RFC 0028 (Draft): Code workers on a host-side grant beside delivery H, the rejection kept; revised 2026-11-10: Team and Code, the left bar, humanized bots, what ships before #631 and the owner's own instance, (h) to (l), Proposed (owner not yet read), Q9-Q17 open for the owner; amends RFC 0024 (f)) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); plugin (3.N.P) for bots-dsh; desktop (3.N) for the shell; herdr (3.N.P) for the chat engine |
 | Created | 2026-11-09 |
@@ -21,6 +21,13 @@ rendered chat to xterm drawing the same hc pane, in place, from phase 1; which b
 and how the desktop lists them; what the Bot team's own DSH Bots keep; whom the view answers,
 how it reaches the Linux box, and the risk that machine link brings; which desktop P0s block
 which phase; and the rollout.
+
+The 2026-11-10 revision (Proposed, for the owner to approve before anything is built) splits the
+product into **Team**, the people-facing chat, and **Code**, the Herdr side ((h)); describes the
+new left bar as a model ((i)); gives each project one humanized bot, starting with the General
+Orchestrator ((j)); states what can ship before #631 and why ((k)); and settles how the owner's
+own instance may hold links to his computers when a Cloud workspace may not, amending RFC 0024
+((l)). The decided parts above it are unchanged.
 
 ## Motivation
 
@@ -48,6 +55,26 @@ So Chat is one agent with one session. Today:
   read a linked machine's transcript with `hc file read --on`, and type with `terminal.send` on
   `<machine>/tN`.
 - **Four desktop P0s are open** (#842 to #846, listed in (g)). Some sit on this view's path.
+  (2026-11-10: #842 to #846 are all closed.)
+
+The owner's direction, 2026-11-10, after a question on how far DSH is from Herdr: "first
+separating the concepts of team and code", then "assigning one humanized bot for each project",
+starting with the General Orchestrator, and "i want to have a dedicated automagik instance linked
+to this herdr enviroment, every machine connected". On the phone's opening screen: "the teams
+view will only have the orchestrators". He then chose "RFC first, build right after": this RFC is
+revised, he approves it, then it is built. The facts the revision rests on, read on `dev`:
+
+- No DSH-side code calls hc: `apps/bots-dsh/src`, `apps/acp-dsh/src` and `apps/desktop/src` have
+  no hc call (one comment names an `hc machine` name, `registry.js:38`), and
+  `apps/bots-dsh/src/host/live-chat/` does not exist.
+- A DSH chat on an ACP route starts its own agent: `AgentRun.start` in
+  `apps/acp-dsh/src/host/acp.js` spawns the adapter, declares no client capabilities and opens a
+  new session with `newSession`, with no session load or resume. It never attaches to a running
+  pane.
+- The only view of an existing pane is Pocket Link's chat engine
+  (`herdr/mods/pocket-link/chat/engine.js`), served to the phone.
+- The web instance the team runs shows only its own DSH Bots, and is reached with a bearer
+  launch URL, not a signed-in owner (RFC 0024, Motivation).
 
 ## Decided
 
@@ -105,6 +132,8 @@ Decided by Chat after review, 2026-11-09:
 9. **Delivery H comes before phase 1.** The link scoping to the shown seat, a mask on macOS
    (only Linux has one today, bwrap) and ssh coverage land before the view does. The owner is not
    asked to sign off the link's reach as a phase-0 risk ((f), "The link's reach"; Deliveries).
+   Narrowed by (k) if the owner confirms it (2026-11-10, Proposed): H then comes before a view
+   of a seat on another computer, and a seat on the desktop's own computer ships first (1L).
 
 Rejected, recorded so it is not proposed again:
 
@@ -446,6 +475,182 @@ or remove the machine link. Nothing is stored that needs cleaning.
 | #845 | On macOS, top-bar controls cannot be clicked under the drag region | Phase 1 on macOS, the owner's daily window. The Code mode switch sits in the view's own header, not the top bar, but phase 1 sets `front` in settings, and the bar's controls must be reachable. |
 | #846 | `browser_screenshot` reaches the model as text only through the ACP bridge | No phase of the view: Chat is the Claude Code CLI and handles images itself. It blocks phase 3's claim that DSH Bots keep their full tool set. |
 
+2026-11-10: #842 to #846 are all closed, #843 and #845 included, so phase 1 waits on none of
+them.
+
+### (h) Team and Code (Proposed, 2026-11-10)
+
+The owner's words: "first separating the concepts of team and code". One product, two sides, by
+whom each is for:
+
+- **Team** is the people-facing chat: the bots a person talks to as people. That is the
+  orchestrators and the humanized bots ((j)), and the team's DSH Bots and group chats as the bar
+  lists them today (Q11). Every Team row opens a chat: the rendered face for a seat ((c)), the
+  DSH chat for a DSH Bot ((e)).
+- **Code** is the Herdr side: every bot and every worker, as Herdr runs them, on this computer
+  and on linked machines. Every Code row opens its pane: the view in Code mode ((c)).
+
+A seat can be on both sides: on Team as a person, when it is an orchestrator or a humanized bot,
+and on Code as a terminal. It is one session either way (Decided, 2): the two sides are two ways
+in, never two sessions, and switching sides starts, resumes and sends nothing.
+
+What this changes:
+
+- **RFC 0013's Work and Code switch** (`apps/bots-dsh/src/client/work-code-switch.js`, in the
+  bar's top row) brings herdr-app's window forward on Code. Here Work becomes **Team**, and
+  **Code** becomes a side of Automagik's own bar. herdr-app stays one click away from every Code
+  row ((c), "Herdr's own window"). RFC 0013's D27 (Herdr is never rebuilt) holds: the Code side
+  is a list and one pane at a time, never Herdr's splits, tabs or layouts (Q9).
+- **RFC 0014's D29** keeps workers and helpers in Herdr, and (d) above lists no worker. Team
+  keeps that rule. Code lists workers, because Code is the Herdr side, shown in Automagik (Q15).
+- **The phone** follows the same split in its own work; this revision changes nothing in Pocket.
+- **RFC 0028** (code workers, #1008, not merged) reads both words the other way. Its Words table
+  says "Code" is herdr-app, opened from the sidebar's Code card (RFC 0013), and it says workers
+  get no rows of their own, as D29 decided. If the owner confirms Q9 (Team replaces Work, Code is
+  a side of the bar) and Q15 (Code lists workers), those answers amend RFC 0028's Words row for
+  "Code" and its line on worker rows, in that RFC, and its code workers are Code rows here ((i),
+  delivery B). If he declines either, RFC 0028 stands on that point and this revision changes.
+
+### (i) The left bar (Proposed)
+
+Described as a model, not a drawing: the owner is still shaping how it looks, and the drawing is
+his to approve. This section fixes only what the bar holds, what each part lists and what a
+click opens.
+
+| Part | Lists | A click opens |
+|---|---|---|
+| The side switch, at the top | Team or Code; each window keeps its own side | the other side's list, in place; the open chat or pane stays open |
+| Team: the main bot | the bot `front` names ((d)), first | its chat: the rendered face for a seat, the DSH chat for a DSH Bot |
+| Team: orchestrators | the General Orchestrator, then each project's humanized bot ((j)), with the project's name and the bot's status ("working", "needs you", "idle", "not running") | its chat in the rendered face; on "needs you", the waiting card |
+| Team: DSH Bots and groups | the team's DSH Bots, the universal ones included, and the group chats, as the bar lists them today | the DSH chat, unchanged ((e)) |
+| Code: machines | this computer first, then each linked machine the owner made | its projects, folded open |
+| Code: projects | the projects with a `shown[]` yes on that machine ((d)) | its bots, folded open |
+| Code: bots | each project's bots from the registry, its main bot first, each with its agent and status | the view in Code mode on the bot's pane; the view's switch flips to the rendered face where (d)'s table has one |
+| Code: workers | each bot's live workers, under the bot that started them, from both sources: the pack's workers ledger, and the code workers a DSH Bot starts if RFC 0028 (#1008) lands (terminals labelled `automagik.bot`) | the view in Code mode on the worker's pane |
+
+Rules for both sides:
+
+- **Read, never run.** Rows come from what already exists: the registry and `shown[]`, the pack's
+  attach and workers ledgers (`herdr/mods/am-sidebar/attach.js`, `workers.js`), and herdr-core's
+  status. No row starts, stops or restarts a bot or a worker in this RFC; starting waits for #206
+  ((d)).
+- **Linked machines after the link is scoped.** Until delivery H, Code lists this computer
+  only, and a Team row for a bot on another computer says "Needs the scoped link" ((k)).
+- **Owner-only.** The bar is the desktop window's; no row, list or click is a tool, and no Bot
+  reaches it ((f)).
+- **Kept as today:** search, New, the account menu and the update button.
+
+The bar's side switch and the view's Code mode switch (Decided, 2) do different jobs: the first
+picks a list, the second picks a pane's face. Opening a row from Code opens Code mode; from Team,
+the rendered face (Q10).
+
+### (j) One humanized bot per project, starting with the General Orchestrator (Proposed)
+
+The owner's words: "assigning one humanized bot for each project", starting with the General
+Orchestrator.
+
+- **Who it is.** A project's humanized bot is its registry main bot: a repo file has exactly
+  one (`main: true`, `apps/bots-dsh/src/shared/registry.js:313-314`), so no new field picks it.
+  It is the bot that already runs the project (its orchestrator or captain), given a person's
+  face on Team: its name and role line from the registry, its character, and its own voice in
+  its briefing. It is not a second agent in front of that bot: that is the shape rejected above
+  (a separate bot relaying through hc), which would add a second reading of the owner's words
+  (Q12).
+- **The General Orchestrator first.** It works above the projects, so it is a global Bot in the
+  home file (RFC 0014), not one project's main bot. It is the first Team row under the main bot.
+  Whether `front` names it is the owner's setting, made in the desktop's settings as (d) says
+  (Q14).
+- **Where it runs: a view first, a move later.** The owner asked to move it "inside automagik,
+  as acp bots". Today that move loses what an orchestrator uses every day. A DSH chat on
+  `acp-claude` starts a fresh agent session and never resumes one (Motivation), so the
+  conversation does not move; and the 2026-11-10 survey found that question dialogs with
+  previews, pasted images, the person's `!` commands, skills, session crons and the pane's
+  briefing do not survive either. So the first cut keeps each humanized bot where it runs and
+  makes its Team row the view of its seat: nothing is lost, and the chat is the same session.
+  Moving one bot to a DSH Bot is a later step for that bot, once those gaps close, each an
+  acceptance item then (Q13). Decided 4 (Chat stays a seat) is unchanged.
+
+### (k) What can ship before #631 (Proposed)
+
+The owner asked whether an owner-only desktop view of Herdr bots can safely ship before #631.
+
+**The answer: yes for seats on the desktop's own computer; no for seats on another computer,
+which wait for delivery H. #631 is not itself the gate for either.**
+
+**Why #631 is not the gate.** #631 masks the core socket, the holder sockets and `~/.ssh`
+inside sandboxed bot panes and puts a filtering hc proxy in front of them (its first cut: Linux,
+pack-started dsh-tui bots; then the linked machine, #628's scope, macOS and Windows). It keeps
+Herdr's own bot panes off the core. The view's risk is another path: other code on the
+desktop's computer, DSH Bots' shells above all, reaching a seat through hc or through a machine
+link ((f), "The link's reach"). #631 landing in full would not close that path; H does.
+
+**A seat on the desktop's own computer can ship first** (delivery 1L):
+
+- The view talks only to this computer's own herdr-core. It opens no machine link and needs
+  none.
+- The engine and Code mode's attach are reachable only from the window that shows them, never as
+  a tool, an automation or a Bot's ((f)).
+- Every other path to that terminal exists today without the view: any process of the owner's
+  account on that computer can reach the local core, DSH Bots' shells included, and macOS has no
+  mask for them yet. The view adds no such path and uses none. So shipping 1L asks the owner to
+  accept no new reach. It does not close the existing one either: that is H's mask, recorded
+  here, not accepted.
+- A local seat that holds links of its own (an orchestrator that reaches the owner's other
+  computers) changes nothing above: those links are reachable the same way today, and the view
+  never uses them.
+- The first humanized bot, the General Orchestrator, runs on the owner's own computer, so 1L
+  shows it.
+
+**A seat on another computer waits for H** (Decided 9, narrowed by (k) if confirmed). It needs a
+machine link on the desktop's computer, and that link gives every process of the account the whole
+hc API on the linked machine, `exec` included. An owner-only view does not narrow what the link
+allows. H starts from #628 and #631's proxy method table (C2a and C2b are merged) and needs a macOS
+mask, which #631 lists as a later stage: in practice remote seats follow the parts of #631 that H
+builds on, not the whole issue.
+
+**The Code side widens H's scope.** H scopes the link to the one seat the view shows. Listing
+every bot and worker of a linked machine ((i)) needs, on that machine, the terminal list and
+status, the two ledgers' file reads, and attach on each listed terminal. The proposal: H scopes
+the link to the terminals of the projects shown on that machine (read, status, attach, and the
+view's send and interrupt on them), still with `exec`, `run`, file writes and every other
+terminal refused (Q16).
+
+### (l) The owner's own instance, linked to his machines (Proposed; amends RFC 0024 (f))
+
+The owner asked for "a dedicated automagik instance linked to this herdr enviroment, every
+machine connected". RFC 0024 (f) said: "A workspace never holds hc machine links to a member's
+own computers".
+
+**Settled: both hold, because they are about different things.** RFC 0024's rule is for Cloud
+workspaces. The owner's instance is a self-hosted instance (RFC 0024 (c)): one instance, one
+human. RFC 0024 (f) is amended in the same change to say so.
+
+**Why the rule does not carry over.** A Cloud workspace is hosted by the operator and shared by
+members. A link there would give the hosting and every member's Bots reach into one member's
+computers, and Cloud would hold keys into customers' machines. None of those parties exists on
+the owner's own instance: one human, his machines, his host, and no call to Cloud (RFC 0024
+(j)). What is left is the desktop's risk, a DSH Bot's shell using the link, which H closes.
+
+**Conditions, all before the instance holds a link:**
+
+1. **The gate first.** RFC 0024 delivery 2 (the claim and passkeys) is in, so the bearer launch
+   URL is no longer a way in. Today's web instance is reached with a bearer URL; a link or a view
+   on it before the gate would make that URL a key to every machine. Unlike the desktop's window,
+   the instance is reached over a network, so no seat is shown on it before the gate, not even
+   one on its own host.
+2. **One human.** It holds links only while its owner is its only person: no member, no guest,
+   no Bot shared through Buzz's gate ((f), Decided 7). Linking it to Cloud (RFC 0024 (j)) adds
+   only the owner's own principal and never carries a link, a terminal or a view to Cloud or onto
+   a Cloud workspace. Moving it into Cloud (RFC 0024, Decided 20) drops its links first.
+3. **H applies to it.** The links' credentials are readable only by the instance's host process;
+   its DSH Bots' commands run with hc, the core socket, the credentials and `~/.ssh` masked (on
+   Linux, #631's DSH-lane runner mask); each link is scoped as (k) says.
+4. **Each machine is the owner's step.** A link is made by the owner with `hc machine` on the
+   host, never from a page and never by a Bot.
+
+On the instance's own host the seats are local, as in 1L: the view of them needs no link, but
+it needs the gate (condition 1) (Q17).
+
 ## Contracts introduced
 
 - **`apps/bots-dsh/src/host/live-chat/`**: the byte-equal copy RFC 0015 named, created here, with
@@ -463,6 +668,9 @@ or remove the machine link. Nothing is stored that needs cleaning.
   expectation is a change to this RFC.
 - No new plugin id, route prefix, storage prefix, ALPN, socket or port. `herdr-pocket/chat/1` is
   unchanged.
+- Proposed with the 2026-11-10 revision, no new field: a project's humanized bot is its registry
+  main bot ((j)); the bar reads the registry, `shown[]` and the pack's attach and workers ledgers
+  as they are ((i)). RFC 0024 (f)'s machine-link rule names Cloud workspaces only ((l)).
 
 ## Threat model
 
@@ -595,11 +803,68 @@ H. **The scoped link** (before phase 1, Decided 9; (f) "The link's reach"). The 
 The render cases fixture lands with phase 1 (herdr side) and Pocket reads its copy in its next
 pocket patch.
 
+Proposed with the 2026-11-10 revision, for the owner to approve before any is built. The order
+becomes 0, 1L, 2L, B, then H, 1, 2, 3, 4 as decided, and I after H and RFC 0024 delivery 2:
+
+1L. **The view of a seat on this computer** (plugin; before H and before #631, (k)). Phase 1's
+   work and acceptance, for seats on the desktop's own computer only, through its own herdr-core
+   and no machine link. *Acceptance:* a seat on another computer is listed with "Needs the scoped
+   link" and opens no view; the host makes no `--on` call and opens no link.
+   *Check:* phase 1's checks on a local seat; with a fake hc that lists a remote seat, no call
+   names a machine. On the owner's computer: the General Orchestrator's pane in both faces.
+   *Rollback:* a plugin release without the view; `front` is ignored.
+2L. **Writes from the rendered face, on this computer** (plugin; after 1L). Phase 2 for local
+   seats. *Check:* phase 2's checks on a local seat. *Rollback:* as phase 2.
+B. **The Team and Code bar** (plugin; after 1L; the drawing approved by the owner first). (i)'s
+   model: the side switch replacing RFC 0013's Work and Code segments, Team's sections, Code's tree
+   of this computer from the registry and the two ledgers, humanized bots ((j)) as Team rows.
+   *Acceptance:* no row starts, stops or restarts anything; herdr-app still opens from a Code row; a
+   worker row opens Code mode on the worker's pane; Code lists linked machines only after H; Code's
+   worker rows read both sources, the pack's workers ledger and, if RFC 0028 (#1008) lands, its code
+   workers (terminals labelled `automagik.bot`). *Check:* with temp homes, fake ledgers and a fake
+   hc (never a live Herdr), each part lists what (i) says and each click opens what it says; a
+   worker from either source is listed once, under its bot; no hc call writes. *Rollback:* a plugin
+   release with today's bar.
+I. **The owner's instance holds his links** (server image and plugin; after H and RFC 0024
+   delivery 2). (l)'s four conditions. *Check:* before the claim, the instance refuses to show a
+   seat and holds no link; after it, a DSH Bot's command on the instance cannot read a link's
+   credential, `hc exec` through a link is refused, and a linked machine's shown seats open.
+   *Rollback:* remove the links (`hc machine`); the instance shows its own DSH Bots as today.
+
 ## Open questions
 
-None. The eight questions this RFC asked were decided on 2026-11-09 (Decided, 1 to 8): Q2 by the
+The eight questions this RFC first asked were decided on 2026-11-09 (Decided, 1 to 8): Q2 by the
 owner, the rest by Chat as recommended, Q6 re-decided after review. Decided 9 (H before phase
 1) came from review the same day.
+
+Open for the owner, from the 2026-11-10 revision ((h) to (l)); each has a recommendation:
+
+9. **Team replaces Work.** Does the bar's Team and Code switch replace RFC 0013's Work and Code
+   segments, with herdr-app one click away from a Code row? Recommended: yes ((h)). A yes
+   amends RFC 0028's Words row for "Code" (#1008).
+10. **Two switches.** Does the view keep its own Code mode switch (Decided, 2) beside the bar's
+    side switch? Recommended: yes, since one picks a list and the other a pane's face ((i)).
+11. **What Team lists.** Orchestrators and humanized bots only, or also the team's DSH Bots and
+    group chats? Recommended: both, the humanized bots first, as (i) lists them.
+12. **Who is a project's humanized bot.** Its registry main bot, or a new bot made to talk for
+    it? Recommended: its main bot, so no second agent stands between the owner and the bot that
+    runs the project ((j)).
+13. **View first or move now.** Do humanized bots start as views of their seats, moving to DSH
+    Bots one by one once the gaps close, or move to `acp-claude` now and accept the losses (j)
+    lists? Recommended: view first.
+14. **The main bot.** Does `front` name the General Orchestrator? Recommended: the owner sets it
+    in settings; the RFC does not fix it ((j)).
+15. **Workers on Code.** Does Code list every worker, against D29 on that side only?
+    Recommended: yes, read-only rows that open Code mode ((h), (i)). A yes amends RFC 0028's
+    line that workers get no rows of their own (#1008).
+16. **H's scope.** Is H widened from the one shown seat to the terminals of shown projects on a
+    linked machine, still with no `exec`, `run` or file writes? Recommended: yes ((k)).
+17. **The instance's links.** Do (l)'s four conditions let the owner's own instance hold links
+    to every one of his machines, with RFC 0024 (f) amended to name Cloud workspaces only?
+    Recommended: yes ((l)).
+
+Answered in (k), for the owner to confirm: an owner-only view of seats on the desktop's own
+computer ships before #631 (1L, 2L); seats on another computer wait for H.
 
 ## Tracking
 
@@ -608,6 +873,14 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
 - Open issues: #852, #877, #882, #920.
 - Merged changes that cite this RFC: #847, #866 (last merged 2026-11-09).
 
+## Changelog
+
+- 2026-11-09: written and decided (Q1-Q8, Decided 9), #847.
+- 2026-11-10: revised on the owner's ruling "RFC first, build right after": Team and Code, the
+  left bar as a model, one humanized bot per project starting with the General Orchestrator,
+  what ships before #631, and the owner's own instance with his machine links ((h) to (l),
+  Proposed, Q9-Q17); RFC 0024 (f) amended to match.
+
 ## Links
 
 - RFCs: [0014](0014-shared-bot-registry.md) ("Herdr Bots in Automagik", "Other machines",
@@ -615,12 +888,15 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
   [0015](0015-live-chat-projection.md) (the engine, Input, the folder rule, the threat model,
   the amendment's race rule); [0013](0013-work-code-switch.md) (Code on a pane);
   [0021](0021-meter-attribution.md) (seats, and Decided 5 on dsh-tui sessions);
-  [0011](0011-monorepo-parts-and-releases.md) (the lanes).
+  [0011](0011-monorepo-parts-and-releases.md) (the lanes);
+  [0024](0024-automagik-cloud.md) ((c) self-hosted instances, (f) workspaces, amendment
+  proposed by (l), Q17; (j) linking, delivery 2 the gate).
 - Code: `herdr/mods/pocket-link/chat/` (`engine.js`, `find.js`, `folder-rule.js`, `input.js`,
   `approve.js`, `question.js`); `herdr/test/fixtures/transcript-folder-rule.json`;
   `herdr/mods/pocket-link/bridge/` (`chat.mjs`, `guard.mjs`, `dsh-source.mjs`);
   `apps/bots-dsh/src/host/` (`shown.js`, `pocket-chat.js`, `pocket-socket.js`);
-  `apps/bots-dsh/src/shared/registry.js`;
+  `apps/bots-dsh/src/shared/registry.js`; `apps/bots-dsh/src/client/work-code-switch.js`;
+  `apps/acp-dsh/src/host/acp.js`; `herdr/mods/am-sidebar/attach.js`, `workers.js`;
   `apps/pocket/android/app/src/main/java/ai/namastex/automagik/` (`ChatScreen.kt`,
   `ChatClient.kt`, `TerminalScreen.kt`, `CoreClient.kt`); `apps/welcome-dsh/package.json`
   (the `@xterm/xterm` pin); `herdr/mods/am-sidebar/hcProxy.md`.
