@@ -17,7 +17,7 @@
  	dispatches = /* @__PURE__ */ new Map();
  	retries = [];
  	startedRetries = /* @__PURE__ */ new Set();
-@@ -574,9 +584,46 @@
+@@ -574,8 +584,45 @@
  		if (this.turn === null || this.step === null || data["turn"] !== this.turn || data["step"] !== this.step) throw new SessionFormatError(`${event.type} does not match an open turn and step`);
  	}
  	closeTools(type) {
@@ -31,7 +31,7 @@
 +		}
  		if (this.tools.size !== 0) throw new SessionFormatError(`${type} leaves unresolved tool call ${String(this.tools.keys().next().value)}`);
  		this.tools.clear();
- 	}
++	}
 +	/** Whether a row's stamp is not the open turn and step. */
 +	offStep(data) {
 +		return this.turn === null || this.step === null || data["turn"] !== this.turn || data["step"] !== this.step;
@@ -60,10 +60,9 @@
 +		call.late = true;
 +		this.stale += 1;
 +		return true;
-+	}
+ 	}
  	developer(event, data) {
  		if (data["headerSeq"] === void 0) return;
- 		const headerSeq = earlier(data["headerSeq"], event.seq, "developer/message headerSeq");
 @@ -620,9 +667,11 @@
  			this.requireTurn(event.type);
  			return;
@@ -145,7 +144,7 @@
  //#region lib/types/facts.js
 --- a/@deepseek-ai/dsh-session-persistence-jsonl/lib/worker.cjs
 +++ b/@deepseek-ai/dsh-session-persistence-jsonl/lib/worker.cjs
-@@ -12130,6 +12130,16 @@
+@@ -12309,6 +12309,16 @@
  	protectedHead;
  	compaction;
  	tools = /* @__PURE__ */ new Map();
@@ -162,7 +161,7 @@
  	dispatches = /* @__PURE__ */ new Map();
  	retries = [];
  	startedRetries = /* @__PURE__ */ new Set();
-@@ -12156,9 +12166,46 @@
+@@ -12335,8 +12345,45 @@
  		if (this.turn === null || this.step === null || data["turn"] !== this.turn || data["step"] !== this.step) throw new SessionFormatError(`${event.type} does not match an open turn and step`);
  	}
  	closeTools(type) {
@@ -176,7 +175,7 @@
 +		}
  		if (this.tools.size !== 0) throw new SessionFormatError(`${type} leaves unresolved tool call ${String(this.tools.keys().next().value)}`);
  		this.tools.clear();
- 	}
++	}
 +	/** Whether a row's stamp is not the open turn and step. */
 +	offStep(data) {
 +		return this.turn === null || this.step === null || data["turn"] !== this.turn || data["step"] !== this.step;
@@ -205,11 +204,10 @@
 +		call.late = true;
 +		this.stale += 1;
 +		return true;
-+	}
+ 	}
  	developer(event, data) {
  		if (data["headerSeq"] === void 0) return;
- 		const headerSeq = earlier(data["headerSeq"], event.seq, "developer/message headerSeq");
-@@ -12202,9 +12249,11 @@
+@@ -12381,9 +12428,11 @@
  			this.requireTurn(event.type);
  			return;
  		}
@@ -221,7 +219,7 @@
  			for (const value of array(message["content"], "assistant content")) {
  				const block = record(value, "assistant content block");
  				if (block["type"] !== "tool-call") continue;
-@@ -12213,20 +12262,45 @@
+@@ -12392,20 +12441,45 @@
  				this.tools.set(id, {
  					name: block["name"],
  					arguments: block["arguments"],
@@ -270,7 +268,7 @@
  			this.tools.delete(id);
  		}
  	}
-@@ -12321,7 +12395,7 @@
+@@ -12500,7 +12574,7 @@
  	accept(event) {
  		if (!this.knownEventTypes.has(event.type) || !RELATIONSHIP_TYPES.has(event.type)) return;
  		const data = record(event.data, event.type);
@@ -279,7 +277,7 @@
  		if (event.type.startsWith("turn/") && this.compaction !== void 0 && !this.orphanCompactions.has(this.compaction.seq)) throw new SessionFormatError(`${event.type} crosses an open compaction`);
  		this.foldSurface(event);
  		switch (event.type) {
-@@ -12440,6 +12514,8 @@
+@@ -12619,6 +12693,8 @@
  function assertV4LifecycleRelationships(artifact, knownEventTypes) {
  	const state = new Relationships(artifact, knownEventTypes);
  	for (const event of artifact.events) state.accept(event);

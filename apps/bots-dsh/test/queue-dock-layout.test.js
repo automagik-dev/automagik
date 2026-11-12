@@ -83,8 +83,8 @@ test('the goal bar, the todo panel and the btw dock take the Stage cap less four
     + ':is([data-goal-bar],[data-testid="todo-panel"]){width:calc(100% - 27px - 4*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}')
   assert.doesNotMatch(BOT_DOCK_RULE, /margin|max-width|!important/)
   // The hooks are DSH's own markup: GoalBar's data-goal-bar, TodoPanel's data-testid.
-  assert.match(readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-goal/client'), 'utf8'), /"data-goal-bar": true/)
-  assert.match(readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-conversation/client'), 'utf8'), /"data-testid": "todo-panel"/)
+  assert.match(readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-goal/client'), 'utf8'), /"data-goal-bar":\s*true/)
+  assert.match(readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-conversation/client'), 'utf8'), /"data-testid":\s*["`]todo-panel["`]/)
 })
 
 // A layout fixture, NOT the shell: the real nesting with DSH's display:contents slot outlets,

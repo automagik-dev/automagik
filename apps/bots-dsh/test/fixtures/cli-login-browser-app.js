@@ -15,6 +15,7 @@ import { allThemes, themeCss } from '../../src/client/themes.js'
 const { createRoot } = window.nativeSeeds['react-dom/client']
 const { createSnapshotStore } = window.nativeSeeds['@deepseek-ai/dsh-client-store']
 const native = window.modules['@deepseek-ai/dsh-client-ui-conversation'].fixture
+const registerFileIntake = native.createComposerFileIntake()
 const { ChatView, TurnErrorNodeView } = window.modules['@deepseek-ai/dsh-client-ui-chat'].fixture
 const renderer = window.modules['@deepseek-ai/dsh-client-ui-renderer']
 const source = value => createSnapshotStore(value)
@@ -154,7 +155,7 @@ function makeSession(id, blank) {
   const inputSlot = name => (name === 'conversation.input.model'
     ? h('button', { type: 'button', 'data-fixture-selector': id, onClick: () => { window.selectorClicks++ } }, 'Model')
     : null)
-  const inputProps = { ...shared, variant: 'composer', keyboard: shell, t,
+  const inputProps = { ...shared, variant: 'composer', keyboard: shell, registerFileIntake, t,
     useNotices: hook(shell.notices), useBusyEnter: constant('queue'), useStopShortcut: constant([]), useAccess: () => true,
     useMenuLauncher: constant(null), useProjection: (_name, select) => select?.(undefined), useFileUploads: constant({}), useLexicon: hook(shell.lexicon),
     renderSlot: inputSlot, resolveDraftAttachments: () => [], addFiles: () => null, removeAttachment: () => {}, stop: () => {},
@@ -196,6 +197,7 @@ slots.register({ name: 'root', children: {
   'conversation.composer': { kind: 'chain', scope: 'session' },
   'conversation.composer.bar': { kind: 'single', scope: 'session-maybe' },
   'conversation.input.dock': { kind: 'list', scope: 'session' },
+  'conversation.hero.frame': { kind: 'hoc', scope: 'root' },
   'conversation.hero.brand.mark': { kind: 'single', scope: 'root' },
   'conversation.hero.workspace': { kind: 'single', scope: 'root' },
   'conversation.hero.agentPreset': { kind: 'single', scope: 'session' },

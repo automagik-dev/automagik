@@ -48,13 +48,13 @@
     "reason": "a regexp parser identifier that coincides with a deny-list short machine name"
   },
   {
-    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/soffice.cjs",
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/dsoffice.cjs",
     "rule": "home-path",
     "match": "/home/web_user",
     "reason": "the Emscripten LibreOffice runtime's default user, not a host account"
   },
   {
-    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/soffice.data",
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/dsoffice.data",
     "rule": "home-path",
     "match": "/home/eric",
     "reason": "a LibreOffice fixture path embedded in its data asset, not a host account"

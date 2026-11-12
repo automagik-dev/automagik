@@ -84,7 +84,7 @@ class WriteGuard {
     this.holders = 0
     this.active = false
     this.log = () => {}
-    this.append = (type, data, ...options) => this.write(type, data, options)
+    this.append = (type, data, ...options) => Array.isArray(type) ? this.writeBatch(type) : this.write(type, data, options)
   }
 
   /** Read the Session's log as it stands: the open turn and step, the calls still open. */
@@ -184,6 +184,39 @@ class WriteGuard {
     else if (type === 'assistant/message') this.advertise(data)
     else if (type === 'developer/message' && isHide(data, options[0])) return this.hide(data, options)
     return this.commit(type, data, options)
+  }
+
+  /** Plan guarded rows before the Session atomically validates and publishes the batch. */
+  writeBatch(inputs) {
+    if (!this.active) return this.original.call(this.session, inputs)
+    const rows = []
+    const reports = []
+    const logs = []
+    const start = this.session.seq
+    const shadow = {
+      get seq() { return start + rows.length },
+      snapshotEvents: () => this.session.snapshotEvents(),
+    }
+    const plan = new WriteGuard(shadow, (type, data, ...options) => {
+      const event = { type, data, ...options[0], seq: start + rows.length }
+      rows.push([type, data, ...options])
+      return event
+    }, false)
+    plan.sync()
+    plan.active = true
+    plan.report = (kind, detail) => reports.push([kind, detail])
+    plan.log = message => logs.push(message)
+    const selected = Array.from(inputs, input => {
+      const [type, data, ...options] = input
+      return plan.write(type, data, options)
+    })
+    // The real Session owns JSON/surface validation and atomic publication. A refusal leaves
+    // both its log and this guard's books untouched; repair reports follow only a commit.
+    const committed = this.original.call(this.session, rows)
+    for (const event of committed) this.observe(event)
+    for (const [kind, detail] of reports) this.report(kind, detail)
+    for (const message of logs) { try { this.log(message) } catch {} }
+    return selected.map(event => event?.dropped === true ? event : committed[event.seq - start])
   }
 
   /** A `tool/result` row: returns what stands for it when it is not written as it came. */

@@ -24,6 +24,34 @@ describe('the plugin lane', () => {
     expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/statusline.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 
+  test('an engines-only rc.2 floor change selects a full release', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'lane-engines-'));
+    const root = join(import.meta.dir, '..');
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' });
+      expect(result.status).toBe(0);
+    };
+    try {
+      for (const path of ['scripts/lane.ts', 'scripts/version.ts', 'scripts/release-plugins.ts', 'package.json', 'am/part.json', 'meter/usagemeter/part.json',
+        'meter/usagemeter/Cargo.toml', 'meter/usagemeter/Cargo.lock', 'apps/acp-dsh/package.json', 'apps/bots-dsh/package.json',
+        'apps/locale-pt-br-dsh/package.json', 'apps/welcome-dsh/package.json']) {
+        mkdir(dirname(join(repo, path)), { recursive: true });
+        cpSync(join(root, path), join(repo, path));
+      }
+      const file = join(repo, 'apps/bots-dsh/package.json');
+      const manifest = JSON.parse(readFileSync(file, 'utf8'));
+      manifest.engines.dsh = '>=0.2.2-rc.1 <0.3.0-0';
+      writeFileSync(file, JSON.stringify(manifest));
+      git('init', '-q'); git('add', '.'); git('commit', '-qm', 'base'); git('tag', 'v3.200.0');
+      manifest.engines.dsh = '>=0.2.2-rc.2 <0.3.0-0';
+      writeFileSync(file, JSON.stringify(manifest));
+      git('commit', '-qam', 'build(dsh): raise the floor');
+      const result = spawnSync('bun', [join(repo, 'scripts/lane.ts'), 'kind', 'v3.200.0', 'v3.200.0'], { cwd: repo, encoding: 'utf8' });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe('full');
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
   test('the usagemeter crate ships on the meter lane, its notes and tests never (RFC 0017 delivery 4)', () => {
     const none = () => false;
     const crate = ['meter/usagemeter/src/main.rs', 'meter/usagemeter/install.sh', 'meter/usagemeter/part.json', 'meter/usagemeter/.gitignore'];

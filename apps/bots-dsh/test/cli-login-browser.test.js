@@ -19,12 +19,12 @@ const seeds = await build({ stdin: { contents: `${frontend.slice(0, seedFactory.
 // Expose shipped internals in the fixture string only; no installed file changes.
 const nativeBundle = (name, exports) => {
   const text = readFileSync(join(harness, name, 'lib/client.js'), 'utf8')
-  assert.match(text, /return module\.exports;?/)
-  return text.replace(/return module\.exports;?/, `${exports}; return module.exports;`)
+  assert.match(text, /return module\.exports;?(?=\s*\}\s*\}\);)/)
+  return text.replace(/return module\.exports;?(?=\s*\}\s*\}\);)/, `${exports}; return module.exports;`)
 }
 const scripts = [
   nativeBundle('dsh-client-ui-renderer', 'exports.fixtureCreateRenderer = createSlotRenderer'),
-  nativeBundle('dsh-client-ui-conversation', 'exports.fixture = { SessionInputShell, InputBar, ConversationContent, DefaultConversationViews, createConversationStore, rootClass: ConversationRoot_module_css_default.root }'),
+  nativeBundle('dsh-client-ui-conversation', 'exports.fixture = { SessionInputShell, InputBar, ConversationContent, DefaultConversationViews, createConversationStore, createComposerFileIntake, rootClass: ConversationRoot_module_css_default.root }'),
   nativeBundle('dsh-client-ui-chat', 'exports.fixture = { ChatView, TurnErrorNodeView }'),
 ]
 const app = await build({ entryPoints: [join(plugin, 'test/fixtures/cli-login-browser-app.js')], bundle: true, format: 'iife', platform: 'browser', write: false, logLevel: 'silent', external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'] })

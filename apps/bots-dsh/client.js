@@ -15224,8 +15224,11 @@ html[data-automagik-desktop=darwin] .bt-panel{-webkit-app-region:no-drag}
 /* The collapsed sidebar is a 56px rail, and DSH's card around it left its content 12px: the
    marks were cut. It keeps a 6px margin and no side padding, everything centred in it. */
 [class*="_root"][class*="_collapsed"]{margin:6px!important;padding-left:0!important;padding-right:0!important}
-[class*="_collapsed"]>:is([class*="_logoRow"],[class*="_regionArea"]){width:100%;display:flex;justify-content:center}
+[class*="_collapsed"]>[class*="_logoRow"],[class*="_collapsed"] [class*="_regionArea"]{width:100%;display:flex;justify-content:center}
 [class*="_collapsed"]>[class*="_footArea"]{width:100%;justify-items:center;padding-left:0!important;padding-right:0!important}
+/* rc.2 nests the Bot list in a scrolling grid. Bound its row so only bt-list
+   scrolls; the search and sidebar buttons stay above it. Native sessions keep their grid. */
+[class*="_scrollArea"]:has(.bt-side){grid-template-rows:8px max-content 2px minmax(0,1fr);overflow-y:hidden}
 .bt-rail{width:100%}
 /* Keep the shell's native sidebar icon visible at rest and on hover. A separate
    pseudo-element would appear beside the native icon when DSH reveals it on hover. */

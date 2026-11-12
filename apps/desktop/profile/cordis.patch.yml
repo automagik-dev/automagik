@@ -18,7 +18,7 @@
 - id: web-fetch-http
   disabled: false
 # Read before write stays on: dsh 0.2.2 ships the policy row disabled, so write would overwrite
-# and edit would replace a file the model never read. apply_patch stays off (dsh 0.2.2-rc.1
+# and edit would replace a file the model never read. apply_patch stays off (dsh 0.2.2-rc.2
 # already disables it in this profile's presets): it applies hunks on context alone, bypassing
 # the read this row requires.
 - id: fs-observation-policy

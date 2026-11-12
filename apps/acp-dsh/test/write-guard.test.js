@@ -232,3 +232,48 @@ test('a guard installed mid-turn reads the calls already open from the log', asy
   assertLoadable(host.session)
   assert.equal(resultsOf(host.session, 'bridge_a').length, 1)
 })
+
+
+test('a batch closes a running bridge call before its step and turn end', async () => {
+  const host = opened()
+  const answer = host.call({ callId: 'bridge_batch' })
+  await ticks()
+  const written = host.session.append([
+    ['step/end', { turn: 1, step: 1 }],
+    ['turn/end', { turn: 1, reason: 'stop' }],
+  ])
+  assert.deepEqual(written.map(event => event.type), ['step/end', 'turn/end'])
+  assert.equal(resultsOf(host.session, 'bridge_batch').length, 1)
+  assert.ok(resultsOf(host.session, 'bridge_batch')[0].seq < written[0].seq)
+  assertLoadable(host.session)
+  host.finish('ok')
+  await answer
+  assert.equal(resultsOf(host.session, 'bridge_batch').length, 1)
+  assert.ok(reportsOf(host.session).some(report => report.kind === 'result-dropped'))
+})
+
+test('a batch updates guard observation before a later single append', async () => {
+  const host = bridgeHost()
+  host.mint()
+  host.session.append([['turn/start', { turn: 1 }], ['step/start', { turn: 1, step: 1 }]])
+  assert.throws(() => host.session.append('tool/call', { turn: 1, step: 1, callId: 'unadvertised_batch', name: 'bash', arguments: {} }), /no advertisement/)
+  assert.equal(eventsOf(host.session, 'tool/call').length, 0)
+})
+
+test('a rejected batch publishes no partial repairs and leaves the guard ready', async () => {
+  const host = opened()
+  const answer = host.call({ callId: 'bridge_atomic' })
+  await ticks()
+  const before = host.session.snapshotEvents()
+  assert.throws(() => host.session.append([
+    ['step/end', { turn: 1, step: 1 }],
+    ['turn/end', { turn: 1, reason: 'stop', invalid: 1n }],
+  ]))
+  assert.deepEqual(host.session.snapshotEvents(), before, 'native batch rejection is atomic, including repairs/reports')
+  host.endStep()
+  host.endTurn()
+  assertLoadable(host.session)
+  assert.equal(resultsOf(host.session, 'bridge_atomic').length, 1)
+  host.finish('ok')
+  await answer
+})

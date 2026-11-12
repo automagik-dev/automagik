@@ -1,8 +1,8 @@
 // Independent rows for issue #861: the repaired session-scan tolerance patch.
 //
 // The tests run the real pinned bytes, never a stand-in for the listing: the unmodified
-// lib/index.js of @deepseek-ai/dsh-session-persistence-jsonl 0.2.2-rc.1 and of
-// @deepseek-ai/dsh-workspace 0.2.2-rc.1 (both checked in under fixtures/session-scan-tolerance,
+// lib/index.js of @deepseek-ai/dsh-session-persistence-jsonl 0.2.2-rc.2 and of
+// @deepseek-ai/dsh-workspace 0.2.2-rc.2 (both checked in under fixtures/session-scan-tolerance,
 // pinned by the hashes below) are copied into an ephemeral runtime, and the carried
 // runtime/patches/session-scan-tolerance.patch is applied there by the real
 // scripts/runtime-patches.mjs. Nothing in this repository is patched or written: every tree is
@@ -50,14 +50,14 @@ const PATCH = 'session-scan-tolerance.patch'
 const PERSIST = '@deepseek-ai/dsh-session-persistence-jsonl'
 const WORKSPACE = '@deepseek-ai/dsh-workspace'
 const LIB = 'lib/index.js'
-const DSH = '0.2.2-rc.1'
-const VERSION = '0.2.2-rc.1'
+const DSH = '0.2.2-rc.2'
+const VERSION = '0.2.2-rc.2'
 // patches.json's session-scan-tolerance entry: the published bytes and the carried result.
 const BEFORE = '69efef5f84dddf947032bc1425067878fa610416c8885acde2ded9b01230c9b7'
 const AFTER = 'fae8a417cfa075e3cab004add29a3fe010270fdf925f75b7fafe02775aee51a0'
-// The workspace fixture is unchanged 0.2.2-rc.1 activation glue: it has no patches.json entry,
+// The workspace fixture is unchanged 0.2.2-rc.2 activation glue: it has no patches.json entry,
 // so this rows its bytes independently of the persistence pin.
-const WORKSPACE_SHA256 = '931ca0cb10c5102066c7723690a887f0e6e8e7ab0ffdee1a782686745b0b934f'
+const WORKSPACE_SHA256 = '8964c54f3c3f2fd79ed92e5fb1413d84ba80272c4eb984677aaf70bf4d687848'
 // The cordis stand-in registers Service.init under this key; the real registry fixture extends it.
 const SERVICE_INIT = Symbol.for('automagik.test.serviceInit')
 const OUTSIDE_HINT = '(session backups belong outside the sessions tree, in session-backups/)'
@@ -399,8 +399,8 @@ test('row 1: the fixture bytes are the pinned before-images; the patch yields th
   assert.match(file.before, /^[0-9a-f]{64}$/)
   assert.match(file.after, /^[0-9a-f]{64}$/)
   assert.notEqual(file.before, file.after)
-  assert.equal(sha256(readFileSync(PERSIST_FIXTURE)), BEFORE, 'the persistence fixture is the pinned 0.2.2-rc.1 before-image')
-  assert.equal(sha256(readFileSync(WORKSPACE_FIXTURE)), WORKSPACE_SHA256, 'the workspace fixture is the unchanged 0.2.2-rc.1 glue')
+  assert.equal(sha256(readFileSync(PERSIST_FIXTURE)), BEFORE, 'the persistence fixture is the pinned 0.2.2-rc.2 before-image')
+  assert.equal(sha256(readFileSync(WORKSPACE_FIXTURE)), WORKSPACE_SHA256, 'the workspace fixture is the unchanged 0.2.2-rc.2 glue')
   assert.match(readFileSync(LICENSE_FIXTURE, 'utf8'), /^MIT License\n/)
   assert.ok(
     !readJson(join(PATCHES, 'patches.json')).some(item => item.files?.some(changed => changed.package === WORKSPACE)),

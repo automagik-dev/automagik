@@ -2161,3 +2161,36 @@ test('a call that answers with an image but makes none (a Read) keeps its own re
     h.close()
   }
 })
+
+
+test('an rc.2 retry continues without forwarding DSH runtime context', () => {
+  const retry = { role: 'user', source: { kind: 'retry', rpcId: 'retry-probe' }, content: [] }
+  assert.deepEqual(promptOf([
+    { role: 'assistant', content: [{ type: 'text', text: 'Previous answer' }] },
+    retry,
+    { role: 'user', source: { kind: 'runtime-context', form: 'snapshot' }, content: [{ type: 'text', text: 'Internal runtime note' }] },
+  ]), [{ type: 'text', text: 'Continue.' }])
+})
+
+test('an rc.2 retry after a failed request does not resend the accepted instruction', () => {
+  assert.deepEqual(promptOf([
+    { role: 'user', source: { kind: 'user', rpcId: 'original' }, content: [{ type: 'text', text: 'Perform the change once.' }] },
+    { role: 'user', source: { kind: 'retry', rpcId: 'continue' }, content: [] },
+    { role: 'user', source: { kind: 'runtime-context' }, content: [{ type: 'text', text: 'Private runtime policy.' }] },
+  ]), [{ type: 'text', text: 'Continue.' }])
+})
+
+test('rc.2 Continue reaches the same ACP session once with no runtime notes', async t => {
+  const h = host()
+  t.after(h.close)
+  const messages = []
+  await turn(h, messages, 'hi')
+  const run = h.adapter.live.get('s1').run
+  const chunks = await step(h.adapter, [...messages,
+    { role: 'user', source: { kind: 'retry', rpcId: 'retry-integration-probe' }, content: [] },
+    { role: 'user', source: { kind: 'runtime-context', form: 'snapshot' }, content: [{ type: 'text', text: 'Internal runtime note' }] },
+  ])
+  assert.equal(h.adapter.live.get('s1').run, run, 'the continuation keeps its ACP connection/session')
+  assert.match(textIn(chunks), /turn 2: you said "Continue\."/)
+  assert.doesNotMatch(textIn(chunks), /Internal runtime note/)
+})

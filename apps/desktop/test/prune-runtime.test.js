@@ -83,6 +83,25 @@ test('a node_modules tree loses only what nothing reads, nested packages include
   assert.equal(removed.files, gone.length)
 })
 
+test('dist-backed packages drop unexported TypeScript but preserve exported and native source', t => {
+  const root = mkdtempSync(join(tmpdir(), 'automagik-prune-dist-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  write(root, {
+    'compiled/package.json': '{"name":"compiled","main":"dist/index.js"}',
+    'compiled/dist/index.js': 'export {}',
+    'compiled/src/index.ts': 'export {}',
+    'compiled/src/native.c': 'void probe(void) {}',
+    'exported/package.json': '{"name":"exported","exports":{".":"./dist/index.js","./src/*":"./src/*"}}',
+    'exported/dist/index.js': 'export {}',
+    'exported/src/index.ts': 'export {}',
+  })
+  pruneNodeModules(root)
+  assert.equal(existsSync(join(root, 'compiled/src/index.ts')), false)
+  assert.equal(existsSync(join(root, 'compiled/dist/index.js')), true)
+  assert.equal(existsSync(join(root, 'compiled/src/native.c')), true)
+  assert.equal(existsSync(join(root, 'exported/src/index.ts')), true)
+})
+
 test('the runtime pins the zod DSH pins, so one copy ships instead of one per package', () => {
   const runtime = new URL('../runtime/', import.meta.url)
   const manifest = JSON.parse(readFileSync(new URL('package.json', runtime), 'utf8'))

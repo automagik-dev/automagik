@@ -658,9 +658,8 @@ export function install(rt) {
       const session = live.session
       const eligible = () => {
         const header = session?.header
-        const parent = header?.parentSession === undefined ? undefined : ctx.agents?.get?.(header.parentSession)
         if (session?.id !== sessionId || header === undefined || header.origin === 'subagent'
-          || (header.delegationDepth ?? 0) > 0 || (parent !== undefined && ctx.agents.isOwnedBy?.(sessionId, parent))) {
+          || (header.delegationDepth ?? 0) > 0) {
           refuse('bot/adopt-root', `${sessionLabel} is not a root Session (it is a subagent, delegated, or owned by another Session), so it cannot join ${botLabel}. Open the project's own root Session instead.`)
         }
         // dsh 0.2.2 deprecates ctx.sessionProjections.stateOf(session, key); the loop

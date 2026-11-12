@@ -449,10 +449,10 @@ export function install(rt) {
         // still claims it as today, a later one only joins it.
         const opened = entry.opened === true
         if (entry.turn !== undefined && !bare(source)
-          && (source?.kind === 'user' || source?.kind === REPLY_KIND || source?.kind === 'schedule' || source?.kind === SOURCE_KIND || opensByItself(source))) {
+          && (source?.kind === 'user' || source?.kind === 'retry' || source?.kind === REPLY_KIND || source?.kind === 'schedule' || source?.kind === SOURCE_KIND || opensByItself(source))) {
           entry.opened = true
         }
-        if (entry.turn !== undefined && (source?.kind === 'user' || source?.kind === REPLY_KIND || source?.kind === SOURCE_KIND)) {
+        if (entry.turn !== undefined && (source?.kind === 'user' || source?.kind === 'retry' || source?.kind === REPLY_KIND || source?.kind === SOURCE_KIND)) {
           if (bare(source)) {
             if (entry.answers) break
           } else {

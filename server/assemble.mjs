@@ -188,15 +188,13 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.2', re
   // extras and the other platforms' native prebuilds. npm installs dsh's whole dependency
   // list; the automagik-web tree names none of these entries.
   const PRUNE = [
-    // office-to-pdf is a composed entry (libreoffice-kit-wasm included), so its stack stays
+    // office-kit is a composed entry (libreoffice-kit-wasm included), so its stack stays
     '@deepseek-ai/dsh-experimental-inspector', '@deepseek-ai/dsh-experimental-inspector-profile',
     '@deepseek-ai/dsh-experimental-session-inspector',
     '@deepseek-ai/dsh-experimental-client-ui-forge', '@deepseek-ai/dsh-experimental-forge',
     '@deepseek-ai/dsh-experimental-forge-bundle', '@deepseek-ai/dsh-experimental-forge-github',
     '@deepseek-ai/dsh-experimental-forge-session',
     '@deepseek-ai/dsh-experimental-liveshare', '@deepseek-ai/dsh-experimental-liveshare-protocol',
-    '@deepseek-ai/dsh-experimental-agent-team', '@deepseek-ai/dsh-experimental-agent-team-profile',
-    '@deepseek-ai/dsh-experimental-client-ui-agent-team', '@deepseek-ai/dsh-experimental-tool-agent-team',
     '@deepseek-ai/dsh-experimental-auto-review', '@deepseek-ai/dsh-experimental-badge-skill-bundle',
     '@deepseek-ai/dsh-experimental-cot-translation-bundle', '@deepseek-ai/dsh-experimental-client-ui-cot-translation',
     '@deepseek-ai/dsh-experimental-translator',
