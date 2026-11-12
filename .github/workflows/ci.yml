@@ -75,7 +75,8 @@ jobs:
   brand-font:
     # The title font in docs/brand/fonts is a subset of an upstream file. This job makes the
     # subset again from that file, at its pinned commit, and fails unless the result is the
-    # committed font, byte for byte (docs/brand/fonts/README.md has the call).
+    # committed font, byte for byte (docs/brand/fonts/README.md has the call). The tooling is in
+    # scripts/brand-font, outside docs/brand, because that folder is copied into other repositories.
     name: Brand font rebuild
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -88,14 +89,18 @@ jobs:
         with:
           node-version: 24.9
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
       - name: Rebuild fredoka-latin.woff2 from its pinned source and compare
         shell: bash
-        working-directory: docs/brand/fonts/rebuild
+        working-directory: scripts/brand-font
         env:
           SOURCE_URL: https://raw.githubusercontent.com/google/fonts/2e5fa2e951237b6ae65f705693d12ca76a7f78c8/ofl/fredoka/Fredoka%5Bwdth%2Cwght%5D.ttf
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts --no-audit --no-fund
+          bun install --frozen-lockfile --ignore-scripts
           mkdir -p "$RUNNER_TEMP/font-rebuild"
           curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$RUNNER_TEMP/font-rebuild/Fredoka.ttf" "$SOURCE_URL"
           node rebuild.mjs "$RUNNER_TEMP/font-rebuild/Fredoka.ttf" "$RUNNER_TEMP/font-rebuild/fredoka-latin.woff2"

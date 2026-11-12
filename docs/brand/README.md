@@ -112,7 +112,7 @@ Genie is a character, not a logo. There is one Genie: the full-body clay figure,
 
 ## Tokens
 
-`tokens/tokens.json` is the record; `tokens/tokens.css` is the same values as CSS custom properties, light and dark. The colours, shadows, radii and sizes were read from the site's own files, `apps/landing/theme.css` and `apps/landing/styles.css`, at `dev@90e9f85f`; when the theme changes there, these files are made again from it. The title face goes the other way: its family, its three weights and its font file are set here, and the site takes them from this folder (`node apps/landing/scripts/sync-theme.mjs` writes the site's theme and copies the font; its `--check` fails when they differ).
+`tokens/tokens.json` is the record; `tokens/tokens.css` is the same values as CSS custom properties, light and dark. The colours, shadows, radii and sizes were read from the site's own files, `apps/landing/theme.css` and `apps/landing/styles.css`, at `dev@6ba09b59`; when the theme changes there, these files are made again from it. The title face goes the other way: its family, its three weights and its font file are set here, and the site takes them from this folder (`node apps/landing/scripts/sync-theme.mjs` writes the site's theme and copies the font; its `--check` fails when they differ).
 
 Setting `data-theme="light"` or `data-theme="dark"` on the root picks a theme. With neither, the reader's system setting picks.
 
@@ -162,4 +162,4 @@ node scripts/brand-sync.mjs --check
 - `--check` is for that repository's CI. It exits 1 and names each file that differs from `SOURCE.json`, is missing, or is not recorded.
 - Both then look at Automagik's `dev`. When the brand changed there after the copy's commit, they name `dev`'s commit to copy. When the copy was made from a commit that is not on `dev` (a branch), they say that and do not advise copying `dev` over it. `--check` warns for either and does not fail. With no network they say so and go on.
 - A copy holds real folders and files only. When a file of the copy, `SOURCE.json`, or a folder on the way to one is a symbolic link, `--write` refuses before it changes anything and `--check` fails naming the link.
-- The two type files are not in this folder (see "Type"), so a copy has none: `tokens/tokens.css` falls back to the reader's own faces until the repository carries the two files at the path it names.
+- Fredoka's file is in this folder (`fonts/`), so a copy has the title face. DM Sans's file is not (see "Type"): for running text `tokens/tokens.css` falls back to the reader's own faces until the repository carries that file at the path the rule names.
