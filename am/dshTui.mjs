@@ -325,7 +325,7 @@ export const sandboxCapable = (root = packRootOf()) => ["am-sidebar", "dsh-sandb
 /** Every file an unsandboxed worker start can reach, copied byte-equal to the stable folder. */
 export const STABLE_FILES = Object.freeze([
   "hcPane.mjs", "hcProxy.mjs", "approved.js", "dshTui.mjs", "workers.js", "models.js", "model.js",
-  "hermesPair.js",
+  "hermesPair.js", "actionError.js",
   "logins.js", "attach.js", "hcGuard.mjs", "restart.js", "launchArgs.js", "layoutSafe.mjs", "release.js", "retired.js",
   "bin/dsh-sandbox.mjs", "bin/run.sh",
 ]);
