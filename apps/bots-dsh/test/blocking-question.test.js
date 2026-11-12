@@ -227,11 +227,7 @@ test('a goal started in a Bot chat or a group is blocked; one elsewhere runs', a
   await until(() => goals.blocked.length === 3, { label: 'the three Bot and group goals are blocked', t })
   await new Promise(resolve => setTimeout(resolve, 20))
   assert.deepEqual(goals.blocked.map(entry => entry.sessionId), ['writer', 'room', 'room-writer'])
-<<<<<<< HEAD
   for (const entry of goals.blocked) assert.deepEqual([entry.code, entry.message], ['not-supported', 'Omni does not run goals. Ask the Bot in a message instead.'])
-=======
-  for (const entry of goals.blocked) assert.deepEqual([entry.code, entry.message], ['not-supported', 'Bot chats do not run /goal. To give a group a goal, use Set a goal in its + menu.'])
->>>>>>> vendor/ds-bot-0.3.6-prepared
   assert.equal(goals.current.get('plain').phase, 'active')
 })
 

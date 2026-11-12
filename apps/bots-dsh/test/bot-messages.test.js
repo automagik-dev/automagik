@@ -46,7 +46,6 @@ async function start(seed) {
   const agentOf = (sessionId) => {
     if (!agents.has(sessionId)) {
       const calls = []
-<<<<<<< HEAD
       const agentCtx = {
         tools: {
           restrict: (filter) => {
@@ -55,9 +54,6 @@ async function start(seed) {
           },
         },
       }
-=======
-      const messages = []
->>>>>>> vendor/ds-bot-0.3.6-prepared
       agents.set(sessionId, {
         session: { id: sessionId, requestHeader: () => undefined, deriveMessages: () => messages },
         id: sessionId,
@@ -1252,7 +1248,6 @@ test('without file storage a message past 20,000 characters is not sent', async 
   assert.equal(agentOf('b').calls.length, 1)
 })
 
-<<<<<<< HEAD
 test('a fresh part gets its Bot\'s deny list before the handoff turn', async (t) => {
   const seed = team()
   seed.bots.b.denyTools = ['bash']
@@ -1270,32 +1265,4 @@ test('a fresh part gets its Bot\'s deny list before the handoff turn', async (t)
   const applied = restricted.filter(entry => entry.sessionId === 's1')
   assert.ok(applied.length > 0, 'the fresh part was restricted before its handoff turn')
   assert.deepEqual(applied.at(-1).deny, ['bash'])
-=======
-// A request merged with another the recipient had not read goes out under the same id. If
-// the merged text never reaches the recipient, the dialog keeps the text that did.
-test('a merged request that does not go out leaves the delivered text in the dialog', async (t) => {
-  const { ctx, exchanges, stop } = await start(team())
-  t.after(stop)
-  await rt.deliver({ fromId: 'a', toId: 'b', role: 'request', text: 'Draft the plan', exchangeId: 'x-merge' })
-  const flush = ctx.sessions.flush
-  ctx.sessions.flush = async () => { throw new Error('Session is gone') }
-  await assert.rejects(rt.deliver({ fromId: 'a', toId: 'b', role: 'request', text: 'Draft the plan\n\nAnd the budget', exchangeId: 'x-merge', merged: true }), /Session is gone/)
-  ctx.sessions.flush = flush
-  assert.deepEqual((await exchanges()).map(entry => [entry.id, entry.text]), [['x-merge', 'Draft the plan']])
-})
-
-// The book is written before the message goes out: one it cannot keep is not sent.
-test('a message between Bots that the book cannot keep is not sent', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async (t) => {
-  const { agentOf, tool, exchanges, home, stop } = await start(team())
-  t.after(stop)
-  mkdirSync(join(home, 'ledger'), { recursive: true })
-  chmodSync(join(home, 'ledger'), 0o500)
-  try {
-    await assert.rejects(tool('message_bot', { to: 'Writer', message: 'Hello' }, 'a'))
-    assert.equal(agentOf('b').calls.filter(([kind]) => kind === 'steer' || kind === 'followup').length, 0)
-  } finally {
-    chmodSync(join(home, 'ledger'), 0o700)
-  }
-  assert.deepEqual(await exchanges(), [])
->>>>>>> vendor/ds-bot-0.3.6-prepared
 })

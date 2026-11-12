@@ -1,13 +1,7 @@
 {
-<<<<<<< HEAD
   "name": "@automagik/bots-dsh",
   "version": "3.136.2",
   "description": "Omni for DeepSeek Harness: a team of long-lived Bots with Omni as the Main Bot; its channels and canvases come with @automagik/omni-channels-dsh and @automagik/omni-canvas-dsh",
-=======
-  "name": "ds-bot",
-  "version": "0.3.6",
-  "description": "DS Bot: a team of long-lived Bots for DeepSeek Harness, with Main Bots, Bot-to-Bot messages and group chats",
->>>>>>> vendor/ds-bot-0.3.6-prepared
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -41,12 +35,9 @@
     "src/shared/",
     "src/office/",
     "client.js",
-<<<<<<< HEAD
-    "locale/",
-=======
     "link.js",
     "office.js",
->>>>>>> vendor/ds-bot-0.3.6-prepared
+    "locale/",
     "web-search.js",
     "cordis.patch.yml",
     "README.md",
@@ -63,7 +54,15 @@
   },
   "dependencies": {
     "ipaddr.js": "2.5.0",
-    "playwright-core": "1.61.1"
+    "playwright-core": "1.64.1",
+    "@modelcontextprotocol/client": "2.4.0",
+    "deep-view": "0.1.2",
+    "imapflow": "2.9.1",
+    "jpeg-js": "0.4.4",
+    "mailparser": "3.12.4",
+    "nodemailer": "10.2.1",
+    "pngjs": "7.0.0",
+    "ws": "8.18.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
@@ -81,28 +80,13 @@
     }
   },
   "devDependencies": {
-<<<<<<< HEAD
     "@modelcontextprotocol/sdk": "1.32.2",
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "@xmldom/xmldom": "0.9.12",
+    "qrcode-generator": "2.0.4"
   },
   "engines": {
     "dsh": ">=0.2.2-rc.2 <0.3.0-0",
     "node": ">=24.9"
-=======
-    "@xmldom/xmldom": "0.9.12",
-    "esbuild": "0.28.2",
-    "qrcode-generator": "2.0.4"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/client": "2.4.0",
-    "deep-view": "0.1.2",
-    "imapflow": "2.9.1",
-    "jpeg-js": "0.4.4",
-    "mailparser": "3.12.4",
-    "nodemailer": "10.2.1",
-    "playwright-core": "1.64.1",
-    "pngjs": "7.0.0",
-    "ws": "8.18.3"
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }
 }

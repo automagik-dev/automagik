@@ -35,11 +35,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return react
   },
 })
-<<<<<<< HEAD
 const { FOLD_AT, FOLD_HUGE, NEVER, foldPreview, stripLongNote, useFold } = module.exports
-=======
-const { FOLD_AT, FOLD_HUGE, foldPreview, foldView, stripLongNote, useFold } = module.exports
->>>>>>> vendor/ds-bot-0.3.6-prepared
 const render = (text, options) => { at = 0; return useFold(text, options) }
 const fresh = () => { slots = [] }
 const buttons = node => (node === null || typeof node !== 'object' ? [] : [...(node.type === 'button' ? [node] : []), ...node.children.flatMap(buttons)])

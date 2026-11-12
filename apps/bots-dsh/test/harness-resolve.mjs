@@ -33,12 +33,7 @@ const findHarness = () => {
 const harness = findHarness()
 // Tests that load other harness packages (jsdom) read the same checkout.
 process.env.DSH_HARNESS = harness
-<<<<<<< HEAD
 // A checkout links the packages into its base bundle; an install has them at its root.
-=======
-// An npm install links the packages at its root; a pnpm checkout keeps each workspace
-// package in its own folder, where Node's self-reference rule resolves its exports.
->>>>>>> vendor/ds-bot-0.3.6-prepared
 const base = resolve(harness, 'packages/bundle/base/package.json')
 const anchor = pathToFileURL(existsSync(base) ? base : resolve(harness, 'package.json')).href
 const workspacePackages = new Map()

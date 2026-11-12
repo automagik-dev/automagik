@@ -78,16 +78,12 @@ test('the live feed tells a window about saves, new chat entries and the reply b
   t.after(stop)
   await call('state')
   const abort = new AbortController()
-<<<<<<< HEAD
   // Held until the window closes, as a host holds the request it is answering: a Request
   // made with an outside signal follows it only through a weak reference, so once the
   // Request is garbage collected, aborting the outside signal no longer reaches the feed's
   // listener on `request.signal`, and the read below waits forever.
   const request = new Request('http://localhost/api/omni-ui/feed', { signal: abort.signal })
   const response = await routes['/api/omni-ui/feed'].fetch(request)
-=======
-  const response = await routes['/api/omni-ui/feed'].fetch(new Request('http://localhost/api/omni-ui/feed', { signal: abort.signal }))
->>>>>>> vendor/ds-bot-0.3.6-prepared
   assert.equal(response.headers.get('content-type'), 'text/event-stream; charset=utf-8')
   const next = reader(response)
   assert.equal((await next()).event, 'hello')
@@ -137,11 +133,7 @@ test('a window that stops reading the feed is dropped', { timeout: 10_000 }, asy
   t.after(stop)
   await call('state')
   const response = await routes['/api/omni-ui/feed'].fetch(new Request('http://localhost/api/omni-ui/feed'))
-<<<<<<< HEAD
   const onEvent = ctx.listeners.get('session/event').at(-1)
-=======
-  const onEvent = ctx.listeners.get('session/event').at(-2)
->>>>>>> vendor/ds-bot-0.3.6-prepared
   for (let index = 0; index < 1000; index += 1) onEvent({ id: 'm1c' }, userMessage(`line ${index}`, index))
   // What was queued before the drop still arrives, then the stream ends.
   const next = reader(response)

@@ -791,11 +791,8 @@ test('a pruned group relay still draws the replies that survived', () => {
 // not hide the replies after it either.
 test('a group relay recovers replies after the prune marker with and without a roundId', () => {
   const between = '{"replies":[{"botId":"writer","text":"First."}[... tool result middle pruned ...],{"botId":"chief","text":"Last."}]}'
-<<<<<<< HEAD
   const out = show(call('group_relay', 'direct', { content: between }), { sessionId: 'room' })
   assert.match(text(out), /Writer.*First\..*Omni.*Last\./)
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const inside = '{"replies":[{"botId":"writer","text":"First."},{"botId":"chief","text":"cut[... tool result middle pruned ...]{"botId":"writer","text":"Last."}]}'
   for (const args of [{}, { roundId: 'round-2' }]) {
     const out = show(call('group_relay', 'direct', { args, content: between }), { sessionId: 'room' })
@@ -1114,7 +1111,6 @@ test('a view works its formulas out, draws a chart, and keeps html in a sandboxe
   assert.equal(frame.props.title, 'A greeting')
 })
 
-<<<<<<< HEAD
 // An image a Bot's agent makes with its own tool (acp-dsh's mirror call of Codex's image tool):
 // the image card shows the chat's Bot painting while it is made (Omni here), then the image, or
 // why it was not made.
@@ -1399,103 +1395,4 @@ test('a permission-stop group reply draws the round reason', () => {
   const lines = findAll(tree, node => node.props?.className === 'bt-event bt-event-error')
   assert.equal(lines.length, 1)
   assert.equal(text(lines[0]), 'ada stopped on a permission: Auto review refused it')
-=======
-// The repair card's Retry reaches the Bot as a plugin trigger; the chat shows that it went
-// on, never the note to the Bot or the user's message again.
-test('a Retry after a failed turn shows as one event line', () => {
-  const out = expand(TriggerCell({
-    node: { key: 'trigger', kind: 'turn-trigger', location: { turn: { turn: 4 } }, data: { seq: 9, time: 1, content: text$('[Retry after a failed turn]\nYour last turn failed (AUTH) and the user has fixed it.'), source: { kind: 'bot', role: 'continue', exchangeId: 'c1' } } },
-    sessionId: chief.id, actions: {},
-    useRoster: select => select(team()), useSessions: select => select({ byId: {} }),
-    useTurnClock: select => select({}), useUi: select => select({ visits: {}, reactions: {} }),
-  }))
-  assert.equal(text(out), 'Went on after the failed turn')
-})
-
-// #718: a folded message's cut code block is drawn by Omni, so no copy control
-// exists that holds only the part shown; Omni's own is bound to the whole
-// block, and a short block keeps the host's normal rendering and copy.
-test('a folded code block leaves no copy of only its shown part', async () => {
-  const inner = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n')
-  const bubble = (texts) => expand(Bubbles({
-    texts, roster: team(), selfId: chief.id, sessionId: chief.id, actions: {},
-    useUi: select => select({ reactions: {} }),
-  }))
-  const copyOf = node => findAll(node, item => item.type === 'button' && typeof item.props?.className === 'string' && item.props.className.includes('bt-fold-copy'))
-
-  markdownTexts.length = 0
-  copiedTexts.length = 0
-  const out = bubble([`Here:\n\`\`\`js\n${inner}\n\`\`\``])
-  // The markdown the host renders holds no fence, so it can draw no copy of the part.
-  assert.ok(markdownTexts.length > 0 && markdownTexts.every(given => !given.includes('```')))
-  // Omni draws the part the preview keeps, and its copy holds the whole block.
-  assert.equal(text(find(out, item => item.type === 'pre')), 'line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8')
-  const [copy] = copyOf(out)
-  assert.equal(copyOf(out).length, 1)
-  copy.props.onClick()
-  await Promise.resolve()
-  assert.deepEqual(copiedTexts, [inner])
-
-  // A short block goes to the host whole, with the host's own copy and none of ours.
-  markdownTexts.length = 0
-  copiedTexts.length = 0
-  const short = bubble(['```js\none\n```'])
-  assert.ok(markdownTexts.some(given => given.includes('```js')))
-  assert.equal(copyOf(short).length, 0)
-  effects = []
-})
-
-
-test('an attachment preview copies its full code and never writes a partial read', async () => {
-  const inner = Array.from({ length: 4000 }, (_, i) => `line ${i + 1}`).join('\n')
-  const full = '```js\n' + inner + '\n```'
-  let whole = true
-  const errors = []
-  const bubble = () => expand(Bubbles({
-    texts: [full.slice(0, 1000)], roster: team(), selfId: chief.id, sessionId: chief.id,
-    actions: { reportError: error => errors.push(error.message) },
-    whole: { length: full.length, load: async () => ({ text: full, whole }) },
-    useUi: select => select({ reactions: {} }),
-  }))
-  const copyOf = out => find(out, node => node.type === 'button' && node.props?.className?.includes('bt-fold-copy'))
-  markdownTexts.length = 0
-  copiedTexts.length = 0
-  await copyOf(bubble()).props.onClick()
-  assert.deepEqual(copiedTexts, [inner])
-  assert.ok(markdownTexts.every(text => !text.includes('```')))
-  copiedTexts.length = 0
-  whole = false
-  await copyOf(bubble()).props.onClick()
-  assert.deepEqual(copiedTexts, [])
-  assert.deepEqual(errors, ['Could not read the whole code block'])
-  effects = []
-})
-
-
-test('an attachment starts the clipboard write inside its click before loading the text', async t => {
-  const inner = Array.from({ length: 4000 }, (_, i) => `line ${i + 1}`).join('\n')
-  const full = '```js\n' + inner + '\n```'
-  let release
-  const loaded = new Promise(resolve => { release = resolve })
-  let writing = false
-  clipboard.write = async items => {
-    writing = true
-    const blob = await items[0].getType('text/plain')
-    copiedTexts.push(await blob.text())
-  }
-  t.after(() => { delete clipboard.write; effects = [] })
-  const out = expand(Bubbles({
-    texts: [full.slice(0, 1000)], roster: team(), selfId: chief.id,
-    whole: { length: full.length, load: () => loaded },
-    useUi: select => select({ reactions: {} }),
-  }))
-  copiedTexts.length = 0
-  const button = find(out, node => node.type === 'button' && node.props?.className?.includes('bt-fold-copy'))
-  const copying = button.props.onClick()
-  assert.equal(writing, true, 'write is called synchronously in the gesture')
-  assert.deepEqual(copiedTexts, [], 'nothing is written before the full read')
-  release({ text: full, whole: true })
-  await copying
-  assert.deepEqual(copiedTexts, [inner])
->>>>>>> vendor/ds-bot-0.3.6-prepared
 })

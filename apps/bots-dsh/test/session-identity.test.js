@@ -190,8 +190,6 @@ test('an image in a group is read for the group, and the group still relays its 
   assert.equal(bench.requests.length, 1)
 })
 
-<<<<<<< HEAD
-=======
 test('image readings skip providers without a key and include the read-only path when available', async (t) => {
   const { ctx, rt, bench, stop } = start()
   t.after(stop)
@@ -214,7 +212,6 @@ test('image readings skip providers without a key and include the read-only path
   assert.deepEqual(bench.requests.map(request => [request.provider, request.model, request.sessionId]), [['deepseek', 'vision', 'r1']])
 })
 
->>>>>>> vendor/ds-bot-0.3.6-prepared
 test('the Session hooks pass Omni\'s own requests through, and still act on a Session\'s own rounds', async (t) => {
   const { rt, hook, stop } = start()
   t.after(stop)

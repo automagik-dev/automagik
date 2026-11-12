@@ -10,25 +10,15 @@ import { fakeContext } from './fake-ctx.js'
 
 const PRESETS = { 'workspace-write': {}, 'danger-full-access': {} }
 
-<<<<<<< HEAD
 function runtime({ presets = true, fail = false } = {}) {
-=======
-function runtime({ presets = true, auto = false, fail = false, hold = false } = {}) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const writes = []
   const releases = []
   const bots = {}
   const control = { fail }
   const service = {
-<<<<<<< HEAD
     catalog: () => ({ options: Object.keys(PRESETS).map(value => ({ value, name: value })), defaultOptions: [], defaultPreset: 'workspace-write' }),
     resolve: (name) => { if (!(name in PRESETS)) throw new Error(`permission: unknown preset "${name}"`); return PRESETS[name] },
     set: (session, name) => { if (fail) throw new Error('permission: rejected'); writes.push(`${session}=${name}`) },
-=======
-    catalog: () => ({ options: [...Object.keys(PRESETS), ...(auto ? SESSION_ONLY : [])].map(value => ({ value, name: value })), defaultOptions: [], defaultPreset: 'workspace-write' }),
-    resolve: (name) => { if (!(name in PRESETS) && !(auto && SESSION_ONLY.includes(name))) throw new Error(`permission: unknown preset "${name}"`); return PRESETS[name] },
-    set: (session, name) => { if (control.fail) throw new Error('permission: rejected'); writes.push(`${session}=${name}`) },
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }
   const ctx = { get: name => (presets && name === 'permissionPresets' ? service : undefined), on() {} }
   const rt = {
@@ -92,7 +82,6 @@ test('a preset the Bot\'s own chat refuses is not kept', async () => {
   assert.equal(bot.permission, 'workspace-write')
 })
 
-<<<<<<< HEAD
 // The whole team over a fake DSH presets service writing to one log. As in DSH, a Session's
 // first open fires session/created inside the resolve ("announced" follows the listeners'
 // synchronous part), and a preset that does not change appends nothing. A Session in
@@ -758,88 +747,4 @@ test('create_bot hands createBot only its declared parameters', async (t) => {
   await createBotTool(ctx, { name: 'Together', ...undeclared })
   assert.equal(calls.length, Object.keys(undeclared).length + 1)
   for (const options of calls) assert.deepEqual(Object.keys(options).sort(), declared)
-=======
-test('the last preset asked for wins when two Bot changes overlap', async () => {
-  const { rt, writes, releases, settle } = runtime({ hold: true })
-  const bot = { id: 'b1', name: 'Ada' }
-  const first = rt.setPermission(bot, 'workspace-write')
-  const second = rt.setPermission(bot, 'danger-full-access')
-  assert.equal(releases.length, 2)
-  await settle(1) // the later request applies to the chat, then to the group Session
-  await settle(1)
-  while (releases.length) await settle(0) // the earlier request writes nothing more
-  await first
-  await second
-  assert.equal(bot.permission, 'danger-full-access')
-  assert.deepEqual(writes, ['b1-chat=danger-full-access', 'b1-group=danger-full-access'])
-})
-
-test('a failed change does not roll back a newer one that already applied', async () => {
-  const { rt, releases, settle, drop } = runtime({ hold: true })
-  const bot = { id: 'b1', name: 'Ada', permission: 'workspace-write' }
-  // Two windows ask for the same preset; the newer applies everywhere first.
-  const first = rt.setPermission(bot, 'danger-full-access')
-  const second = rt.setPermission(bot, 'danger-full-access')
-  assert.equal(releases.length, 2)
-  await settle(1) // the newer request applies to the chat, then to the group Session
-  await settle(1)
-  await second
-  const refused = assert.rejects(first, /went away/)
-  await drop(0) // the older request's apply resolves only now, and fails
-  await refused
-  assert.equal(bot.permission, 'danger-full-access')
-})
-
-test('a failed change rolls back to the last applied preset, not to a failed request', async () => {
-  const { rt, releases, settle, drop, control } = runtime({ hold: true })
-  const bot = { id: 'b1', name: 'Ada', permission: 'workspace-write' }
-  const first = rt.setPermission(bot, 'danger-full-access')
-  const second = rt.setPermission(bot, 'danger-full-access')
-  const firstFails = assert.rejects(first, /went away/)
-  await drop(0) // the superseded request fails and leaves the field to the newer one
-  await firstFails
-  control.fail = true
-  const secondFails = assert.rejects(second, /rejected/)
-  while (releases.length) await settle(0) // the newest one fails too and rolls back
-  await secondFails
-  assert.equal(bot.permission, 'workspace-write')
-})
-
-test('a superseded change leaves no Session on a preset that lost', async () => {
-  const { rt, writes, releases, settle, control } = runtime({ hold: true })
-  const bot = { id: 'b1', name: 'Ada' }
-  const first = rt.setPermission(bot, 'workspace-write')
-  await settle(0) // the older request sets the chat, then waits on the group Session
-  const second = rt.setPermission(bot, 'danger-full-access')
-  assert.equal(releases.length, 2)
-  await settle(0) // the older request's group apply resolves: a newer one owns it now
-  control.fail = true
-  const refused = assert.rejects(second, /rejected/)
-  await settle(0) // the newer request's chat apply fails and rolls the field back
-  control.fail = false
-  while (releases.length) await settle(0) // the rollback puts the restored preset back
-  await refused
-  await first
-  assert.equal(bot.permission, 'workspace-write')
-  assert.deepEqual(writes, ['b1-chat=workspace-write', 'b1-chat=workspace-write', 'b1-group=workspace-write'])
-})
-
-test('the last preset asked for wins when two group changes overlap', async () => {
-  const { rt, writes, releases, bots, settle } = runtime({ hold: true })
-  bots.b1 = { id: 'b1', name: 'Ada' }
-  bots.b2 = { id: 'b2', name: 'Ben' }
-  const room = { name: 'Ops', sessions: { b1: 's1', b2: 's2' } }
-  const first = rt.setRoomPermission(room, 'workspace-write')
-  const second = rt.setRoomPermission(room, 'danger-full-access')
-  assert.equal(releases.length, 2)
-  await settle(1) // the later request reaches s1, then s2, before the earlier one does
-  await settle(1)
-  await settle(0) // the earlier request applies last and must not win
-  await settle(0)
-  await first
-  await second
-  assert.equal(room.permission, 'danger-full-access')
-  assert.equal(writes.length, 4)
-  assert.ok(writes.every(write => write.endsWith('=danger-full-access')))
->>>>>>> vendor/ds-bot-0.3.6-prepared
 })

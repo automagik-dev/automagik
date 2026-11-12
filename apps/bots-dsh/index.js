@@ -62,7 +62,6 @@ import * as usage from './src/host/usage.js'
 import * as update from './src/host/update.js'
 import * as dshUpdate from './src/host/dsh-update.js'
 import * as thinking from './src/host/thinking.js'
-<<<<<<< HEAD
 import * as fallback from './src/host/fallback.js'
 import * as channel from './src/host/channel.js'
 import * as agentSpace from './src/host/agent-space.js'
@@ -70,16 +69,6 @@ import * as feed from './src/host/feed.js'
 import * as appManifest from './src/host/app-manifest.js'
 import * as pocketChat from './src/host/pocket-chat.js'
 import * as hermesRemote from './src/host/hermes-remote.js'
-=======
-import * as phone from './src/host/phone.js'
-import * as channel from './src/host/channel.js'
-import * as mobile from './src/host/mobile.js'
-import * as feed from './src/host/feed.js'
-import * as im from './src/host/im/index.js'
-import * as officeSkills from './src/host/office-skills.js'
-import * as goalSkills from './src/host/goal-skills.js'
-import * as localAgents from './src/host/local-agents/index.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 export { COLORS } from './src/host/constants.js'
 
@@ -89,20 +78,16 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // Each module's install(rt) registers its listeners, tools, and effects, and puts on `rt`
 // the functions other modules call; they call them through `rt` at run time, never during
 // install. Listeners run and tools are listed in registration order, so this order holds:
-<<<<<<< HEAD
 // usage meters model requests after every listener that rewrites them.
 const MODULES = [
-  diagnostics, extend, store, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions, auto, ladder, autoJudge, permissionDiagnostics,
-  turns, handoffs, requests, delivery, roster, folders, agents, toolDeny, prompt, timeContext,
-  tools, chatIndex, groups, approvals, stops, whoRefused, subagentAsks, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
-  avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage,
-  update, dshUpdate, thinking, agentSpace, feed, channel, appManifest, pocketChat, hermesRemote,
+  diagnostics, extend, store, ledger, addressPolicy, models, modelState, modelAccessHooks, acpAdoption, subscriptionMove,
+  providers, permissions, auto, ladder, autoJudge, permissionDiagnostics, turns, steer, handoffs, requests, delivery,
+  roster, folders, privateBots, agents, toolDeny, prompt, timeContext, tools, chatIndex, groups, goals, approvals,
+  stops, whoRefused, subagentAsks, resume, memory, parts, fallback, cliLogin, images, imagegen, avatarLibrary,
+  secrets, connectors, capabilities, learning, schedules, browser, browserPlugins, computer, usage, update, dshUpdate,
+  thinking, agentSpace, feed, channel, appManifest, pocketChat, hermesRemote, phone, mobile, im, officeSkills,
+  goalSkills, localAgents,
 ]
-=======
-// usage meters model requests after every listener that rewrites them. privateBots checks a
-// call before the hooks of tools do, so a closed call never reaches a card they show.
-const MODULES = [diagnostics, store, ledger, models, providers, permissions, turns, steer, handoffs, requests, delivery, roster, folders, privateBots, agents, prompt, timeContext, tools, chatIndex, groups, goals, approvals, resume, memory, parts, images, avatarLibrary, secrets, connectors, capabilities, learning, schedules, browser, browserPlugins, computer, usage, update, dshUpdate, thinking, mobile, feed, phone, im, channel, officeSkills, goalSkills, localAgents]
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 // Other Omni plugins inject the runtime as `omniTeam` and add to it through rt.hooks
 // (src/host/extend.js): Omni's channels and automations (@automagik/omni-channels-dsh),
@@ -140,20 +125,13 @@ export function createRuntime(ctx, config = {}) {
     },
   }
   for (const module of MODULES) module.install(rt)
-<<<<<<< HEAD
   // After every module: cordis runs prepended listeners newest first, so Auto's judge decides an approval before Pocket
   // (pocket-chat.js) or approvals.js could show it as the person's to answer (auto-judge.js installAhead).
   autoJudge.installAhead(rt)
-  if (imported) rt.warn?.('omni-ui: copied the team from %s into %s', config.importHome, home)
-=======
-  // A live Agent can be scoped before the last module has added its tools (the memory
-  // module starts a load during install): complete the scope now that every tool is in.
+  // A live Agent can be scoped before the final module adds its tools; complete that scope now.
   rt.syncScopedTools?.()
-  // dsh can load this plugin again in place, its files replaced while it runs: dsh
-  // keeps the turns and child agents it had, while this runtime starts with empty
-  // maps. Adopt them now, so Stop, the group view and a late child settle still see
-  // the work. A fresh start has nothing to adopt.
-  void rt.adoptLiveWork?.().catch(error => rt.warn?.('ds-bot: adopting the work still running failed: %s', error))
->>>>>>> vendor/ds-bot-0.3.6-prepared
+  // Reloading the plugin while DSH is live must retain turns and child agents already running.
+  void rt.adoptLiveWork?.().catch(error => rt.warn?.('omni-ui: adopting the work still running failed: %s', error))
+  if (imported) rt.warn?.('omni-ui: copied the team from %s into %s', config.importHome, home)
   return rt
 }

@@ -750,14 +750,9 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   // Taken up by a turn, or withdrawn while Omni runs (the user stopped the Bot).
   first.emit('b', 'user/message', { content: notesMessage.content, source: notesMessage.source })
   for (const listener of first.ctx.listeners.get('agent/inbox/discarded')) listener({ message: withdrawn })
-<<<<<<< HEAD
   // A run's Session whose record is gone by the restart: no Bot owns it any more.
   await first.ctx.get('omniTeam').deliver({ toId: 'b', sessionId: 'gone', role: 'task', note: 'Inbox', text: 'Check the inbox' })
   await settle(() => (notes(home).queued.b ?? []).length === 2 && notes(home).queued.gone?.length === 1)
-=======
-  await settle(() => (notes(home).queued.b ?? []).length === 2)
-  const original = (await first.call('exchange', { a: 'a', b: 'b' })).value.find(entry => entry.id === plan.source.exchangeId)
->>>>>>> vendor/ds-bot-0.3.6-prepared
   await first.stop()
 
   t.mock.timers.enable({ apis: ['setTimeout'] })
@@ -765,18 +760,11 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   // A hard stop keeps the inbox: that message runs when the Session wakes.
   second.agentOf('b').inbox.nextTurn.push(numbers)
   t.mock.timers.tick(3000)
-<<<<<<< HEAD
   assert.deepEqual((await second.ctx.get('omniTeam').resumesDone).resent, ['b'])
   assert.equal(second.agentOf('gone').calls.length, 0)
   const [again, ...rest] = second.agentOf('b').calls
   assert.equal(rest.length, 0)
   assert.deepEqual([again.source.exchangeId, again.source.role, text(again)], [plan.source.exchangeId, 'request', text(plan)])
-=======
-  await settle(() => second.agentOf('b').calls.length === 1)
-  const [again] = second.agentOf('b').calls
-  assert.deepEqual([again.source.exchangeId, again.source.role], [plan.source.exchangeId, 'request'])
-  assert.match(text(again), /^\[Message from Chief · DeepSeek Harness restarted before it could reach you\]\nDraft the plan$/)
->>>>>>> vendor/ds-bot-0.3.6-prepared
   // The resend is the same exchange, not a new one.
   const exchanges = (await second.call('exchange', { a: 'a', b: 'b' })).value
   assert.equal(exchanges.length, 4)

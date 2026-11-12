@@ -13,15 +13,10 @@ const bundle = await build({
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
 const module = { exports: {} }
-<<<<<<< HEAD
 // `menuOpen`: every state that starts empty starts as an open menu's place, so a menu
 // renders its rows.
 let menuOpen = false
 runInNewContext(bundle.outputFiles[0].text, {
-=======
-const sandbox = {
-  document: { activeElement: null },
->>>>>>> vendor/ds-bot-0.3.6-prepared
   module, exports: module.exports,
   document: { body: {} },
   window: { innerWidth: 1280, innerHeight: 800 },
@@ -32,13 +27,9 @@ const sandbox = {
         Fragment: 'Fragment',
         useState: initial => [initial === null && menuOpen ? { left: 0, top: 0, width: 240 } : initial, () => {}],
         useEffect: () => {},
-<<<<<<< HEAD
         useLayoutEffect: () => {},
         useRef: current => ({ current }),
         useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
-=======
-        useRef: initial => ({ current: initial }),
->>>>>>> vendor/ds-bot-0.3.6-prepared
       },
       'react-dom': { createPortal: node => node },
       '@deepseek-ai/dsh-client-ui-primitives': {},
@@ -46,7 +37,6 @@ const sandbox = {
     if (!(name in platform)) throw new Error(`no platform module ${name}`)
     return platform[name]
   },
-<<<<<<< HEAD
 })
 const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, RouteConfirm, effortRows, offeredModels } = module.exports
 
@@ -55,24 +45,14 @@ const drawMenu = (props) => {
   const picked = ModelMenu(props)
   return picked.type(picked.props)
 }
-=======
-}
-runInNewContext(bundle.outputFiles[0].text, sandbox)
-const { groupModels, ModelChoiceDock, ModelKeyCard, effortRows, effortStops, EffortBar, stepMenuFocus, ModelRows, ModelGroupList, groupOpen, toggledGroup, manualFor } = module.exports
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 function nodes(tree, match) {
   if (!tree || typeof tree !== 'object') return []
   return [...(match(tree) ? [tree] : []), ...(tree.children ?? []).flatMap(child => nodes(child, match))]
 }
 
-<<<<<<< HEAD
 // `harness`: the window has DSH's own settings to send the user to, as the plugin does.
 function dock(models, { model, ready = true, harness = true, routePolicy } = {}) {
-=======
-// `harness`: the window has Settings and DSH's onboarding editors to send the user to.
-function dock(models, { model, ready = true, harness = true } = {}) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const picked = []
   const bot = { id: 'chief', name: 'Omni', model }
   const roster = { ready, byId: { chief: bot }, models, defaultModel: models[0]?.ref, ...(routePolicy ? { routePolicy } : {}) }
@@ -274,18 +254,12 @@ const keyless = [
 
 test('models that need an API key are no choice', () => {
   const buttons = tree => nodes(tree, node => node.type === 'button').map(button => button.children[0])
-<<<<<<< HEAD
   // DSH's default needs a key: the Bot offers the model that can run.
   const offer = dock([...keyless, models[1]], { harness: false }).tree
   assert.deepEqual(buttons(offer), ['Start'])
   assert.equal(nodes(offer, node => node.type === ModelLine)[0].props.modelRef, 'local/flash')
   // Where DSH's own settings are, they take the key; Omni's Connect AI step comes first.
   assert.deepEqual(buttons(dock(keyless).tree), ['Connect an AI: ChatGPT, Claude, Kimi or an API key', 'Enter a DeepSeek API key', 'Open settings to set up a custom model'])
-=======
-  assert.deepEqual(buttons(dock([...keyless, models[1]], { harness: false }).tree), ['DeepSeek Flash'])
-  // Without the host's key endpoint, DSH's own settings take the key.
-  assert.deepEqual(buttons(dock(keyless).tree), ['Enter a DeepSeek API key', 'Open settings to set up a custom model'])
->>>>>>> vendor/ds-bot-0.3.6-prepared
 })
 
 test('the first choice asks for the missing API key through the host', () => {
@@ -302,7 +276,6 @@ test('the first choice asks for the missing API key through the host', () => {
   assert.equal(nodes(tree, node => node.props.className === 'bt-model-chips').length, 0)
 })
 
-<<<<<<< HEAD
 // A Bot whose model menu its plugin owns: rows come only from the state's `hostModels`.
 const HOST = {
   entries: [
@@ -758,160 +731,4 @@ test('the crossing says what Full access means on the route it moves to, only fo
   }), node => node.props.className === 'bt-model-confirm-access')[0]?.children[0], "Full access: the agent's actions run without asking.")
   assert.equal(line({ name: 'Ops', permission: 'workspace-write' }, 'deepseek/flash', 'acp-codex/default'), undefined)
   assert.equal(line({ name: 'Ops' }, 'deepseek/flash', 'acp-codex/default'), undefined)
-=======
-test('the DeepSeek API key card links to the key page and says the API is billed by usage', () => {
-  const card = model => ModelKeyCard({ model, actions: { setProviderKey: () => {} } })
-  const official = card({ provider: 'deepseek-official', providerName: 'DeepSeek' })
-  const [link] = nodes(official, node => node.type === 'a')
-  assert.equal(link.props.href, 'https://platform.deepseek.com/api_keys')
-  assert.equal(link.props.target, '_blank')
-  assert.match(link.props.rel, /noopener/)
-  assert.deepEqual(link.children, ['Create a key on the DeepSeek platform ↗'])
-  assert.ok(nodes(official, node => node.children.includes('The API is billed by usage; the account needs a balance first.')).length === 1)
-  const other = card({ provider: 'router', providerName: 'Router' })
-  assert.equal(nodes(other, node => node.type === 'a').length, 0)
-  assert.equal(nodes(other, node => node.props.className === 'bt-model-key-help').length, 0)
-})
-
-test('setting up a custom model opens the Models page of Settings', () => {
-  const opened = []
-  const choices = actions => nodes(ModelChoiceDock({
-    sessionId: 'chief', useRoster: select => select({ ready: true, byId: { chief: { id: 'chief', name: 'Chief' } }, models: [] }), actions,
-  }), node => node.type === 'button')
-  const custom = list => list.find(button => button.children[0] === 'Open settings to set up a custom model')
-  custom(choices({ openModels: () => opened.push('models'), openSettings: page => opened.push(`settings:${page}`) })).props.onClick()
-  custom(choices({ openSettings: page => opened.push(`settings:${page}`) })).props.onClick()
-  assert.deepEqual(opened, ['models', 'settings:models'])
-})
-
-// The provider groups of the Bot model menu: a heading opens and closes its group, and
-// only the current model's provider is open when the menu opens.
-const menuModels = [
-  { ref: 'official/flash', provider: 'official', providerName: 'DeepSeek', name: 'DeepSeek Flash' },
-  { ref: 'official/pro', provider: 'official', providerName: 'DeepSeek', name: 'DeepSeek Pro' },
-  { ref: 'local/flash', provider: 'local', providerName: 'Ollama', name: 'Ollama Flash' },
-  { ref: 'relay/k3', provider: 'relay', providerName: 'Relay', name: 'Relay K3' },
-]
-const menuRoster = (models = menuModels) => ({ models, defaultModel: models[0]?.ref })
-// Function components render here by running them: the fake createElement keeps the
-// element, and the menu rows are one.
-const rendered = element => (Array.isArray(element)
-  ? element.flatMap(rendered)
-  : element !== null && typeof element === 'object' && typeof element.type === 'function'
-    ? rendered(element.type(element.props))
-    : element)
-const inside = (element, match) => Array.from(rendered(element)).flatMap(node => nodes(node, match))
-const menuRows = (current, extra = {}) => ModelRows({ roster: menuRoster(), current, onPick: () => {}, ...extra })
-const headingOf = (tree, label) => inside(tree, node => node.props?.role === 'menuitem' && node.props['aria-expanded'] !== undefined
-  && node.children.some(child => child?.props?.className === 'bt-menu-label' && child.children?.[0] === label))[0]
-const modelNames = tree => Array.from(inside(tree, node => node.props?.role === 'menuitemradio'), node => node.children[0].children[0])
-const modelRows = tree => Array.from(inside(tree, node => node.props?.role === 'menuitemradio'))
-
-test('only the provider of the current model is open when the menu opens', () => {
-  const tree = menuRows('relay/k3')
-  assert.deepEqual(['DeepSeek', 'Ollama', 'Relay'].map(label => headingOf(tree, label).props['aria-expanded']), [false, false, true])
-  assert.deepEqual(modelNames(tree), ['Relay K3'])
-})
-
-test('without a current model, or with one no longer served, the first provider is open', () => {
-  for (const current of [undefined, 'gone/flash']) {
-    const tree = menuRows(current)
-    assert.equal(headingOf(tree, 'DeepSeek').props['aria-expanded'], true)
-    assert.equal(headingOf(tree, 'Ollama').props['aria-expanded'], false)
-    assert.deepEqual(modelNames(tree), ['DeepSeek Flash', 'DeepSeek Pro'])
-  }
-})
-
-test('two providers with the same display name open independently, by provider id', () => {
-  const twins = menuModels.map(model => ({ ...model, providerName: 'Cloud' }))
-  const tree = ModelRows({ roster: menuRoster(twins), current: 'local/flash', onPick: () => {} })
-  assert.equal(headingOf(tree, 'Cloud (official)').props['aria-expanded'], false)
-  assert.equal(headingOf(tree, 'Cloud (local)').props['aria-expanded'], true)
-  assert.deepEqual(modelNames(tree), ['Ollama Flash'])
-})
-
-test('a group opens by the search, then the manual pick, then the current model, then the first', () => {
-  const open = (options = {}) => groupOpen({ id: 'local', index: 1, currentId: 'relay', filtering: false, manual: {}, ...options })
-  // A search opens every group it matched, and the manual state only applies again without it.
-  assert.equal(open({ filtering: true, manual: { local: false } }), true)
-  assert.equal(open({ manual: { local: false } }), false)
-  assert.equal(open({ manual: { local: true } }), true)
-  // Otherwise the current model's provider is open, and the first provider without one.
-  assert.equal(open(), false)
-  assert.equal(open({ currentId: 'local' }), true)
-  assert.equal(open({ currentId: undefined, index: 0 }), true)
-  assert.equal(open({ currentId: undefined, index: 1 }), false)
-})
-
-test('a heading opens and closes its group, the current one included', () => {
-  const groups = groupModels(menuModels)
-  const toggles = []
-  const list = manual => ModelGroupList({
-    groups, current: 'relay/k3', currentId: 'relay', defaultModel: undefined, onPick: () => {}, manual, filtering: false,
-    onToggle: (id, open) => toggles.push([id, open]),
-  })
-  headingOf(list({}), 'Ollama').props.onClick()
-  headingOf(list({}), 'Relay').props.onClick()
-  assert.deepEqual(toggles, [['local', false], ['relay', true]])
-
-  const opened = list(toggledGroup({}, 'local', false))
-  assert.deepEqual(modelNames(opened), ['Ollama Flash', 'Relay K3'])
-  const currentClosed = list(toggledGroup(toggledGroup({}, 'local', false), 'relay', true))
-  assert.deepEqual(modelNames(currentClosed), ['Ollama Flash'])
-  assert.equal(headingOf(currentClosed, 'Relay').props['aria-expanded'], false)
-})
-
-test('a heading is a menu item button a keyboard can reach and press', () => {
-  const heading = headingOf(menuRows('relay/k3'), 'DeepSeek')
-  // `stepMenuFocus` walks button[role^="menuitem"], and a native button takes Enter and
-  // Space as a click; a collapsed group renders no rows, so its models leave that walk.
-  assert.equal(heading.type, 'button')
-  assert.equal(heading.props.type, 'button')
-  assert.equal(heading.props.role, 'menuitem')
-  assert.equal(heading.props.tabIndex, undefined)
-  assert.equal(typeof heading.props.onClick, 'function')
-  assert.equal(modelRows(menuRows('relay/k3')).length, 1)
-})
-
-test('a search opens every matched group and the manual state returns when it clears', () => {
-  const matched = menuModels.filter(model => /flash|k3/i.test(`${model.name} ${model.ref}`))
-  const groups = groupModels(matched)
-  const list = (filtering, manual, currentId) => ModelGroupList({
-    groups, current: 'relay/k3', currentId, defaultModel: undefined, onPick: () => {}, manual, filtering, onToggle: () => {},
-  })
-  // While a search filters the list, a heading has nothing to collapse and every match shows.
-  const searching = list(true, { relay: true }, undefined)
-  assert.equal(inside(searching, node => node.props?.role === 'menuitem').length, 0)
-  assert.equal(inside(searching, node => node.props?.className === 'bt-model-group').length, 3)
-  assert.deepEqual(modelNames(searching), ['DeepSeek Flash', 'Ollama Flash', 'Relay K3'])
-  // Clearing it brings back the headings and the state the user left them in: the group
-  // they opened stays open, the first group is open because no model is current.
-  const cleared = list(false, { relay: true }, undefined)
-  assert.equal(headingOf(cleared, 'DeepSeek').props['aria-expanded'], true)
-  assert.equal(headingOf(cleared, 'Ollama').props['aria-expanded'], false)
-  assert.equal(headingOf(cleared, 'Relay').props['aria-expanded'], true)
-  assert.deepEqual(modelNames(cleared), ['DeepSeek Flash', 'Relay K3'])
-})
-
-test('a reopened menu starts from the default, not the choices of the menu still leaving', () => {
-  // The leaving menu lives through its exit animation and the reopen can land on the same
-  // rows; the new opening number must read the default instead of the old choices.
-  const previous = { opening: 1, manual: toggledGroup({}, 'local', true) }
-  assert.equal(manualFor(previous, 1).local, false)
-  assert.deepEqual({ ...manualFor(previous, 2) }, {})
-  // A click in the reopened menu builds on that empty state, not on the old one.
-  assert.deepEqual({ ...toggledGroup(manualFor(previous, 2), 'relay', false) }, { relay: true })
-})
-
-test('the Default mark, the tick and the pick stay on the open group\'s rows', () => {
-  const picked = []
-  const tree = ModelRows({ roster: menuRoster(), current: 'official/flash', onPick: ref => picked.push(ref) })
-  const rows = modelRows(tree)
-  assert.deepEqual(Array.from(rows, row => row.children[0].children[0]), ['DeepSeek Flash', 'DeepSeek Pro'])
-  assert.equal(nodes(rows[0], node => node.props?.className === 'bt-menu-hint')[0].children[0], 'Default')
-  assert.equal(nodes(rows[0], node => node.props?.className === 'bt-model-tick')[0].children.length, 1)
-  assert.equal(nodes(rows[1], node => node.props?.className === 'bt-model-tick')[0].children[0], null)
-  rows[1].props.onClick()
-  assert.deepEqual(picked, ['official/pro'])
->>>>>>> vendor/ds-bot-0.3.6-prepared
 })

@@ -29,44 +29,11 @@ test('values of DS Bot and its earlier names are neither read, moved nor removed
   }
   const storage = memoryStorage(others)
   migrateStorage(storage)
-<<<<<<< HEAD
   assert.deepEqual(Object.fromEntries(storage.map), others)
   for (const key of Object.values(STORAGE)) assert.deepEqual(legacyKeys(key), [], key)
 })
 
 test('unusable storage is no error', () => {
-=======
-  assert.deepEqual(Object.fromEntries(storage.map), {
-    'omni-ui:unread': '{"a":true}',
-    'omni-ui:reactions': '{"t1":"👍"}',
-    'omni-ui:seen': '{"a":1}',
-    'omni-ui:prefs': '{"theme":"paper"}',
-    'omni-ui:browser-width': '600',
-    'omni-ui.browser.v2': '{"a":{"tabs":[{"id":"v1-a","url":"https://example.com/","title":""}],"active":"v1-a"}}',
-    'other:key': 'kept',
-  })
-})
-
-test('the dsh-bot-team keys move too, and the newer name wins', () => {
-  const storage = memoryStorage({ 'dsh-bot-team:unread': 'oldest', 'dsh-bot-team:prefs': 'team', 'dsh-bot:prefs': 'newer' })
-  migrateStorage(storage)
-  assert.equal(storage.getItem(STORAGE.unread), 'oldest')
-  assert.equal(storage.getItem(STORAGE.prefs), 'newer')
-  assert.equal(storage.getItem('dsh-bot-team:prefs'), null)
-})
-
-test('a value already under the current key is never overwritten', () => {
-  const storage = memoryStorage({ 'omni-ui:seen': 'current', 'dsh-bot:seen': 'old' })
-  migrateStorage(storage)
-  assert.equal(storage.getItem(STORAGE.seen), 'current')
-  assert.equal(storage.getItem('dsh-bot:seen'), null)
-  migrateStorage(storage)
-  assert.equal(storage.getItem(STORAGE.seen), 'current')
-})
-
-test('every current key has its legacy keys, and unusable storage is no error', () => {
-  for (const key of Object.values(STORAGE)) assert.ok(legacyKeys(key).length > 0, key)
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const broken = { getItem: () => { throw new Error('denied') }, setItem() {}, removeItem() {} }
   assert.doesNotThrow(() => migrateStorage(broken))
 })

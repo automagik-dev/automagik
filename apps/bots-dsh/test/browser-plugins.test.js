@@ -370,7 +370,6 @@ test('user takeover refuses a browser call before opening or connecting', async 
   assert.equal(connectCalls, 0)
 })
 
-<<<<<<< HEAD
 test('every team has the refs browser unless the config turns it off', (t) => {
   const on = start({})
   t.after(on.stop)
@@ -381,15 +380,6 @@ test('every team has the refs browser unless the config turns it off', (t) => {
   t.after(off.stop)
   assert.equal(off.ctx.calls.includes('effect ds-bot: browser plugin'), false)
   assert.equal(off.ctx.registeredTools.has('browser_open'), false)
-=======
-test('no browser plugin is mounted unless one is selected for the team', (t) => {
-  const { ctx, stop } = start({})
-  t.after(stop)
-  assert.equal(ctx.calls.includes('effect omni-ui: browser plugin'), false)
-  assert.equal(rt.teamTools.some(d => d.name === 'browser_open'), false)
-  assert.equal(rt.teamTools.some(d => d.name === 'browser_exec'), false)
-  assert.equal(rt.teamTools.some(d => d.name === 'browser_task'), false)
->>>>>>> vendor/ds-bot-0.3.6-prepared
 })
 
 test('user browser controls are not exposed as Bot tools', (t) => {

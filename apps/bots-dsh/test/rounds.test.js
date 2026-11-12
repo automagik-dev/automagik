@@ -773,7 +773,6 @@ test('members call each other for as long as they call, and a user @ mid-round s
 test('calls parked under the old relay limit run in the group\'s next round', async (t) => {
   const { call, emit, userMessage, relay, answer, stop, sent, rt, home } = start()
   t.after(stop)
-<<<<<<< HEAD
   const chief = (await call('state', {})).value.mainBotId
   const writer = (await call('create-bot', { name: 'Writer' })).value
   const editor = (await call('create-bot', { name: 'Editor' })).value
@@ -869,20 +868,10 @@ test('a user message after a pause answers the user first, then runs the parked 
   await answer(third.sessionId, third.message.source.exchangeId, '@Writer again', 3)
   await running
   assert.equal(state.paused.length, 1)
-=======
-  const room = await team(call, sent)
-  await call('update-room', { id: room.id, mode: 'admin' })
-  const chief = rt.state.mainBotIds[0]
-  const writer = Object.values(rt.state.bots).find(bot => bot.name === 'Writer')
-  const state = () => rt.state.rooms[room.id]
-  state().paused = [{ id: writer.id, name: 'Writer', note: 'Chief mentioned you', by: chief }]
-  await rt.save()
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
   // The user's next message opens the round: its own speaker, the admin, and the
   // parked call start together.
   sent.length = 0
-<<<<<<< HEAD
   await emit(room.id, userMessage('@Omni one more question'))
   const next = relay(room.id, 'relay-2')
   const own = await turnFor(sent)
@@ -904,14 +893,9 @@ test('a user message mid-round restarts the relay count for the calls after it',
   const state = rt.state.rooms[room.id]
 
   await emit(room.id, userMessage('Start'))
-=======
-  await emit(room.id, userMessage('Status, please'))
-  assert.equal(state().paused.length, 1, 'still parked until a round runs')
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const running = relay(room.id, 'relay')
   const first = await turnFor(sent)
   const second = await turnFor(sent, first)
-<<<<<<< HEAD
   await answer(second.sessionId, second.message.source.exchangeId, '@Omni back', 2)
   const third = await turnFor(sent, first, second)
 
@@ -953,16 +937,6 @@ test('a round a Bot opens counts relays from nothing, and parks past the limit',
   // The first call ran as relay 1; the call it made is over the limit and parked.
   assert.equal(state.relays, 1)
   assert.deepEqual(state.paused.map(entry => entry.name), ['Omni'])
-=======
-  const [own, parked] = first.sessionId === state().sessions[chief] ? [first, second] : [second, first]
-  assert.equal(own.sessionId, state().sessions[chief])
-  assert.equal(parked.sessionId, state().sessions[writer.id], 'the parked call runs')
-  assert.match(parked.message.content[0].text, /Chief mentioned you/)
-  await answer(own.sessionId, own.message.source.exchangeId, 'All fine.', 1)
-  await answer(parked.sessionId, parked.message.source.exchangeId, 'On it.', 2)
-  await running
-  assert.equal(state().paused, undefined)
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).rooms[room.id]
   assert.equal(saved.paused, undefined)
 })

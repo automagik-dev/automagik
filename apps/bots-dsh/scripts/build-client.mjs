@@ -88,14 +88,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (process.argv.includes('--check')) {
     let current = null, currentOffice = null
     try { current = readFileSync(OUTPUT, 'utf8') } catch { /* missing counts as stale */ }
-<<<<<<< HEAD
-    if (current !== next) {
-      console.error('client.js is stale: run `npm run build` in apps/bots-dsh and commit the result')
-=======
     try { currentOffice = readFileSync(OFFICE_OUTPUT, 'utf8') } catch { /* missing counts as stale */ }
     if (current !== next || currentOffice !== office) {
-      console.error('client.js or office.js is stale: run `npm run build` in ds-bot and commit the result')
->>>>>>> vendor/ds-bot-0.3.6-prepared
+      console.error('client.js or office.js is stale: run `bun run build` in apps/bots-dsh and commit the result')
       process.exit(1)
     }
   } else {

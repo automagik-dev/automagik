@@ -55,7 +55,6 @@ function scheduleService() {
       tasks.set(id, entry)
       return entry
     },
-<<<<<<< HEAD
     async catalog() { return [...tasks.values()].map(entry => ({ ...entry })) },
     async edit({ id, action, patch }) {
       if (!tasks.has(id)) return { id, deleted: false, code: 'schedule_not_found' }
@@ -68,52 +67,11 @@ function scheduleService() {
       if (patch?.active === false) entry.status = 'paused'
       else if (patch?.active === true) entry.status = 'active'
       return entry
-=======
-    async list({ sessionId }) { return [...tasks.values()].filter(task => task.sessionId === sessionId).map(task => task.record) },
-    async catalog() {
-      return [...tasks.values()].map(task => ({ ...task.record, sessionId: task.sessionId, status: task.status ?? 'active' }))
-        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt) || a.id.localeCompare(b.id))
-    },
-    async delete({ sessionId, id }) {
-      if (tasks.get(id)?.sessionId !== sessionId) return { id, deleted: false, code: 'schedule_not_found' }
-      tasks.delete(id)
-      return { id, deleted: true }
->>>>>>> vendor/ds-bot-0.3.6-prepared
     },
   }
 }
 
-<<<<<<< HEAD
 function setup(services = {}, team = TEAM) {
-=======
-// The Host-wide service of DSH 0.2.2: each task has a delivery target and changes through edit().
-function hostSchedule() {
-  const tasks = new Map()
-  let next = 1
-  const edits = []
-  return {
-    tasks,
-    edits,
-    async create({ title, prompt, timing, target }) {
-      const id = `schedule-${next++}`
-      const [selector] = Object.keys(timing).filter(key => key !== 'kind')
-      tasks.set(id, { record: { id, kind: timing.kind, title, prompt, scheduledAt: timing.at ?? '2030-01-01T01:00:00.000Z' }, timing: timing[selector], target, status: 'active' })
-      return { id }
-    },
-    async catalog() {
-      return [...tasks.values()].map(task => ({ ...task.record, target: task.target, status: task.status }))
-    },
-    async edit(request) {
-      edits.push(request)
-      if (request.action === 'delete') tasks.delete(request.id)
-      else Object.assign(tasks.get(request.id), request.patch)
-      return { id: request.id }
-    },
-  }
-}
-
-function setup(services = {}) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const home = mkdtempSync(join(tmpdir(), 'dsb-schedules-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const ctx = fakeContext({ services })
@@ -237,16 +195,8 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
   assert.deepEqual(created.request.timing, { kind: 'daily', daily: { time: '09:00:00', time_zone: 'Asia/Shanghai' } })
   assert.equal(created.title, 'Briefing')
 
-<<<<<<< HEAD
   await schedule.create({ title: 'Old part', prompt: 'x', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'w1' } })
   await schedule.create({ title: 'Not ours', prompt: 'x', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'outside' } })
-=======
-  await schedule.create('w1', { title: 'Old part', prompt: 'x', every_seconds: 3600 })
-  await schedule.create('outside', { title: 'Not ours', prompt: 'x', every_seconds: 3600 })
-  // A task past its firing reads overdue; an inactive one is finished.
-  schedule.tasks.set('schedule-late', { sessionId: 'w2', record: { id: 'schedule-late', kind: 'at', title: 'Late', prompt: 'x', scheduledAt: '2020-01-01T00:00:00.000Z' } })
-  schedule.tasks.set('schedule-done', { sessionId: 'w2', record: { id: 'schedule-done', kind: 'at', title: 'Done', prompt: 'x', scheduledAt: '2020-01-01T00:00:00.000Z' }, status: 'inactive' })
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const listed = (await call('schedules', {})).value
   assert.equal(listed.available, true)
   assert.deepEqual(listed.tasks.map(task => [task.title, task.botId]), [['Done', 'w1'], ['Late', 'w1'], ['Briefing', 'w1'], ['Old part', 'w1']])
@@ -269,13 +219,8 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
   }
   assert.match((await call('schedule-create', { target: 'm1', title: '', prompt: 'y', when: { kind: 'every', minutes: 5 } })).error.message, /name/)
 
-<<<<<<< HEAD
   const removed = await call('schedule-delete', { sessionId: 'w2', id: created.id })
   assert.deepEqual(removed.value.tasks.map(task => task.title), ['Old part', 'Week', 'Ping'])
-=======
-  const removed = await call('schedule-delete', { sessionId: 'w2', id: created.record.id })
-  assert.deepEqual(removed.value.tasks.map(task => task.title), ['Done', 'Late', 'Old part', 'Week', 'Ping'])
->>>>>>> vendor/ds-bot-0.3.6-prepared
   assert.match((await call('schedule-delete', { sessionId: 'outside', id: 'schedule-3' })).error.message, /No such task/)
 })
 

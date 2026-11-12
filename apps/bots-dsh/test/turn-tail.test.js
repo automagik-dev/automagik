@@ -28,11 +28,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
 })
-<<<<<<< HEAD
 const { AssistantCell, TriggerCell, TurnTailCell, ThinkingRow } = module.exports
-=======
-const { AssistantCell, TurnTailCell, ThinkingRow, CellEmpty } = module.exports
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 // Renders the named components of an element tree, leaving the rest as elements.
 const expand = (node, names) => {

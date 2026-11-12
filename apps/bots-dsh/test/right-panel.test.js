@@ -163,7 +163,6 @@ test('a non-team surface shows no `···`', () => {
   assert.equal(moreButton(drawer('plain', { canOpenTerminal: () => true })), null)
 })
 
-<<<<<<< HEAD
 test('Advanced releases actual native dock, turn actions and process header CSS suppression', async () => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('../src/client/styles.js', import.meta.url))], bundle: true, format: 'cjs', platform: 'node', write: false, external: ['react'] })
   const module = { exports: {} }
@@ -192,47 +191,4 @@ test('Details permission popup rules belong to the shell even on a plain Session
     '.bt-permission-menu .bt-perm-confirm{padding:4px 2px 2px}',
   ])
   assert.equal(module.exports.CONVERSATION_CSS.includes('.bt-permission-menu'), false)
-=======
-// The group's Goal buttons act on `room.id`, never on the Session the header shows:
-// a folder change moves the group's own Session to a fresh part.
-const buttonsOf = (node, out = []) => {
-  if (Array.isArray(node)) { for (const child of node) buttonsOf(child, out); return out }
-  if (node === null || typeof node !== 'object') return out
-  if (typeof node.type === 'function') return buttonsOf(node.type(node.props), out)
-  if (node.type === 'button') out.push(node)
-  for (const child of node.children ?? []) buttonsOf(child, out)
-  return out
-}
-const textOf = (node) => {
-  if (Array.isArray(node)) return node.map(textOf).join('')
-  if (typeof node === 'string') return node
-  if (node === null || node === undefined || typeof node !== 'object') return ''
-  if (typeof node.type === 'function') return textOf(node.type(node.props))
-  return (node.children ?? []).map(textOf).join('')
-}
-const movedRoster = (goal) => {
-  const room = { id: 'g', sessionId: 'g-part2', name: 'Writers', named: true, members: ['a'], admin: 'a', goal }
-  return { ...roster, roomsById: { g: room, 'g-part2': room } }
-}
-
-test('the drawer Set a goal button stores the room id when the Session moved', () => {
-  const calls = []
-  const moved = movedRoster()
-  const tree = drawer('g-part2', { composeGoal: id => calls.push(['compose', id]) }, moved)
-  const button = buttonsOf(tree).find(entry => textOf(entry).includes('Set a goal'))
-  assert.ok(button)
-  button.props.onClick()
-  assert.deepEqual(calls, [['compose', 'g']])
-})
-
-test('the drawer Show button toggles the goal by the room id when the Session moved', () => {
-  const calls = []
-  const goal = { status: 'active', title: 'Ship it', stages: [], current: 0 }
-  const moved = movedRoster(goal)
-  const tree = drawer('g-part2', { toggleGoal: id => calls.push(['toggle', id]) }, moved)
-  const button = buttonsOf(tree).find(entry => textOf(entry) === 'Show')
-  assert.ok(button)
-  button.props.onClick()
-  assert.deepEqual(calls, [['toggle', 'g']])
->>>>>>> vendor/ds-bot-0.3.6-prepared
 })

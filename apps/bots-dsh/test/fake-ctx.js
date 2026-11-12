@@ -60,17 +60,9 @@ export function fakeContext({ services = {} } = {}) {
     listeners,
     sections,
     logger: { warn() {}, info() {} },
-<<<<<<< HEAD
     // dsh 0.2.2 plugins may ask the running fiber whether it is still active.
     fiber: { assertActive() {} },
     get: name => services[name] ?? ctx.provided.get(name),
-=======
-    get: name => services[name],
-    // As in real cordis: the plugin does not inject this service, so reading it throws.
-    get subagents() { throw new Error('cannot get property "subagents" without inject') },
-    // The real ctx guards plain access with `inject`; service() reads this.
-    reflect: { get: name => ctx.get(name) },
->>>>>>> vendor/ds-bot-0.3.6-prepared
     on(name, listener, options) {
       calls.push(`on ${name}${options?.prepend ? ' (prepend)' : ''}`)
       listeners.set(name, [...(listeners.get(name) ?? []), listener])
@@ -143,23 +135,12 @@ export function fakeContext({ services = {} } = {}) {
         },
       },
     },
-<<<<<<< HEAD
     llm: { listProviders: () => [] },
     provided: new Map(),
     provide(name, value) {
       calls.push(`provide ${name}`)
       ctx.provided.set(name, value)
       return () => {}
-=======
-    llm: {
-      listProviders: () => [],
-      registerAdapter: (routes, adapter) => {
-        ctx.adapters = [...(ctx.adapters ?? []), { routes, adapter }]
-        const handle = () => {}
-        handle.replace = (next) => { ctx.adapters.at(-1).routes = next }
-        return handle
-      },
->>>>>>> vendor/ds-bot-0.3.6-prepared
     },
   }
   return ctx

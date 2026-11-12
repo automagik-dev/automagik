@@ -12,30 +12,10 @@ const bundle = await build({
   bundle: true, format: 'cjs', platform: 'node', write: false,
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
-<<<<<<< HEAD
 let states = []
 let asked = 0
 const sandbox = {
   module: { exports: {} },
-=======
-const react = {
-  createContext: (initial) => { const ctx = { value: initial }; ctx.Provider = ({ value, children }) => { ctx.value = value; return children }; return ctx },
-  useContext: ctx => ctx.value,
-  useMemo: make => make(),
-  useCallback: fn => fn,
-  useId: () => 'dv-id',
-  useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot(),
-  createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
-  Fragment: 'fragment',
-  useState: initial => [initial, () => {}],
-  useEffect: () => {},
-  useRef: current => ({ current }),
-  useLayoutEffect: () => {},
-}
-const module = { exports: {} }
-runInNewContext(bundle.outputFiles[0].text, {
-  module, exports: module.exports, URL, URLSearchParams, setTimeout, clearTimeout,
->>>>>>> vendor/ds-bot-0.3.6-prepared
   require: (name) => {
     const platform = {
       react: {
@@ -57,7 +37,6 @@ sandbox.globalThis = sandbox
 runInNewContext(bundle.outputFiles[0].text, sandbox)
 const { AboutPage } = sandbox.module.exports
 
-<<<<<<< HEAD
 const Section = 'section'
 const Row = 'row'
 const walk = (node, visit) => {
@@ -83,11 +62,6 @@ function draw({ update = {}, bridge, state = null, versions = null }) {
   else delete sandbox.omniDesktop
   states = [state, versions]
   asked = 0
-=======
-// The Omni row in Settings → About, with the row's hint and its buttons' text, class
-// and clicks. `update` is the value the update source holds.
-function page(update) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const calls = []
   const actions = { repoStars: () => Promise.resolve(null), checkUpdate: () => { calls.push('checkUpdate'); return Promise.resolve() }, installUpdate: () => {}, openSettings: () => {} }
   const tree = AboutPage({ useUpdate: () => update, actions, run: () => Promise.resolve(true), Section, Row })
@@ -101,7 +75,6 @@ function page(update) {
       page.buttons[node.props.label] = node.children.filter(child => child?.type === 'button')
     }
   })
-<<<<<<< HEAD
   return page
 }
 
@@ -109,14 +82,6 @@ function page(update) {
 function bridgeOf({ check = true } = {}) {
   const asked = []
   const answer = name => () => { asked.push(name); return Promise.resolve() }
-=======
-  const run = promise => promise
-  const tree = AboutPage({ useUpdate: select => select(update), actions, run, Section: 'section', Row: 'row' })
-  const find = (node, pick) => (Array.isArray(node) ? node.flatMap(one => find(one, pick))
-    : node && typeof node === 'object' ? [...pick(node), ...find(node.children, pick)] : [])
-  const [row] = find(tree, node => (node.props?.label === 'Omni' ? [node] : []))
-  const buttons = find(row?.children ?? [], node => (node.type === 'button' ? [node] : []))
->>>>>>> vendor/ds-bot-0.3.6-prepared
   return {
     asked,
     status: () => Promise.resolve(null), subscribe: () => () => {},
@@ -125,7 +90,6 @@ function bridgeOf({ check = true } = {}) {
   }
 }
 
-<<<<<<< HEAD
 // What the host answers inside the app, where the package's own check is off (cordis.patch.yml).
 const HOST_IN_APP = { name: '@automagik/bots-dsh', current: '3.117.4', source: 'app', enabled: false, phase: 'idle', available: false, dsh: { current: null, phase: 'idle' } }
 const VERSIONS = { app: '3.117.2', dsh: '0.2.3', plugins: [{ name: '@automagik/bots-dsh', version: '3.117.4' }, { name: '@automagik/genie-dsh', version: '1.4.0' }], updates: true }
@@ -305,35 +269,10 @@ test('#1029: on an app from before the check, plugins it applies by itself are n
       button.props.onClick()
       assert.deepEqual(bridge.asked, [], why)
       assert.deepEqual(page.calls, [], why)
-=======
-// 公开#499: in the desktop app the Omni row shows the app's own update state.
-test('the six app update states set the Omni row\'s hint and button', () => {
-  const cases = [
-    [{ phase: 'checking' }, 'Checking for updates…', []],
-    [{ phase: 'current' }, 'Up to date', [{ text: 'Check for updates', className: 'bt-soft bt-soft-sm', action: 'checkOwnApp' }]],
-    [{ phase: 'downloading', version: '0.2.2' }, 'Downloading 0.2.2…', []],
-    [{ phase: 'downloaded', version: '0.2.2' }, '0.2.2 is ready; it installs when you restart',
-      [{ text: 'Restart to update', className: 'bt-fb-primary', action: 'installOwnApp' }]],
-    [{ phase: 'available', version: '0.2.2', page: 'https://github.com/Fei2411/DS-Bot/releases/tag/v0.2.2' }, '0.2.2 is available',
-      [{ text: 'Download', className: 'bt-soft bt-soft-sm', action: 'openOwnApp' }]],
-    [{ phase: 'failed' }, 'Could not check for updates.', [{ text: 'Check for updates', className: 'bt-soft bt-soft-sm', action: 'checkOwnApp' }]],
-  ]
-  for (const [ownApp, hint, buttons] of cases) {
-    const view = page({ source: 'app', ownApp })
-    assert.equal(view.hint, hint)
-    assert.equal(view.buttons.length, buttons.length)
-    for (const [index, expected] of buttons.entries()) {
-      assert.equal(view.buttons[index].text, expected.text)
-      assert.equal(view.buttons[index].className, expected.className)
-      view.buttons[index].click()
-      assert.deepEqual(view.calls, [expected.action])
-      view.calls.length = 0
->>>>>>> vendor/ds-bot-0.3.6-prepared
     }
   }
 })
 
-<<<<<<< HEAD
 test('#1029: with nothing staged, an app from before the check is still asked through its `open`', () => {
   for (const [why, state] of [
     ['plugins idle', { phase: 'idle', app: { phase: 'idle' }, plugins: { phase: 'idle', changes: [], auto: true } }],
@@ -350,13 +289,6 @@ test('#1029: with nothing staged, an app from before the check is still asked th
     assert.notEqual(button.props.disabled, true, why)
     button.props.onClick()
     assert.deepEqual(bridge.asked, ['open'], why)
-=======
-test('without an app update state the row keeps today\'s text and no button', () => {
-  for (const ownApp of [undefined, null, 'checking', {}]) {
-    const view = page({ source: 'app', ownApp })
-    assert.equal(view.hint, 'Updates come with the Omni app.')
-    assert.deepEqual(view.buttons, [])
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }
 })
 

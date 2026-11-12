@@ -60,13 +60,8 @@ test('warnings are kept, cleaned, written to the log, and read back after a rest
   const error = Object.assign(new Error(`cannot open ${homedir()}/x with sk-abcdefghij`), { code: 'EACCES' })
   const quiet = t.mock.method(console, 'error', () => {})
   const rt = host(home)
-<<<<<<< HEAD
   rt.warn('ds-bot: state write failed: %s', error)
   rt.noteFailure({ source: 'turn', text: 'Rate limited', code: 'RATE_LIMIT', status: 429, bot: 'Omni', where: 'own chat' })
-=======
-  rt.warn('omni-ui: state write failed: %s', error)
-  rt.noteFailure({ source: 'turn', text: 'Rate limited', code: 'RATE_LIMIT', status: 429, bot: 'Chief', where: 'own chat' })
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const [first, second] = await rt.diagnostics.entries()
   assert.equal(first.level, 'warn')
   assert.equal(first.code, 'EACCES')
@@ -434,7 +429,6 @@ test('a turn refused for not being a model endpoint refuses that route', () => {
 
 test('issueUrl fills the issue form, keeps the versions when the errors are too long, and falls back to the clipboard', async () => {
   const { issueUrl } = await import('../src/client/diagnostics.js')
-<<<<<<< HEAD
   const base = 'https://github.com/automagik-si/automagik/issues/new'
   const short = issueUrl(base, { what: 'Writer failed\nin the group', diagnostics: '| Omni | 0.1.0 |' })
   assert.equal(short.inline, true)
@@ -442,16 +436,6 @@ test('issueUrl fills the issue form, keeps the versions when the errors are too 
   assert.equal(params.has('template'), false)
   assert.equal(params.get('title'), '[omni-ui] Writer failed')
   assert.equal(params.get('body'), 'Writer failed\nin the group\n\n| Omni | 0.1.0 |')
-=======
-  const base = 'https://github.com/Fei2411/DS-Bot/issues/new'
-  const short = issueUrl(base, { what: 'Writer failed\nin the group', diagnostics: '| Omni | 0.1.0 |' })
-  assert.equal(short.inline, true)
-  const params = new URL(short.url).searchParams
-  assert.equal(params.get('template'), 'bug.yml')
-  assert.equal(params.get('title'), 'Writer failed')
-  assert.equal(params.get('what'), 'Writer failed\nin the group')
-  assert.equal(params.get('diagnostics'), '| Omni | 0.1.0 |')
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const long = issueUrl(base, { diagnostics: '错误'.repeat(2000) })
   assert.equal(long.inline, false)
   assert.ok(long.url.length < 7000)
