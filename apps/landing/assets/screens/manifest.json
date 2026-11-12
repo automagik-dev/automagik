@@ -1,26 +1,26 @@
 {
   "capturedBy": "node apps/landing/capture/capture.mjs --run",
-  "checkout": "46a13abaa6ed205591d299e8fedf0ddd556b0814",
+  "checkout": "565fc59d2dd2332f23dae1682fa6db7aa94488c6",
   "captureScriptsClean": true,
   "runtime": {
     "package": "@deepseek-ai/dsh",
-    "version": "0.2.2-rc.1"
+    "version": "0.2.2-rc.2"
   },
   "model": "apps/landing/capture/scripted-model.mjs (scripted replies; no AI provider was called)",
   "plugins": {
     "@automagik/bots-dsh": {
-      "version": "3.127.14",
+      "version": "3.135.0",
       "repository": "https://github.com/automagik-si/automagik",
-      "commit": "c57acbed50e96593dda4197cd6e2af37e2cc5778",
+      "commit": "aabe26a1200adf2dcac502f1ab93657ae4cd815e",
       "path": "apps/bots-dsh",
-      "tree": "11e8aacb41c98c2fc10a5def2f4aea729a26e6ec"
+      "tree": "01812e76048fd05def0df392654bb533d53da6d1"
     },
     "@automagik/welcome-dsh": {
-      "version": "3.127.14",
+      "version": "3.135.0",
       "repository": "https://github.com/automagik-si/automagik",
-      "commit": "c57acbed50e96593dda4197cd6e2af37e2cc5778",
+      "commit": "aabe26a1200adf2dcac502f1ab93657ae4cd815e",
       "path": "apps/welcome-dsh",
-      "tree": "2ac63613dd0d486595d8aba68c05b9c36d1034ef"
+      "tree": "5b18f38899fbf12da696d1d9fd93cbea8c952dd7"
     },
     "@automagik/genie-dsh": {
       "version": "0.1.4",
@@ -31,33 +31,33 @@
     }
   },
   "images": {
-    "app-stage-dark-1440.png": "323a3e2846cad29ac9dcfe089b8509616b761d569cda119e253790c2a81591ab",
-    "app-stage-dark-390.png": "9008aec909bbf9d82d6b04b8cd5368d3e8b7aab5a5cc3b6d798055ca773714a4",
-    "app-stage-light-1440.png": "b61f6dd2112c09d0dee41df04c2d3e7d7cd575cc39b2b2f2b5180d7876c64b09",
-    "app-stage-light-390.png": "8528443ecf2f453ae7c96e7faecbcfbb1235c7e394644ac39e8d54b7b3549b6f",
+    "app-stage-dark-1440.png": "94939a9f321a0ee6af8cf4aec8a5c987e6cb04bb0d32996c23889b8a44746a64",
+    "app-stage-dark-390.png": "f6a3b50c37f53fd28420ae02ceeadd2ebb964a2343c7e21b3db4ea2fd76c1a27",
+    "app-stage-light-1440.png": "935b642e796c695662a8e9853b66c7abfde9ecb0efc85e55ad76feb02355f22d",
+    "app-stage-light-390.png": "1d4f68cc127cb1ef705d27c28553ad5663decb5fa9b0878f9dc45578c4f20378",
     "code-sidebar.png": "b623f219e94013dcf8ca296e8b98cd1d627110b0527fec3cd9f98472399c2479",
-    "genie-report-dark.png": "26f4c6a139374a8d82405b38b928dac8bc8388e705719191183c44f93d1d11c4",
-    "genie-report-phone-dark.png": "a343a29e34b0ac2dc7be3368b5352a7865b21351daa215c1406a6a816820238d",
-    "genie-report-phone.png": "2ef8fa96f00b7225bd8cab2962b5cfa0ae372fbf5d773d7287800aa0a3af99bc",
-    "genie-report.png": "a2211be5aa367878ffde6b9a85da1b9de2911f6f53b9f6ff1bd52e85ce875c73",
-    "pip-delegates-dark.png": "be03acb47cf1305a6269a0851b313e34c202aa90b937a9a7ca8fb4674969ed86",
-    "pip-delegates-phone-dark.png": "bc5bb6f3f9bb9920079cd177eedb3ef9b44d9d2733ac27bc0f9f0ce3cdd8fe55",
-    "pip-delegates-phone.png": "2920ba877c294f78fd009a985bc0697ccb608f0e826f201a82f3ac3687f28766",
-    "pip-delegates.png": "8c830dada3ae80633c504da10fd4b107faccdf57dd4f6405999d112fa82208e9",
-    "pocket-chat-dark.png": "e79b119d0d23cbf0f63c2c7030c83c5cfd9d0878ce0a414084ea5e36944ec80f",
-    "pocket-chat-light.png": "b163b77b6ad772280fe64c41a12077fd0b01f108e6d92c9ebacdc6bb4e5aa089",
+    "genie-report-dark.png": "8705334288087a4ff3ab6183cfcb79bd3b8c385291752c5a90611ecdd3a477ae",
+    "genie-report-phone-dark.png": "703af3d4bbe81943ea69d42d3a2fb61c802e165236f2e69e443675daa5478a09",
+    "genie-report-phone.png": "aaa01248726efb5af7a7e1e25a5cb977f8472aaa89f2882c82f98e95b7f6ecb4",
+    "genie-report.png": "f9618aa08ded1ee5d0ee41ecdfb1ab27fe88d8b044034e1657fc50680e54d968",
+    "pip-delegates-dark.png": "dc7abf649a9af7cf75ba900de25c82dbe39c828d644296950a673ad728442c0d",
+    "pip-delegates-phone-dark.png": "682c6052b2726bb15a752e48da68e1f252b4af0cfcd85870a44e50fe65de4f7a",
+    "pip-delegates-phone.png": "162337a80f22365fcaa9d2177f534cd0cf029eae4ffebf587b6e408926567275",
+    "pip-delegates.png": "98d3934b826ce68268b99c707410cb0d00f39d3fe552503180316100785b4834",
+    "pocket-chat-dark.png": "9096b6d12a70ca15c8b72bc7430aa1e5c711fec224c41aa058881b55ec937018",
+    "pocket-chat-light.png": "ccd724df384a25b23640332348e77459ffd38cd82a6f2d7c2b55024f0ce083d1",
     "pocket-code-dark.png": "dce71f2736091472f4c8cb0e9250c05992fb58accc40bb262caf5fd728f71fbe",
     "pocket-code-light.png": "17c8a45d5fc58995d1073987c21223f6e84e5af4628a2d485dbb795116fe9ebb",
-    "pocket-home-dark.png": "cb14941d9ca680c32dd2848e69a1eca9151ce3e024a030d0266df49a2f9c721c",
-    "pocket-home-light.png": "2ec75812212dc05c3d1483396e50acb6478045f35025a668f3a48b269201ed60",
-    "team-step-dark.png": "2503c01210ccdebd5e631cce6fe83f9e7962b1fb61f21b6e67f64a816b694026",
-    "team-step.png": "558d74f200056735142efa883c7031d81fc4fdba69fcd71c5051746cd491e517",
-    "wish-checks-dark.png": "297b7d3efb6fc8aca557d013d802b45915e8f52bebe7d2039b5e6ad16402e88f",
-    "wish-checks-phone-dark.png": "316b46f1127e4efa7b6dd5dc782b5aa6e83ad2a088adc5b13ceb47693d0916a9",
-    "wish-checks-phone.png": "2df482aa743f0974edb67730fe81d6f19a383cfc039d3dc206c2f532d7bd69bb",
-    "wish-checks.png": "275699f686118831a2f2272fb1ea843f6f75b2674a3ba221f77d3cd330d6b821",
-    "wish-diff-dark.png": "44522e83f793bf70a97e1b60e96be17a769fc8171f32f3c20cd27c9cd650df5b",
-    "wish-diff.png": "0d4764a374656e289ac254a99ebf38ddf9693deaf741c052c10bd13d392b693d"
+    "pocket-home-dark.png": "cf260edc9a33295d7a7dafeecd3437484bce7a5a9e927c7221ebc0a3a3172eca",
+    "pocket-home-light.png": "b5d05caf8f99ce368e991195eb13caa01246f4a83f934e351f2908432e4d2bba",
+    "team-step-dark.png": "f3e87a69da039ce70cd5da1e1e3f272bfe16879dd549d8e1841e597eb49cfd5e",
+    "team-step.png": "5b3bad41d5489bd63a479fe0f1dabbecbe323b13d81bff075256e6877a9d4bd6",
+    "wish-checks-dark.png": "da29c3eccc672abaa5b1fdc7129270370eb61d00e9b891498970972bac6fa9af",
+    "wish-checks-phone-dark.png": "a2a7f96de280a394d2b2f906e2f91ef7b564e1440c94e19d9d432ceb9f301683",
+    "wish-checks-phone.png": "21f8b435b2c6f4b353bdd1cc9a2141cdef3e4cb0e774561b7b165704a67bf89a",
+    "wish-checks.png": "85acaf040d219907ea970fa2f32f276dadd4e80585f34ca7a1f9d02a569bd44e",
+    "wish-diff-dark.png": "13dbaa4d2926ea2b8f484015bbd30244006afd3842d0c209e8af1ec9d09a9fda",
+    "wish-diff.png": "26cc3a0c2b7ad52b298a9d9da3bf299e8f6ba522f7ca87d240d1ba4cbf29aa52"
   },
   "additionalCaptures": {
     "code-sidebar.png": {
@@ -71,14 +71,14 @@
     "capturedBy": "node apps/landing/capture/theme.mjs --run",
     "runtime": {
       "package": "@deepseek-ai/dsh",
-      "version": "0.2.2-rc.1"
+      "version": "0.2.2-rc.2"
     },
     "plugin": {
-      "version": "3.127.14",
+      "version": "3.135.0",
       "repository": "https://github.com/automagik-si/automagik",
-      "commit": "c57acbed50e96593dda4197cd6e2af37e2cc5778",
+      "commit": "aabe26a1200adf2dcac502f1ab93657ae4cd815e",
       "path": "apps/bots-dsh",
-      "tree": "11e8aacb41c98c2fc10a5def2f4aea729a26e6ec"
+      "tree": "01812e76048fd05def0df392654bb533d53da6d1"
     },
     "scenario": "Fictional Pip, Rowan and Sage created through the real Bot API. No AI model, channel, messages or work result is simulated. The real app shows its model connection prompt.",
     "themeSource": "apps/bots-dsh/src/client/stage.js",
@@ -128,12 +128,12 @@
   },
   "pocketCapture": {
     "capturedBy": "apps/landing/capture/pocket/PocketDemoShotsTest.kt (Robolectric, steps in assets/CAPTURES.md)",
-    "checkout": "9777efcabbef89cf1d97e4528089c7e88e2ef620",
+    "checkout": "565fc59d2dd2332f23dae1682fa6db7aa94488c6",
     "scratchOnly": "local.properties with the SDK path; pocket.updateUrl set to a closed loopback address so the updater made no request",
     "app": {
       "path": "apps/pocket/android",
       "applicationId": "ai.namastex.automagik",
-      "version": "3.127.14"
+      "version": "3.135.0"
     },
     "renderer": {
       "robolectric": "4.14.1",
@@ -151,6 +151,6 @@
       "pocket-home-dark.png",
       "pocket-home-light.png"
     ],
-    "checkoutNote": "apps/pocket is unchanged between this checkout and the one the app captures above record."
+    "checkoutNote": "The same checkout as the app captures above. The Genie pet is the sheet in apps/bots-dsh/src/host/pets/genie-clay at this checkout, which the app's build bundles."
   }
 }

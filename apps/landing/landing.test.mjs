@@ -173,7 +173,10 @@ test('images are reviewed brand assets, unchanged captures or recorded crops of 
     assert.ok(captures.includes(file), file)
   }
   assert.equal(manifest.captureScriptsClean, true)
-  assert.equal(manifest.themeCapture.runtime.version, '0.2.2-rc.1')
+  // One capture set: the theme pictures come from the same runtime and Bot team release as the rest.
+  assert.equal(manifest.runtime.version, '0.2.2-rc.2')
+  assert.deepEqual(manifest.themeCapture.runtime, manifest.runtime)
+  assert.deepEqual(manifest.themeCapture.plugin, manifest.plugins['@automagik/bots-dsh'])
   assert.equal(manifest.themeCapture.reports.length, 4)
   assert.deepEqual(manifest.pocketCapture.images.toSorted(), files.filter(file => file.startsWith('pocket-')))
   assert.ok(existsSync(resolve(root, 'capture/pocket/PocketDemoShotsTest.kt')))
