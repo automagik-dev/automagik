@@ -113,13 +113,18 @@ try {
         const unsized = [...document.images].filter(image => !image.getAttribute('width') || !image.getAttribute('height')).map(image => image.src)
         const themed = [...document.querySelectorAll('picture')].filter(picture => picture.querySelector('source[media*="prefers-color-scheme: dark"]')).map(picture => picture.querySelector('img').currentSrc.replace(location.origin, ''))
         const box = selector => { const node = document.querySelector(selector); return node ? node.getBoundingClientRect().toJSON() : null }
-        // The official seal: its own size, and how much room each side keeps free of other things.
-        const sealBox = document.querySelector('.footer-open > a svg').getBoundingClientRect()
-        const near = [...document.querySelectorAll('.footer-open-copy, .site-footer nav, .footer-brand')].map(node => node.getBoundingClientRect())
-        const gap = (a, b) => Math.max(b.left - a.right, a.left - b.right, b.top - a.bottom, a.top - b.bottom)
-        const footerBox = document.querySelector('.site-footer').getBoundingClientRect()
-        const seal = { width: sealBox.width, height: sealBox.height, clear: Math.min(sealBox.left, innerWidth - sealBox.right, footerBox.bottom - sealBox.bottom, ...near.map(box => gap(sealBox, box))) }
-        return { seal, brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)), themed, bubble: box('.bubble'), heroWindow: box('.scene-window img') }
+        // The Open Intelligence tag in the footer: its size, its colour, where it sits in the
+        // footer's last row, what its link holds, and the logo it sits with.
+        const tagLink = document.querySelector('.footer-end > .oi-tag'), tagBox = tagLink.querySelector('svg').getBoundingClientRect()
+        const row = document.querySelector('.footer-end').getBoundingClientRect(), licence = document.querySelector('.footer-license').getBoundingClientRect()
+        const tag = {
+          width: tagBox.width, height: tagBox.height, left: Math.round(tagBox.left - row.left), right: Math.round(row.right - tagBox.right),
+          beside: tagBox.top < licence.bottom && tagBox.bottom > licence.top, under: tagBox.top >= licence.bottom,
+          colour: getComputedStyle(tagLink.querySelector('text')).fill, text: getComputedStyle(document.querySelector('.site-footer nav a')).color,
+          holds: [...tagLink.childNodes].map(node => node.nodeName), href: tagLink.href, words: tagLink.querySelector('text').textContent,
+          font: document.fonts.check('600 18px "IBM Plex Mono"'), logo: document.querySelector('.footer-brand .brand img').getBoundingClientRect().width,
+        }
+        return { tag, brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)), themed, bubble: box('.bubble'), heroWindow: box('.scene-window img') }
       })
       await page.keyboard.press('Tab')
       const focus = await page.evaluate(() => ({ skip: document.activeElement?.classList.contains('skip'), outline: getComputedStyle(document.activeElement).outlineStyle }))
@@ -128,8 +133,11 @@ try {
       const label = `${route} ${colorScheme} ${width}px`
       assert.deepEqual(layout.brokenWords, [], `A heading word breaks across lines: ${label}`)
       assert.deepEqual(layout.unsized, [], `Images without width/height: ${label}`)
-      assert.ok(layout.seal.width >= 84 && layout.seal.width === layout.seal.height && layout.seal.clear >= layout.seal.width / 4, `The Open Intelligence seal is 84 px or larger with a quarter of its width clear: ${label} ${JSON.stringify(layout.seal)}`)
-      assert.deepEqual(layout.themed.filter(source => /(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg)$/.test(source) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
+      assert.ok(layout.tag.width === 170 && layout.tag.height === 32 && layout.tag.colour === layout.tag.text && layout.tag.font && layout.tag.words === 'OPEN INTELLIGENCE', `The Open Intelligence tag is 170 by 32 px, in the footer's text colour and its own type: ${label} ${JSON.stringify(layout.tag)}`)
+      assert.ok(layout.tag.holds.length === 1 && layout.tag.holds[0] === 'svg' && layout.tag.href === 'https://weunfold.ai/', `The tag's link holds nothing but the tag: ${label} ${JSON.stringify(layout.tag.holds)}`)
+      assert.ok(width > 700 ? layout.tag.right === 0 && layout.tag.beside : layout.tag.left === 0 && layout.tag.under, `The tag ends the footer's last row on a wide screen and sits under it, at the left, on a phone: ${label} ${JSON.stringify(layout.tag)}`)
+      assert.ok(layout.tag.logo * 676 / 902 >= layout.tag.width, `The tag is never bigger than the logo's word: ${label} ${layout.tag.logo}`)
+      assert.deepEqual(layout.themed.filter(source => /(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg|\/automagik-lockup-oi-cream\.svg)$/.test(source) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
       if (route === '/') {
         assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)
         assert.ok(layout.bubble.bottom <= layout.heroWindow.top && layout.bubble.left >= 0 && layout.bubble.right <= width, `The speech bubble stays off the app window: ${label} ${JSON.stringify([layout.bubble, layout.heroWindow])}`)

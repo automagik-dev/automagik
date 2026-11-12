@@ -17,7 +17,7 @@ const artFiles = JSON.parse(await readFile(new URL('../assets/art/manifest.json'
 // WE UNFOLD: the one place for its link and wording. The owner approves both lines before the
 // site goes live; change them here and regenerate. Rules from the we unfold team: "Open
 // Intelligence" always with both capitals and never shortened; "we unfold" in lower case in
-// running text; "part of" is the movement, not ownership; no logo, the text is the link.
+// running text; "part of" is the movement, not ownership; in a sentence the text is the link.
 export const weUnfold = {
   url: 'https://weunfold.ai/',
   name: 'we unfold',
@@ -38,6 +38,9 @@ export const arca = {
 // at the same paths). Arca's rules: one colour (ink on its sand ground in light, ivory on
 // its night ground in dark), never redrawn, tinted, animated or locked up with another mark.
 const arcaMark = place => `<span class="arca-mark at-${place}"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/arca/svg/arca-icon-ivory.svg"><img src="/assets/brand/arca/svg/arca-icon-ink.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"></picture></span>`
+// THE OFFICIAL LOCKUP: shown once, on the home page's brand block, never in the header,
+// the hero, the favicon or a share picture.
+const lockup = '/assets/brand/automagik/automagik-lockup-oi'
 const licensing = 'Automagik, Genie and Omni are free and open source (Apache-2.0). Cloud will be a private, paid service; its contracts are public.'
 const arrow = '<span aria-hidden="true">→</span>'
 const down = '<span aria-hidden="true">↓</span>'
@@ -117,13 +120,15 @@ const icon = {
 const glyph = (name, cls = 'glyph') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon[name]}</svg>`
 const brand = '<a class="brand" href="/" aria-label="Automagik home"><img src="/assets/brand/lockup.webp" width="170" height="36" alt="Automagik"></a>'
 const entry = route => ({ href, name, line, image, mark, glyph: sign, external }) => `<li><a class="menu-item" href="${href}"${href === route ? ' aria-current="page"' : ''}><span class="menu-icon">${image ? art(image, '', { cls: 'menu-art' }) : mark ?? glyph(sign)}</span><span class="menu-text"><strong>${name}${external ? ` ${out}` : ''}</strong><span>${line}</span></span></a></li>`
-// OPEN INTELLIGENCE SEAL: we unfold's official site embed, pasted as given from
-// assets/brand/open-intelligence/ (plain inline SVG, words in the page's text colour, its own
-// link and title). Never change its words, ring weights or the mark's position; 84 px or
-// larger; a quarter of its width kept clear on every side. It marks the part built in the
-// open, so it sits by the Apache-2.0 line, with "Support Open Intelligence" beside it as
-// link text, never drawn into the seal.
-export const seal = readFileSync(new URL('../assets/brand/open-intelligence/site-seal-full-colour.snippet.html', import.meta.url), 'utf8').trim()
+// OPEN INTELLIGENCE TAG: we unfold's horizontal tag, the only Open Intelligence mark this
+// site uses, applied the way Arca's site applies it. The file is pasted inline as given
+// (assets/brand/open-intelligence/, one colour, the text colour around it; its words are live
+// text in IBM Plex Mono SemiBold, which the stylesheet loads). In the footer it is 170 by
+// 32 px and is a link to we unfold that holds nothing but the tag: no words in the link and
+// no sentence beside it. Never redrawn, stretched, outlined, shadowed or recoloured; never
+// bigger than the logo it sits with. The official lockup (the logo with the tag under it) is
+// built by scripts/build-lockup.mjs into assets/brand/automagik/.
+export const oiTag = readFileSync(new URL('../assets/brand/open-intelligence/open-intelligence-tag.svg', import.meta.url), 'utf8').trim()
 // Menus without client scripting: each button opens its panel through the browser's own
 // popover. The browser keeps the button's expanded state, closes the panel on Escape or a
 // click outside, and returns focus to the button. Hover opens the same panel in CSS. On a
@@ -146,7 +151,7 @@ function header(route) {
 function footer(route) {
   const column = (label, items) => `<nav aria-label="${label}"><p class="footer-head">${label}</p>${items.map(({ href, name, external }) => `<a href="${href}"${href === route ? ' aria-current="page"' : ''}>${name}${external ? ` ${out}` : ''}</a>`).join('')}</nav>`
   // The one link to the repository on a page is the quiet one at the end of the footer.
-  return `<footer class="site-footer"><div id="sitemap" class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p><p class="footer-part">${partOf()}</p></div>${column('Products', products)}${column('Resources', resources)}${column('Company', company)}<div class="footer-open">${seal}<div class="footer-open-copy"><p class="footer-open-label"><a href="${weUnfold.url}">Support Open Intelligence ${out}</a></p><p class="footer-license">${licensing} <a href="${repo}">Source code ${out}</a></p></div></div></div></footer>`
+  return `<footer class="site-footer"><div id="sitemap" class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p><p class="footer-part">${partOf()}</p></div>${column('Products', products)}${column('Resources', resources)}${column('Company', company)}<div class="footer-end"><p class="footer-license">${licensing} <a href="${repo}">Source code ${out}</a></p><a class="oi-tag" href="${weUnfold.url}">${oiTag}</a></div></div></footer>`
 }
 // Every product page says where it is and leads back to all products.
 function crumbs(route) {
@@ -195,7 +200,8 @@ export function pages() {
 </div>
 <div class="also"><p class="also-label">Also on the way</p><article class="product-card"><h3><a href="/mykes/">Mykes</a></h3><p>Coming soon.</p></article></div></section>
 <section class="wrap open" aria-labelledby="open-title"><div class="open-copy"><h2 id="open-title" class="open-line">${openLine}</h2><p class="open-part">${partOf()}</p></div></section>
-<section id="film" class="made wrap" aria-labelledby="made-title"><div class="made-copy"><p class="eyebrow">Made by this team</p><h2 id="made-title">From inside Automagik.</h2><p>This page began as Genie’s draft, in a group chat with our launch team.</p></div><figure class="film-still" data-film="placeholder">${art('team-step', 'The Automagik app’s team step, recorded: Pip leads, Omni sleeps until powered on, and Genie is ready for a wish.', { dark: true })}<figcaption><strong>A short film is coming.</strong> It shows our launch team at work.</figcaption></figure></section>`
+<section id="film" class="made wrap" aria-labelledby="made-title"><div class="made-copy"><p class="eyebrow">Made by this team</p><h2 id="made-title">From inside Automagik.</h2><p>This page began as Genie’s draft, in a group chat with our launch team.</p></div><figure class="film-still" data-film="placeholder">${art('team-step', 'The Automagik app’s team step, recorded: Pip leads, Omni sleeps until powered on, and Genie is ready for a wish.', { dark: true })}<figcaption><strong>A short film is coming.</strong> It shows our launch team at work.</figcaption></figure></section>
+<section id="brand" class="wrap kit" aria-labelledby="kit-title"><figure class="kit-logo"><picture><source media="(prefers-color-scheme: dark)" srcset="${lockup}-cream.svg"><img src="${lockup}-ink.svg" width="902" height="340" alt="The Automagik logo, with the Open Intelligence tag under it at the right" loading="lazy" decoding="async"></picture></figure><div class="kit-copy"><p class="eyebrow">Brand</p><h2 id="kit-title">The Automagik logo</h2><p>The official logo, for print and press. Use it as it is.</p><dl class="kit-files"><div><dt>For light grounds</dt><dd><a href="${lockup}-ink.svg" download>SVG ${down}</a><a href="${lockup}-ink.png" download>PNG ${down}</a></dd></div><div><dt>For dark grounds</dt><dd><a href="${lockup}-cream.svg" download>SVG ${down}</a><a href="${lockup}-cream.png" download>PNG ${down}</a></dd></div></dl></div></section>`
 
   const desktop = `<section class="hero split-hero desktop-hero"><div class="wrap split"><div class="hero-heading">${art('app-icon', '', { cls: 'hero-icon', eager: true })}${heading('Your team, at your desk', 'Automagik Desktop', 'Bots that stay, each with its own name, role, model and memory. Talk with them, hand work over and keep the decisions that matter.')}<div id="install" class="distribution"><a class="button primary" href="${mac}">Download for Mac ${down}</a><a class="button secondary" href="${linux}">Download for Linux ${down}</a><div class="unavailable"><strong>Download for Windows</strong><span>Soon</span></div></div><p class="fine">Mac with Apple silicon, macOS 13 or newer. Linux on a 64-bit PC.</p></div></div>
 <div class="wrap stage-frame">${constellation()}<figure class="window wide-window">${art('app-review', 'The real Automagik app: a fictional team in the sidebar, a finished wish’s report with its four edited files, and the new file open for review.', { dark: true, narrow: 'thread-phone', sizes: '(max-width: 700px) 92vw, (max-width: 1100px) 92vw, 1040px', eager: true })}</figure></div><p class="wrap caption">The real app, with a fictional team and project. The AI’s replies are scripted; the commands, tests and file changes are real.</p></section>

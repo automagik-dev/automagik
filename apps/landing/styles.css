@@ -213,6 +213,17 @@ body:has(.drawer:popover-open) :is(main,.site-footer,.skip){visibility:hidden}
 .made{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.9fr);gap:clamp(28px,5vw,72px);align-items:center;padding-block:clamp(40px,5vw,72px) clamp(64px,8vw,112px)}
 .made-copy p:not(.eyebrow){color:var(--muted);margin-top:16px;max-width:48ch}
 .film-still{max-width:500px;justify-self:end;width:100%}
+/* The brand block: the official lockup, shown once, on paper, with its files. It holds still. */
+.kit{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1fr);gap:clamp(28px,5vw,72px);align-items:center;padding-block:0 clamp(64px,8vw,112px)}
+.kit-logo{display:grid;place-items:center;padding:clamp(28px,5vw,56px);border-radius:var(--radius);background:var(--paper);border:1px solid var(--line)}
+.kit-logo img{width:min(100%,420px)}
+.kit-copy h2{font-size:clamp(1.5rem,1.1rem + 1.2vw,2rem)}
+.kit-copy>p:not(.eyebrow){margin-top:12px;color:var(--muted);max-width:44ch}
+.kit-files{display:grid;gap:10px;margin:22px 0 0;font-size:.94rem}
+.kit-files>div{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px}
+.kit-files dt{min-width:9.5em;color:var(--muted)}
+.kit-files dd{display:flex;gap:18px;margin:0}
+.kit-files a{font:700 .94rem/1.4 var(--head);color:var(--accent)}
 .film-still img{width:100%;border-radius:22px;border:1px solid var(--line);box-shadow:var(--st-lift)}
 .film-still figcaption{margin-top:14px;font-size:.92rem;color:var(--muted)}
 .film-still strong{color:var(--text);font-weight:700}
@@ -395,16 +406,17 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .footer-head{font:800 .7rem/1.5 var(--head);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
 .footer-brand .footer-part{margin-top:10px;max-width:34ch}
 .footer-part a{color:var(--text);font-weight:600}
-/* The part built in the open: we unfold's official seal, as given, beside the licence line.
-   A quarter of the seal's width stays clear on every side. */
-.footer-open{grid-column:1/-1;display:flex;align-items:center;gap:24px;padding-top:26px;border-top:1px solid var(--line);color:var(--text)}
-.footer-open>a{flex:none;margin-left:max(0px,24px - var(--gutter))}
-.footer-open>a:focus-visible{border-radius:50%}
-@media (max-width:520px){.footer-open{flex-direction:column;align-items:flex-start}}
-.footer-open-label{font:800 .94rem/1.3 var(--head);letter-spacing:-.01em}
-.footer-open-label a{text-decoration:none}
-.footer-open-label a:hover{text-decoration:underline}
-.footer-license{margin-top:6px;font-size:.84rem;color:var(--muted);max-width:76ch}
+/* Open Intelligence, as Arca's site applies it: we unfold's horizontal tag at 170 by 32 px, in
+   the footer's text colour, at the right end of the footer's last row (under it, at the
+   left, on a phone). The link holds nothing but the tag. It is never bigger than the logo
+   it sits with, so the footer's logo is wide enough for its word alone to pass 170 px. */
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:block;src:url("assets/brand/ibm-plex-mono-latin-600.woff2") format("woff2")}
+.footer-brand .brand img{width:228px}
+.footer-end{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:22px 48px;padding-top:26px;border-top:1px solid var(--line)}
+.oi-tag,.oi-tag:hover{flex:none;display:block;border-radius:16px;color:var(--text)}
+.oi-tag svg{width:170px;height:32px;max-width:none}
+@media (max-width:700px){.footer-end{flex-direction:column;align-items:flex-start}}
+.footer-license{font-size:.84rem;color:var(--muted);max-width:76ch}
 .footer-license a{color:inherit;white-space:nowrap}
 
 /* Function responses (registration, confirmation) share the frame */
@@ -433,7 +445,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .footer-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
   .footer-brand{grid-column:1/-1}
   [data-block="cloud"],[data-block="arca"]{grid-column:span 6}
-  .split,.pair-card,.close,.omni-story,.made,.form-section{grid-template-columns:minmax(0,1fr)}
+  .split,.pair-card,.close,.omni-story,.made,.kit,.form-section{grid-template-columns:minmax(0,1fr)}
   .pair-notes{padding:24px 0 0;border-left:0;border-top:1px solid var(--line)}
   .form-intro{position:static}
   .film-still{justify-self:start}
