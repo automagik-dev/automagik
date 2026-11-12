@@ -1788,6 +1788,21 @@ export function install(rt) {
     return () => clearTimeout(timer)
   }, 'ds-bot: hand on input kept in earlier parts')
 
+  // An archive from DSH's own Session list while the team runs: DSH asks for the
+  // Session's activity (plain archive) or stops it (stopActivity) inside the archive,
+  // so an unarchive started here queues behind that archive and undoes it. The team's
+  // own archives drop the Session from its owner first.
+  const keepCurrent = ({ sessionId }) => {
+    if (readOnly() || !(rt.chatOwners.has(sessionId) || rt.groupOwners.has(sessionId) || rt.roomOf(sessionId) !== undefined)) return
+    void ctx.workspaceRegistry.unarchiveSession(sessionId)
+      .catch(error => rt.warn('ds-bot: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
+  }
+  ctx.on('workspace/session-stop', keepCurrent)
+  ctx.on('workspace/session-activity', (request, next) => {
+    keepCurrent(request)
+    return next()
+  })
+
   ctx.on('agent/status', ({ agent, status }) => {
     agents.set(agent.id, agent)
     if (status === 'idle' && rt.isBotSession(agent.id) && !nativeDshSession(agent.id)) {
