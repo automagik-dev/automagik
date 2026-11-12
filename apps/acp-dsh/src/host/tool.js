@@ -338,15 +338,20 @@ async function ask(host, live, tool, exec, permission) {
   try { if (reviewHolds(host, live, tool, exec, permission, record)) return 'allowed-once' } catch {}
   const asking = tool.permission?.title
   const reason = `${live.name}: ${asking && asking !== tool.title ? `${asking.replace(/\?$/, '')}: ` : ''}${tool.title}`
+  let mirrorCall
   try {
     const { title, kind, input, locations } = callArguments(tool)
     // Plain JSON: DSH passes an approval nobody here answers on to its remote approval card only as lossless JSON (dsh-api-gateway
     // projectRemoteEventRequest), and a member left undefined (`locations` of a call that has none) fails that dispatch: the call
     // would be cancelled with no card.
-    const mirrorCall = JSON.parse(JSON.stringify({ title, kind, input, locations, allowOnce: tool.permission?.options?.some(option => option.kind === 'allow_once') === true }))
-    const outcome = await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal, mirrorCall })
+    mirrorCall = JSON.parse(JSON.stringify({ title, kind, input, locations, allowOnce: tool.permission?.options?.some(option => option.kind === 'allow_once') === true }))
+  } catch {
+    // Unreadable call details leave the question for the person.
+  }
+  try {
+    const outcome = await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal, ...(mirrorCall === undefined ? {} : { mirrorCall }) })
     // Auto's judge refused it (bots-dsh auto-judge.js sets `mirrorCall.judged`): the call's result says so (section 4).
-    tool.judgeReason = outcome === 'rejected' && typeof mirrorCall.judged?.reason === 'string' ? mirrorCall.judged.reason : undefined
+    tool.judgeReason = outcome === 'rejected' && typeof mirrorCall?.judged?.reason === 'string' ? mirrorCall.judged.reason : undefined
     return outcome
   } catch {
     return 'unavailable'

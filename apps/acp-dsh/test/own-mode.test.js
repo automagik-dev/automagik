@@ -545,6 +545,14 @@ for (const locations of [[], [{ path: 'x' }]]) test(`mirror approval requests ar
   if (locations.length) assert.deepEqual(seen.mirrorCall.locations, [{ path: 'x' }])
   else assert.equal(Object.hasOwn(seen.mirrorCall, 'locations'), false)
 })
+test('a mirror question with an unreadable location still asks the person', async () => {
+  let asks = 0
+  const { seen, tool } = await mirrorAsk({ locations: [null], answer: async () => { asks++; return 'allowed-once' } })
+  assert.equal(asks, 1)
+  assert.equal(Object.hasOwn(seen, 'mirrorCall'), false)
+  assert.equal(remoteJson(seen), true)
+  assert.deepEqual(tool.answered, { outcome: { outcome: 'selected', optionId: 'yes' } })
+})
 for (const [name, title, judged] of [['judged', 'Run echo x', true], ['plain', 'Run echo x', false], ['judged image', 'generate_image x', true]]) test(`a mirror refusal names Auto's judge only when it refused: ${name}`, async () => {
   const { result, tool } = await mirrorAsk({ title, answer: async request => { if (judged) request.mirrorCall.judged = { reason: 'not needed' }; return 'rejected' } })
   assert.deepEqual(tool.answered, { outcome: { outcome: 'selected', optionId: 'no' } })
