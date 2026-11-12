@@ -6215,8 +6215,8 @@ async function cmdWorker(opts, rest) {
     if (runPath?.note) warnings.push(runPath.note);
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
-    // #1125: a Codex worker may write its worktree's git common dir (the main checkout's .git),
-    // herdr-core's folders and the tool caches, resolved from the worktree it runs in.
+    // #1125: a Codex worker may write its worktree's own git dir and git common dir (the main
+    // checkout's .git), herdr-core's folders and the tool caches, resolved from the worktree it runs in.
     workerArgv = plan.agent === "codex" ? withCodexGrants(launchArgv, await localCodexGrants(place.worktree)) : launchArgv;
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: workerArgv, session, task, template: plan.template,
