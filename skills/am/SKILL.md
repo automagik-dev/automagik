@@ -110,10 +110,12 @@ down across restarts, run `am detach <bot>`.
 
 ## Install
 
-```sh
-am self install   # install this copy of am and link am and automagik-herdr
-am self doctor    # check those links
-```
+The Herdr pack's installer (`herdr/install.sh`, the Herdr README's install line) links `am` and
+`automagik-herdr` into `~/.local/bin`. That `am` runs the Bot, worker and revive commands on this page; `am self` and `am rollback
+automagik.am` need am's own part.
+
+am's own part (`am self install`, `am self doctor`) comes from an unpacked am release
+(`automagik-am-<version>.tgz`): run `sh <that folder>/bin/am self install`, then `am self doctor`.
 
 ## Update and roll back
 
