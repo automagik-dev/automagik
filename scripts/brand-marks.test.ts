@@ -1,6 +1,8 @@
 // docs/brand's rules on marks, where agents read them: the triskle is Automagik's alone, the
-// Genie and Omni lockups are retired and stay as files, and a product shows as its word.
+// Genie and Omni lockups that carry it are retired and stay as files, and Genie, Omni and Mykes
+// each show with their own approved mark, whose files are byte copies of the handed-over ones.
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 
 const at = (path: string) => new URL(`../${path}`, import.meta.url)
@@ -40,10 +42,22 @@ describe("docs/brand's marks", () => {
     }
   })
 
-  test('"Which logo file" sends Genie and Omni to their word, and to a lockup only to say it is retired', () => {
+  test('"Which logo file" sends each product to its own lockup, and to a triskle lockup only to say it is retired', () => {
     for (const row of rows) if (/(genie|omni|mykes)-lockup/.test(row)) expect(row).toContain('RETIRED')
     const row = (start: string) => rows.find(line => line.startsWith(`| ${start} |`)) ?? ''
-    for (const name of ['genie', 'omni']) expect(row('Genie or Omni')).toContain(`\`logo/wordmark/${name}-wordmark-ink.svg\``)
+    expect(row('Genie')).toContain('`logo/lockups/genie-lamp-lockup-ink.svg`')
+    expect(row('Omni, in a header or anywhere under about 56px high')).toContain('`logo/lockups/omni-mark-lockup-ink-header.svg`')
+    expect(row('Omni, 56px high or more')).toContain('`logo/lockups/omni-mark-lockup-ink.svg`')
+    expect(row('Mykes')).toContain('`logo/lockups/mykes-clean-lockup-ink.svg`')
+    expect(row("Omni's mark alone under about 56px")).toContain('`logo/svg/omni-mark-ink-32.svg`')
+    for (const mark of ['genie-lamp', 'omni-mark', 'mykes-clean']) {
+      expect(row("Genie's, Omni's or Mykes's mark alone")).toContain(`\`logo/svg/${mark}-ink.svg\``)
+    }
+    // Every file the table names is here.
+    for (const [, path] of rows.join('\n').matchAll(/`((?:logo|favicon)\/[^`*<]+\.(?:svg|ico|png))`/g)) {
+      expect([path, existsSync(at(`docs/brand/${path}`))]).toEqual([path, true])
+    }
+    for (const name of ['genie', 'omni']) expect(row("Genie's or Omni's name without the mark")).toContain(`\`logo/wordmark/${name}-wordmark-ink.svg\``)
     for (const name of ['genie', 'omni']) {
       for (const tone of ['ink', 'cream']) {
         const file = `docs/brand/logo/wordmark/${name}-wordmark-${tone}.svg`
@@ -52,11 +66,69 @@ describe("docs/brand's marks", () => {
     }
   })
 
-  test('the two later rules are written: a flat one-colour mark, and the word until a mark is approved', () => {
+  test('the two later rules are written: a flat one-colour mark, approved for the three, and a product with its own mark', () => {
     expect(rules).toContain("9. **Every mark that is not Automagik's is flat and one colour.** The sparkle of its word is its only colour")
-    expect(rules).toContain('10. **Until the owner approves its mark, a product shows as its word.** Genie, Omni and Mykes each appear as the name')
+    expect(rules).toContain("Genie's mark is a flat lamp, Omni's is a tentacle vortex and Mykes's is the cords")
+    expect(rules).toContain('The owner approved the lamp and the vortex on 12 November 2026 and confirmed it on 13 November 2026, in his words: "Yes, I approved them".')
+    expect(rules).toContain('the owner picked the redrawn Mykes drawing on 13 November 2026. None carries the triskle.')
+    expect(rules).toContain('10. **A product shows as its own mark with its word.** Genie, Omni and Mykes each have a lockup')
+    expect(rules).toContain('ended for the three with the approval in rule 9')
     expect(rules).toContain('the plain words "Coming soon." stand')
-    expect(flat(SKILL)).toContain('Genie, Omni and Mykes each show as their word')
+    expect(rules).toContain('never the triskle, never a pet, never another drawing')
+    // The word-only rule is gone from every place an agent reads.
+    for (const path of [README, LOGO, SKILL]) {
+      for (const old of ['Until the owner approves its mark', 'show as their word', 'a product shows as its word', 'with no mark beside it', 'None is approved', 'neither is drawn or approved']) {
+        expect([path, old, flat(path).includes(old)]).toEqual([path, old, false])
+      }
+    }
+    expect(flat(SKILL)).toContain('Genie, Omni and Mykes each have their own mark: a flat lamp, a tentacle vortex, the cords.')
+    // No text an agent reads calls Mykes's mark the other drawing, except to say that one is not here.
+    for (const path of [README, SKILL]) expect([path, /clean forks|forks/i.test(read(path))]).toEqual([path, false])
+    expect(read(LOGO).split('\n').filter(line => /forks/i.test(line))).toEqual([expect.stringContaining('("clean forks", 219.77 wide), which is not here')])
     expect(flat(SKILL)).toContain('flat and one colour, with its word\'s sparkle as the only colour')
+  })
+
+  test("Genie's, Omni's and Mykes's files are byte copies: each has the sha256 the logo note records", () => {
+    const record = section(read(LOGO), "Where Genie's, Omni's and Mykes's files came from")
+    const listed = [...record.matchAll(/^\| `((?:svg|lockups)\/[^`]+\.svg)` \| `[^`]+` \| `([0-9a-f]{64})` \|$/gm)]
+    expect(listed.map(([, path]) => path).sort()).toEqual(
+      [
+        ...['genie-lamp', 'omni-mark', 'mykes-clean'].flatMap(mark => ['ink', 'cream'].flatMap(tone => [`svg/${mark}-${tone}.svg`, `lockups/${mark}-lockup-${tone}.svg`])),
+        ...['ink', 'cream'].flatMap(tone => [`svg/omni-mark-${tone}-32.svg`, `lockups/omni-mark-lockup-${tone}-header.svg`]),
+      ].sort(),
+    )
+    for (const [, path, sha256] of listed) {
+      const bytes = readFileSync(at(`docs/brand/logo/${path}`))
+      expect([path, createHash('sha256').update(bytes).digest('hex')]).toEqual([path, sha256])
+    }
+  })
+
+  test("Mykes's mark is the redrawn drawing the owner picked: its frame is 219.93 wide and its outline has straight lines", () => {
+    for (const tone of ['ink', 'cream']) {
+      const svg = read(`docs/brand/logo/svg/mykes-clean-${tone}.svg`)
+      const outline = / d="([^"]+)"/.exec(svg)?.[1] ?? ''
+      expect([tone, /viewBox="([^"]+)"/.exec(svg)?.[1], outline.match(/L/g)?.length]).toEqual([tone, '0 -186.24 219.93 222.42', 24])
+    }
+  })
+
+  test('each of the three marks is one flat shape in one colour, and its lockup adds only the sparkle and never the triskle', () => {
+    const tones = { ink: '#3c3049', cream: '#f3e9dd' }
+    const sparkle: Record<string, string[]> = { 'genie-lamp': ['#ee5496'], 'omni-mark': ['#15bde0'], 'mykes-clean': [] }
+    const colours = (svg: string) => [...new Set([...svg.matchAll(/(?:fill|stroke|color|stop-color)="([^"]+)"/g)].map(([, value]) => value))].sort()
+    for (const [tone, colour] of Object.entries(tones)) {
+      for (const mark of ['genie-lamp', 'omni-mark', 'mykes-clean']) {
+        for (const size of mark === 'omni-mark' ? ['', '-32'] : ['']) {
+          const svg = read(`docs/brand/logo/svg/${mark}-${tone}${size}.svg`)
+          expect([mark, tone, size, colours(svg), svg.match(/<path/g)?.length]).toEqual([mark, tone, size, [colour], 1])
+          expect(/<(mask|filter|linearGradient|radialGradient|image|script|use)\b|opacity/.test(svg)).toBe(false)
+        }
+        for (const size of mark === 'omni-mark' ? ['', '-header'] : ['']) {
+          const svg = read(`docs/brand/logo/lockups/${mark}-lockup-${tone}${size}.svg`)
+          expect([mark, tone, size, colours(svg)]).toEqual([mark, tone, size, [colour, 'currentColor', ...sparkle[mark]].sort()])
+          expect(/<(mask|filter|linearGradient|radialGradient|image|script|use)\b|opacity/.test(svg)).toBe(false)
+          expect(/viewBox="0 -186 [0-9.]+ 264"/.test(svg)).toBe(true)
+        }
+      }
+    }
   })
 })

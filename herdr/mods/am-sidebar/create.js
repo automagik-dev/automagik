@@ -595,7 +595,7 @@ export class BotForm {
     if (section === "inspect" && !this.history) {
       cx.spawn(async (cx) => {
         const r = await runCli(["history", this.p.bot, "--project", this.p.project]);
-        this.history = r.code === 0 && r.out ? r.out : { error: r.err || `automagik-herdr history failed (exit ${r.code}).` };
+        this.history = r.code === 0 && r.out ? r.out : { error: r.err || `am history failed (exit ${r.code}).` };
         cx.notify();
       });
     }
@@ -688,7 +688,7 @@ export class BotForm {
     cx.spawn(async (cx) => {
       const r = await runCli(["detach", this.p.bot, "--project", this.p.project, ...(this.machine ? ["--machine", this.machine] : [])]);
       this.busy = false;
-      if (r.code !== 0) this.error = r.err || `automagik-herdr detach failed (exit ${r.code}).`;
+      if (r.code !== 0) this.error = r.err || `am detach failed (exit ${r.code}).`;
       else { run("am-sidebar.refresh"); closeOverlay(this.p.overlay); }
       cx.notify();
     });
@@ -1167,14 +1167,18 @@ export class BotForm {
           .child("Optional; the pane's role= label. The main bot is role=main, and a bot others report to is captain, automatically.")));
   }
 
+  booleanToggle(t, id, on, label, field) {
+    return h_flex().id(id).w(34).h(20).flex_none().p(2).rounded_full().cursor_pointer()
+      .bg(on ? t.accent : t.raised).border_1().border_color(on ? t.accent : t.input)
+      .when(on, (el) => el.justify_end()).accessibility_label(label)
+      .on_click((_e, cx) => this.set({ [field]: !on }, cx))
+      .child(div().size(14).rounded_full().bg(on ? t.accent_foreground ?? "#ffffff" : t.muted));
+  }
+
   codeBlock(v) {
     const { t, state } = v;
-    const on = state.code !== false;
-    const toggle = h_flex().id("bot-code").w(34).h(20).flex_none().p(2).rounded_full().cursor_pointer()
-      .bg(on ? t.accent : t.raised).border_1().border_color(on ? t.accent : t.input)
-      .when(on, (el) => el.justify_end()).accessibility_label("Code bot (worker instruction in Git projects)")
-      .on_click((_e, cx) => this.set({ code: !on }, cx))
-      .child(div().size(14).rounded_full().bg(on ? t.accent_foreground ?? "#ffffff" : t.muted));
+    const toggle = this.booleanToggle(t, "bot-code", state.code !== false,
+      "Code bot (worker instruction in Git projects)", "code");
     return v_flex().gap(10).px(12).py(10).rounded(10).border_1().border_color(t.border)
       .bg(t.surface ?? t.background)
       .child(h_flex().gap(10).items_center()
@@ -1192,11 +1196,7 @@ export class BotForm {
     const step = (id, text, label, d) => h_flex().id(id).w(28).h(30).items_center().justify_center().cursor_pointer()
       .text_color(t.foreground).hover((s) => s.bg(t.hover)).accessibility_label(label)
       .on_click((_e, cx) => this.set({ wave: Math.min(top, Math.max(1, state.wave + d)) }, cx)).child(text);
-    const toggle = h_flex().id("bot-planned").w(34).h(20).flex_none().p(2).rounded_full().cursor_pointer()
-      .bg(on ? t.accent : t.raised).border_1().border_color(on ? t.accent : t.input)
-      .when(on, (el) => el.justify_end()).accessibility_label("Planned for a later wave")
-      .on_click((_e, cx) => this.set({ planned: !on }, cx))
-      .child(div().size(14).rounded_full().bg(on ? t.accent_foreground ?? "#ffffff" : t.muted));
+    const toggle = this.booleanToggle(t, "bot-planned", on, "Planned for a later wave", "planned");
     return v_flex().gap(10).px(12).py(10).rounded(10).border_1().when(on, (el) => el.border_dashed()).border_color(t.border)
       .bg(on ? t.background : t.surface ?? t.background)
       .child(h_flex().gap(10).items_center()

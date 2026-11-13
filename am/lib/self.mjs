@@ -427,7 +427,7 @@ export function doctorSelf({ env = process.env, project = process.cwd() } = {}) 
   const store = storeOf(env);
   const record = readRecord(store);
   const line = (check, ok, detail, fix) => ({ part: PART, check, ok, detail, ...(ok ? {} : { fix }) });
-  const lines = [line("restart-path", true, "In a Herdr bot pane, restart the session with automagik-herdr restart <bot> (or am restart <bot>), never /restart.")];
+  const lines = [line("restart-path", true, "In a Herdr bot pane, restart the session with am restart <bot>, never /restart.")];
   const current = join(store, "current");
   const problems = existsSync(current) ? extractProblems(current, record.current?.version) : ["it is not installed"];
   lines.push(line("installed", problems.length === 0, problems.length ? problems.join("; ") : `${record.current?.version} in ${realpathSync(current)}`,

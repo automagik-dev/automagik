@@ -842,18 +842,47 @@ export function ModelLineTail({ turn, sessionId, useRoster, useSessions, actions
     error ? h('div', { className: 'bt-secret-error', role: 'alert' }, error) : null)
 }
 
+// The last turn a chat lists, or null while it has none (a new Bot before its greeting).
+const lastTurnOf = outline => (Array.isArray(outline) && outline.length > 0 ? outline.at(-1)?.turn ?? null : null)
+
 // The card a Bot's chat opens on while the Bot has no model, or has one that is no
 // longer served. A Bot made without a model holds its greeting until it has one: the
 // welcome (@automagik/welcome-dsh) gives the companion and the Omni Bot one once Connect AI
 // succeeds, and here one press starts it on the model it would get.
-export function ModelChoiceDock({ sessionId, useRoster, actions }) {
+//
+// It reads as the Bot's own message, so it stands where a message would (#1138). A chat
+// with no turn yet has no transcript, and the card sits in the dock over the composer. A
+// chat that already holds turns (a Bot that lost its model, a new part under its earlier
+// ones) gets it after its last turn, in the transcript (ModelChoiceTail): the dock is part
+// of the composer's seat, which stays in place while the transcript scrolls, so a card
+// there lay over the last messages of a chat scrolled up.
+export function ModelChoiceDock({ sessionId, useRoster, useSessions, actions }) {
+  const seated = useSessions ? useSessions(list => lastTurnOf(outlineOf(list, sessionId)) !== null) : false
+  const card = useModelChoice({ sessionId, useRoster, actions }, seated)
+  return seated ? null : card
+}
+
+// The same card after the chat's last turn, on that turn's tail.
+export function ModelChoiceTail({ turn, sessionId, useRoster, useSessions, actions }) {
+  const last = useSessions(list => lastTurnOf(outlineOf(list, sessionId)))
+  if (last === null || last !== turn?.turn) return null
+  return h(ModelChoiceSeat, { sessionId, useRoster, actions })
+}
+
+function ModelChoiceSeat(props) {
+  const card = useModelChoice(props, false)
+  return card ? h('div', { className: 'bt-model-seat' }, card) : null
+}
+
+// The card itself, or null when the Bot needs none. `idle`: another place draws it.
+function useModelChoice({ sessionId, useRoster, actions }, idle) {
   const roster = useRoster(value => value)
   const bot = roster.byId[sessionId]
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   // A Bot whose model its plugin picks never waits for a DSH model.
   const hosted = roster.hostModels?.[bot?.id] !== undefined
-  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready && !hosted
+  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready && !hosted && !idle
   useEffect(() => { if (shown) void actions.refreshModels?.() }, [shown, sessionId])
   if (!shown) return null
   const models = roster.models ?? []
@@ -1019,6 +1048,10 @@ export const MODEL_CSS = `${HERMES_MARK_CSS}
 .bt-host-model-status{padding:2px 8px 6px;font-size:12px;line-height:16px;color:var(--bt-ink-2)}
 .bt-host-model-confirm{flex:none;color:var(--bt-accent);font-size:12px;font-weight:600}
 .bt-model-dock{width:100%;max-width:var(--dsh-chat-content-width,748px);margin:0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:0 0 10px;box-sizing:border-box;animation:bt-model-in ${SPRING_POP.duration}ms ${SPRING_POP.easing} backwards}
+/* After the last turn of a transcript the card is one more message: the column's width, and
+   the room a message has above it. */
+.bt-model-seat{margin:6px 0 4px}
+.bt-model-seat>.bt-model-dock{max-width:none;margin:0;padding:0}
 .bt-model-chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:30px;max-width:min(560px,calc(100% - 30px));max-height:min(240px,36vh);max-height:min(240px,36dvh);overflow-y:auto;scrollbar-width:thin}
 .bt-model-choice-group{display:flex;flex-direction:column;gap:6px;width:100%;min-width:0}
 .bt-model-choice-provider{padding-top:4px;font-size:12px;line-height:16px;font-weight:500;color:var(--bt-ink-2);overflow-wrap:anywhere}

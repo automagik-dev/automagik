@@ -586,13 +586,13 @@ function tryLock(lock, w) {
   takeOverStale(lock);
   if (Date.now() > w.start + w.wait) {
     const who = lockHolder(lock);
-    throw new Error(`${w.what ? `${w.what} (${lock})` : lock} is held by another automagik-herdr${who ? ` (${who})` : ""}`
+    throw new Error(`${w.what ? `${w.what} (${lock})` : lock} is held by another am${who ? ` (${who})` : ""}`
       + `${w.noted && w.wait > LOCK_NOTE_AFTER ? ` after ${Math.round(w.wait / 1000)} s` : ""}`);
   }
   if (!w.noted && Date.now() - w.start >= LOCK_NOTE_AFTER) {
     w.noted = true;
-    const who = lockHolder(lock) ?? "another automagik-herdr";
-    const line = `automagik-herdr: waiting for ${w.what ?? lock} (${lock}), held by ${who}; up to ${Math.round(w.wait / 1000)} s in all.\n`;
+    const who = lockHolder(lock) ?? "another am";
+    const line = `am: waiting for ${w.what ?? lock} (${lock}), held by ${who}; up to ${Math.round(w.wait / 1000)} s in all.\n`;
     try { writeSync(2, line); } catch { /* stderr closed */ }
   }
   return false;
@@ -668,7 +668,7 @@ export function listProject(key, dir = appHome()) {
       if (listedProjects(read()).includes(key)) return true;
     } catch (e) { why = e?.message ?? String(e); }
   }
-  process.stderr.write(`automagik-herdr: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${why}\n`);
+  process.stderr.write(`am: couldn't list ${key} in ${path}, so the sidebar shows it only once a space is open on it: ${why}\n`);
   return false;
 }
 
@@ -730,7 +730,7 @@ async function botIn(project, ref, opts) {
 
 function findCategory(file, ref) {
   const hit = file.categories.find((c) => c.id === ref) ?? file.categories.find((c) => c.title.toLowerCase() === String(ref).toLowerCase());
-  if (!hit) throw new CliError(`No category "${ref}" in this project; add it first: automagik-herdr category add --title "${ref}".`);
+  if (!hit) throw new CliError(`No category "${ref}" in this project; add it first: am category add --title "${ref}".`);
   return hit;
 }
 
@@ -1197,16 +1197,17 @@ const OPTIONS = {
   "from-hc": { type: "boolean" }, "squad-label": { type: "string" }, apply: { type: "boolean" },
 };
 
-export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
+export const USAGE = `am: Automagik Herdr's bots and updates from the command line
 
-Usage: automagik-herdr <command> [options]      (every command takes --json and --project <folder>)
-       automagik-herdr <command> --machine M --project <folder there> ...
+Usage: am <command> [options]                   (every command takes --json and --project <folder>)
+       am <command> --machine M --project <folder there> ...
                                                  ls, show, create, edit, rm, category, start,
                                                  restart, attach, detach and whois on a linked
                                                  machine (hc machine ls), through hc
-       automagik-herdr --version                 the installed pack's version
+       am --version                              the installed pack's version
 
-  ls [--all]                    bots with kind, lead, category, rank, code, planned, agent, model, agy-mode, pane, status
+  ls [--all]                    bots with kind, lead, category, rank, agent, model, pane, status
+                               plus planned waves, code opt-outs and Antigravity modes
   show <bot>                    one bot in full
   create --name N --agent A [--kind main|member] [--role R]
          [--code true|false]            false omits the worker instruction; default true
@@ -1226,7 +1227,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--hc-proxy on|off]            per-bot Linux proxy; default off. Edit, proxy approve
                                        (review the diff), then restart to apply or roll back
          [--worker-template T]          (an hc template: owns the command, so it wins)
-  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--no-cross-members] [--rank=]
+  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category]
+             [--no-lead-project] [--no-cross-members] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
              [--agy-mode=auto] [--worker-agy-mode=auto]   (empty: cleared; auto is the default)
              [--agy-allow=] [--agy-deny=] [--no-agy-permissions] [--cross-member=]   (empty: cleared)
@@ -1428,7 +1430,7 @@ last cached list and the refusal says when there is none. Every Antigravity laun
 \`worker.agyMode\`, else auto. Each launch also writes its own session permission list, 0600
 under <app home>/automagik-herdr/agy-settings/, and passes it as \`--settings\`: a narrow allow
 list for its scope and the fixed denies --force pushes, hard resets, rm -rf, PR merges,
-releases, flag-first gh api writes, roster edits and restarts (automagik-herdr and am), hc
+releases, flag-first gh api writes, roster edits and restarts (am and automagik-herdr), hc
 keys/interrupt/exec -- plus the
 bot's \`agyPermissions\` additions, never a fixed deny dropped. Where agy can't run --mode auto
 it continues in manual mode, so every launch also passes --dangerously-skip-permissions, only
@@ -1467,7 +1469,7 @@ reports no status to hc can't say it is waiting for an approval: restart refuses
 end with its pane there is refused until each helper's pane is ended (hc kill M/tN).`;
 
 /** `proxy approve`'s own help: the residual is part of the command's contract. */
-export const PROXY_USAGE = `usage: automagik-herdr proxy approve --project <dir>
+export const PROXY_USAGE = `usage: am proxy approve --project <dir>
 
 Approve a project's worked roster: reads <dir>'s .herdr/bots.json, prints the diff against the
 previous approval (bots added/removed, rank/lead/kind changes), then writes the record
@@ -1564,7 +1566,7 @@ function autoModeOf(bot, local = true) {
 function launchAgyMode(bot, agentKey) {
   if (agentKey !== "antigravity") return null;
   const why = agyModeProblem(bot.agyMode);
-  if (why) throw new CliError(`${bot.name}: ${why} Fix it with automagik-herdr edit ${bot.id} --agy-mode <accept-edits|auto|plan>.`);
+  if (why) throw new CliError(`${bot.name}: ${why} Fix it with am edit ${bot.id} --agy-mode <accept-edits|auto|plan>.`);
   return agyModeOf(bot.agyMode);
 }
 
@@ -1649,7 +1651,8 @@ export function entryFrom(opts, base, project, { creating }) {
     const why = agyModeProblem(opts["agy-mode"]);
     if (why) throw new CliError(`--agy-mode: ${why}`, 2);
     const mode = agyModeOf(opts["agy-mode"]);
-    entry.agyMode = mode === AGY_MODE_DEFAULT ? "" : mode;
+    if (entry.agent !== "antigravity") report(["--agy-mode only applies to Antigravity; this bot's agent will ignore it."]);
+    if (mode === AGY_MODE_DEFAULT) delete entry.agyMode; else entry.agyMode = mode;
   }
   // Antigravity's permission additions (#823): repeatable rules that add to the fixed deny rules
   // and the launch's own allow list; one empty value clears that list, and --no-agy-permissions
@@ -1946,12 +1949,12 @@ async function cmdForget(opts, [ref]) {
   const sidebarLine = `the sidebar remembers it on its own and forgets it once its ${BOTS_PATH} is gone, so ls --all and the sidebar `
     + "still show it until then.";
   if (taken.includes(key)) {
-    if (sidebar) process.stderr.write(`automagik-herdr: ${key} is off this CLI's project list, but ${sidebarLine}\n`);
+    if (sidebar) process.stderr.write(`am: ${key} is off this CLI's project list, but ${sidebarLine}\n`);
     return opts.json ? { forgotten: key, list: path, sidebar_remembers: sidebar } : `${key} forgotten: off ${path}.`;
   }
   const why = sidebar
     ? `${key} isn't on this CLI's project list (${path}); ${sidebarLine}`
-    : `${key} isn't on the project list (${path}); automagik-herdr ls --all shows the projects there.`;
+    : `${key} isn't on the project list (${path}); am ls --all shows the projects there.`;
   throw new CliError(why, 1, { project: key, forgotten: false });
 }
 
@@ -1994,7 +1997,8 @@ function lsLines(projects) {
       const perms = b.agyPermissions || b.workerAgyPermissions
         ? `  agy-allow ${(b.agyPermissions ?? b.workerAgyPermissions).allow.length} deny ${(b.agyPermissions ?? b.workerAgyPermissions).deny.length}` : "";
       const status = b.planned ? `planned, wave ${b.planned.wave}` : b.terminal ? `${b.status} in ${p.machine ? `${p.machine}/` : ""}${b.terminal}` : b.status;
-      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  code ${b.code}  ${b.agent ?? "-"}  ${model}${agy}${perms}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
+      const code = b.code === false ? "  code false" : "";
+      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}${code}  ${b.agent ?? "-"}  ${model}${agy}${perms}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
     }
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
     const hcError = p.bots.find((b) => b.hcError)?.hcError;
@@ -2016,7 +2020,7 @@ const proxyStateText = (state) => `working ${state.working ? "on" : "off"}; appr
   + `${state.error ? `; ${state.error}` : ""}`;
 
 const proxyWarning = (state) => `WARNING hc proxy: ${state.error}; working switch off; `
-  + "starting plain; run automagik-herdr proxy approve";
+  + "starting plain; run am proxy approve";
 const reportProxyWarning = (warning) => report([warning]);
 
 function proxyEnabled(state, platform = process.platform, warn = reportProxyWarning) {
@@ -2229,7 +2233,7 @@ async function cmdRm(opts, [ref]) {
   }
   const team = [...descendantsOf(file, bot.id)].map((id) => file.bots.find((b) => b.id === id)?.name ?? id);
   const leads = others.filter((b) => b?.lead === bot.id).map((b) => b.name ?? b.id);
-  if (team.length || leads.length) throw new CliError(`${bot.name} leads ${[...new Set([...leads, ...team])].join(", ")}; give them another lead first (automagik-herdr edit <bot> --lead …).`);
+  if (team.length || leads.length) throw new CliError(`${bot.name} leads ${[...new Set([...leads, ...team])].join(", ")}; give them another lead first (am edit <bot> --lead …).`);
   const raw = JSON.parse(JSON.stringify(project.raw));
   raw.bots = raw.bots.filter((b) => b?.id !== bot.id);
   // Only an empty list deletes the file; anything else must pass checkBots (a file left
@@ -2244,8 +2248,8 @@ async function cmdRm(opts, [ref]) {
   if (!last && !project.machine) await relabelAfter(file, raw); // its lead may stop being a captain
   const notes = [];
   if (last) notes.push(`${bot.name} was the project's last bot: ${fileName(project)} was deleted.`);
-  if (holders.length) notes.push(`${holders.join(", ")} is still attached to it; detach it with: automagik-herdr detach ${bot.id}`);
-  for (const n of notes) process.stderr.write(`automagik-herdr: ${n}\n`);
+  if (holders.length) notes.push(`${holders.join(", ")} is still attached to it; detach it with: am detach ${bot.id}`);
+  for (const n of notes) process.stderr.write(`am: ${n}\n`);
   return opts.json ? { removed: bot.id, ...placeOf(project), deletedFile: last, attachedTerminals: holders } : `${bot.name} (${bot.id}) removed.`;
 }
 
@@ -2287,7 +2291,7 @@ async function cmdCategory(opts, [verb, ...rest]) {
   if (verb === "rm") {
     const cat = find(rest[0]);
     const users = project.file.bots.filter((b) => b.category === cat.id).map((b) => b.name);
-    if (users.length) throw new CliError(`${users.join(", ")} ${users.length > 1 ? "are" : "is"} in ${cat.id}; move them first (automagik-herdr edit <bot> --category … or --no-category).`);
+    if (users.length) throw new CliError(`${users.join(", ")} ${users.length > 1 ? "are" : "is"} in ${cat.id}; move them first (am edit <bot> --category … or --no-category).`);
     raw.categories = raw.categories.filter((c) => c?.id !== cat.id);
     await save();
     return opts.json ? { ...placeOf(project), removed: cat.id } : `${cat.id} removed.`;
@@ -2313,7 +2317,7 @@ const heldIds = new Set();
 const holdId = (id) => { if (typeof id === "string" && id.trim().length >= 6) heldIds.add(id.trim()); return id; };
 /** `text` with every held session id shown as SESSION_MASK. */
 const unprinted = (text) => { let out = String(text); for (const id of heldIds) out = out.split(id).join(SESSION_MASK); return out; };
-const report = (warnings) => { for (const w of warnings) process.stderr.write(`automagik-herdr: ${unprinted(w)}\n`); };
+const report = (warnings) => { for (const w of warnings) process.stderr.write(`am: ${unprinted(w)}\n`); };
 
 /**
  * Appends one row to the workers ledger (workers.js) with a single O_APPEND write, the file the
@@ -2628,7 +2632,7 @@ function tooLate(bot, machine, key, need, space = null) {
   return new CliError(`Only ${left} s of this Herdr's 30 s limit for the sidebar's programs was left, and starting ${bot.name} `
     + `on ${machine} needs ${need / 1000} s to finish once its pane starts, so nothing was started`
     + `${space ? ` (the space it opened, ${space}, stays, with only its shell)` : ""}. `
-    + `Start it from a terminal: automagik-herdr start ${shellWord(bot.id)} --project ${shellWord(key)} --machine ${shellWord(machine)}`);
+    + `Start it from a terminal: am start ${shellWord(bot.id)} --project ${shellWord(key)} --machine ${shellWord(machine)}`);
 }
 
 const quietOn = (machine, seen) => seen.login === "timed out" ? `${machine}'s login shell didn't answer within ${AGENT_WAIT_S} s`
@@ -2792,7 +2796,7 @@ async function launchHomeOn(machine, bot, paneEnv, purpose) {
   const dir = paneEnv.appHome ?? await appHomeOn(machine);
   if (!dir) return none(`${machine} gave no home folder for its app home`);
   if ((await remoteIo.exec("test", ["-d", dir], machine, { timeout: AGENT_WAIT_S })).code !== 0) {
-    return none(`its app home there, ${dir}, isn't a folder, and a start never makes one. Install automagik-herdr on ${machine}, `
+    return none(`its app home there, ${dir}, isn't a folder, and a start never makes one. Install Automagik Herdr on ${machine}, `
       + `or set HERDR_APP_HOME in the project's ${PANE_ENV_PATH} there to an app home that is there`);
   }
   return { dir, warning: null };
@@ -2945,7 +2949,7 @@ async function seatOnMachine(project, bot, over = {}) {
   const agyMode = launchAgyMode(bot, agentKey);
   if (!over.argv && bot.model && !modelList(bot.agent, bot.model).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
-      + `Pick one with automagik-herdr edit ${bot.id} --model <model> --machine ${machine} --project ${key}, or clear it with --no-model.`);
+      + `Pick one with am edit ${bot.id} --model <model> --machine ${machine} --project ${key}, or clear it with --no-model.`);
   }
   const paneEnv = await paneEnvOn(machine, key);
   // #823: agy reads its permission list from a file on its own machine, under that machine's
@@ -3054,7 +3058,7 @@ async function seatOnMachine(project, bot, over = {}) {
       write([attachRow({ event: "attach", bot: bot.id, project: key, terminal: seat.terminal, core: m.id, created_ms: seat.created_ms, machine, by: "start" })]);
     } catch (e) {
       throw new CliError(`${seat.address} runs, but its attach row wasn't written (${e?.message ?? e}): attach it with `
-        + `automagik-herdr attach ${bot.id} ${seat.address} --machine ${machine} --project ${key}`);
+        + `am attach ${bot.id} ${seat.address} --machine ${machine} --project ${key}`);
     }
     return seat;
   });
@@ -3199,7 +3203,7 @@ async function restartOnMachine(opts, project, bot, entry) {
     if (up.state !== "live") {
       if (up.state === "ended") {
         throw await exitedBefore(seat.address, `${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : ""));
+          + (plan.mode === "resume" ? ` Try am restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : ""));
       }
       const ended = (await hcKill(seat.address)).code === 0;
       throw new CliError(`${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
@@ -3284,7 +3288,7 @@ async function launchSeat(project, bot, over = {}) {
   // A12: a pin that isn't one of the agent's listed models (an old free-text model) is refused.
   if (!over.argv && bot.model && !modelList(bot.agent, bot.model).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
-      + `Pick one with automagik-herdr edit ${bot.id} --model <model> (the error lists them), or clear it with --no-model.`);
+      + `Pick one with am edit ${bot.id} --model <model> (the error lists them), or clear it with --no-model.`);
   }
   const agent = startableAgent(bot, agentKey);
   // Antigravity always gets a mode (auto by default); every other agent's argv is unchanged.
@@ -3356,10 +3360,10 @@ async function launchSeat(project, bot, over = {}) {
     const get = await hcGet(address).catch(() => null);
     if (ledger) {
       if (!Number.isSafeInteger(get?.created_ms)) {
-        throw new CliError(`${address} runs, but hc get gave no created_ms, so it has no attach row: attach it with automagik-herdr attach ${bot.id} ${address}`);
+        throw new CliError(`${address} runs, but hc get gave no created_ms, so it has no attach row: attach it with am attach ${bot.id} ${address}`);
       }
       try { ledger.write([attachRow({ event: "attach", bot: bot.id, project: key, terminal: address, core: ledger.core, created_ms: get.created_ms, by: "start" })]); } catch (e) {
-        throw new CliError(`${address} runs, but its attach row wasn't written (${e?.message ?? e}): attach it with automagik-herdr attach ${bot.id} ${address}`);
+        throw new CliError(`${address} runs, but its attach row wasn't written (${e?.message ?? e}): attach it with am attach ${bot.id} ${address}`);
       }
     }
     return { terminal: address, created_ms: get?.created_ms ?? null, pid: get?.foreground?.pid ?? get?.pid ?? null };
@@ -3978,7 +3982,7 @@ async function rerunHelpers(plans, parent, say) {
         moved = await attachMoved({ id: b.bot }, b, address, created, b.project);
       } catch (e) {
         out[i].error = `its attach row wasn't written (${e?.message ?? e})`;
-        say(`${who} runs again in ${address}, but bot ${b.bot}'s attach row wasn't written (${e?.message ?? e}): automagik-herdr attach ${b.bot} ${address}.`);
+        say(`${who} runs again in ${address}, but bot ${b.bot}'s attach row wasn't written (${e?.message ?? e}): am attach ${b.bot} ${address}.`);
         continue;
       }
       if (moved.lost !== undefined) {
@@ -4284,7 +4288,7 @@ async function queueRestart({ bot, key, old, screen, opts, wanted, plan }) {
   if (opts.json) return { id: bot.id, queued: true, terminal: old.address, reason: entry.reason, dialog,
     watcher: entry.watcher, mode: plan.mode, agent: plan.agent, model: plan.model };
   const why = dialog ? `blocked on dialog "${dialog.question}" — ${dialog.who} must answer it in ${old.address}; Herdr never answers dialogs` : `${bot.name} is working in ${old.address}`;
-  return `${bot.name}: restart queued for ${old.address} (${why}); it will restart and resume at its next idle (automagik-herdr restart --queued lists it; automagik-herdr restart --cancel ${bot.id} cancels it; pass --force to restart now).`;
+  return `${bot.name}: restart queued for ${old.address} (${why}); it will restart and resume at its next idle (am restart --queued lists it; am restart --cancel ${bot.id} cancels it; pass --force to restart now).`;
 }
 
 async function cmdRestart(opts, [ref]) {
@@ -4331,7 +4335,7 @@ async function cmdRestart(opts, [ref]) {
     entry = entryFrom(edit, stored, project, { creating: false });
   } else if (bot.model && !modelList(bot.agent, bot.model).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
-      + `Pick one with automagik-herdr edit ${bot.id} --model <model>, restart it on one with --model <model>, or clear the pin with --no-model.`);
+      + `Pick one with am edit ${bot.id} --model <model>, restart it on one with --model <model>, or clear the pin with --no-model.`);
   }
   if (project.machine) return restartOnMachine(opts, project, bot, entry);
   // The old pane: the one the attach ledger names for the bot, as hc confirms it.
@@ -4533,7 +4537,7 @@ async function cmdRestart(opts, [ref]) {
       // An abandoned replacement is ended (no seat row was written for it); the old pane stays.
       if (up.state === "ended") {
         throw await exitedBefore(seat.terminal, `${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : ""));
+          + (plan.mode === "resume" ? ` Try am restart ${bot.id} --fresh.` : ""));
       }
       const ended = (await hcKill(seat.terminal)).code === 0;
       throw new CliError(`${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
@@ -4583,7 +4587,7 @@ async function cmdRestart(opts, [ref]) {
     const up = await agentUp(seat.terminal);
     if (up.state === "ended") {
       throw await exitedBefore(seat.terminal, `${bot.name} isn't running.`
-        + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : ""));
+        + (plan.mode === "resume" ? ` Try am restart ${bot.id} --fresh.` : ""));
     }
     if (up.state !== "live") {
       const ended = (await hcKill(seat.terminal)).code === 0;
@@ -4675,11 +4679,11 @@ async function terminalPlace(terminal, project) {
 }
 
 /** Why a Claude bot on a linked machine has no briefing hook yet (automagik#206 part b2). */
-const noHookThere = (bot, machine) => `${bot.name} runs on ${machine} without its per-turn briefing: the hook needs automagik-herdr `
-  + `installed on ${machine}, which comes next (automagik-herdr machine install ${machine}). Its role and team still come from ${BOTS_PATH}.`;
+const noHookThere = (bot, machine) => `${bot.name} runs on ${machine} without its per-turn briefing: the hook needs Automagik Herdr `
+  + `installed on ${machine}, which comes next (am machine install ${machine}). Its role and team still come from ${BOTS_PATH}.`;
 
 async function cmdAttach(opts, [ref, terminal]) {
-  if (!terminal) throw new CliError("attach needs a bot and a terminal: automagik-herdr attach <bot> <terminal> [--move].", 2);
+  if (!terminal) throw new CliError("attach needs a bot and a terminal: am attach <bot> <terminal> [--move].", 2);
   if (terminal.startsWith("-")) throw new CliError(`"${terminal}" isn't a terminal; name one like t7.`, 2);
   const project = await projectFor(opts);
   const { file, key } = project;
@@ -4695,7 +4699,7 @@ async function cmdAttach(opts, [ref, terminal]) {
   if (!Number.isSafeInteger(get.created_ms)) throw new CliError(`hc get ${address} gave no created_ms; nothing was attached.`);
   const nameOf = (id) => { const n = file.bots.find((b) => b.id === id)?.name; return n ? `${n} (${id})` : `bot ${id}`; };
   const playsAnother = (b) => new CliError(`${address} already plays ${nameOf(b.bot)}, since ${b.at}; nothing was attached. `
-    + `Detach that bot first: automagik-herdr detach ${b.bot}`);
+    + `Detach that bot first: am detach ${b.bot}`);
   // Another bot's pane is refused first, by this run's view (and again under the lock).
   const seen = (await attachView()).byTerminal.get(address)?.binding;
   if (seen && seen.bot !== bot.id && seen.created_ms === get.created_ms) throw playsAnother(seen);
@@ -4718,7 +4722,7 @@ async function cmdAttach(opts, [ref, terminal]) {
     const mine = await holds(heldBy(bot.id, at.core));
     if (mine && !opts.move) {
       throw new CliError(`${bot.name} (${bot.id}) is attached to ${heldAt(mine.binding)}; nothing was attached. `
-        + `Move it with: automagik-herdr attach ${bot.id} ${address} --move (or detach it first).`);
+        + `Move it with: am attach ${bot.id} ${address} --move (or detach it first).`);
     }
     const rows = mine ? [closingRow(mine.binding, "detach", "attach", "moved")] : [];
     rows.push(attachRow({ event: "attach", bot: bot.id, project: key, terminal: bareId, core: at.core ?? core, created_ms: get.created_ms,
@@ -4756,7 +4760,7 @@ async function cmdAttach(opts, [ref, terminal]) {
       core: await rowCore(), createdMs: get.created_ms }));
     if (unlogged) hook.warnings.push(unlogged);
   }
-  if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, restart the bot: automagik-herdr restart ${bot.id} (or the bot row's Restart).`);
+  if (hook.written) hook.warnings.push(`${bot.name}'s briefing hook was added while its Claude session was running. If its next prompt brings no briefing, restart the bot: am restart ${bot.id} (or the bot row's Restart).`);
   report(hook.warnings);
   if (!project.machine) listProject(key);
   const movedFrom = decided.movedFrom ? [decided.movedFrom] : [];
@@ -4850,7 +4854,7 @@ async function importPlan(project, label, { readOnly = false } = {}) {
   const skipped = [];
   if (!main) {
     conflicts.push(`${under(project.key, BOTS_PATH)} has no main bot; the import makes captains and members under it. `
-      + "Create it first: automagik-herdr create --name N --agent A");
+      + "Create it first: am create --name N --agent A");
   }
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
   const gets = (await Promise.all(rows.map(async (r) => {
@@ -4905,7 +4909,7 @@ async function importPlan(project, label, { readOnly = false } = {}) {
       const there = liveFor(view, named.id, project);
       if (there) {
         conflicts.push(`${botName(named.id)} already plays ${there.binding.terminal}, not ${terminal}; the import never moves a bot. `
-          + `Detach it first (automagik-herdr detach ${named.id}), or give the seat another hc name.`);
+          + `Detach it first (am detach ${named.id}), or give the seat another hc name.`);
         continue;
       }
       if (named.kind === "main" || named.planned) {
@@ -4914,7 +4918,7 @@ async function importPlan(project, label, { readOnly = false } = {}) {
       }
       if (named.agent && named.agent !== agent) {
         conflicts.push(`${at} runs ${agent}, and ${botName(named.id)} is defined with agent ${named.agent}; the import never attaches `
-          + `a bot to another agent's pane. Edit it first (automagik-herdr edit ${named.id} --agent ${agent}), or give the seat another hc name.`);
+          + `a bot to another agent's pane. Edit it first (am edit ${named.id} --agent ${agent}), or give the seat another hc name.`);
         continue;
       }
       seats.push({ ...seat, agent, action: "attach", id: named.id, bot: named });
@@ -5009,7 +5013,7 @@ function importText(plan, { key, label, apply }) {
 }
 
 async function cmdImport(opts) {
-  if (!opts["from-hc"]) throw new CliError("import needs its source: automagik-herdr import --from-hc [--squad-label L] [--apply].", 2);
+  if (!opts["from-hc"]) throw new CliError("import needs its source: am import --from-hc [--squad-label L] [--apply].", 2);
   const label = opts["squad-label"] ?? "squad";
   if (!/^[A-Za-z0-9._-]+$/.test(label)) throw new CliError(`--squad-label: "${label}" isn't an hc label key.`, 2);
   const project = await editProjectFor(opts);
@@ -5057,7 +5061,7 @@ async function cmdImport(opts) {
 
 async function cmdWhois(opts, [terminal]) {
   if ((opts.bot === undefined) === (terminal === undefined)) {
-    throw new CliError("whois needs a terminal or --bot <id>: automagik-herdr whois <terminal> | whois --bot <id>.", 2);
+    throw new CliError("whois needs a terminal or --bot <id>: am whois <terminal> | whois --bot <id>.", 2);
   }
   if (opts.bot !== undefined) {
     const id = BOT_ID_SHAPE.test(opts.bot) || opts.bot.startsWith("session-") ? opts.bot : findBot((await projectFor(opts)).file, opts.bot).id;
@@ -5121,7 +5125,7 @@ async function cmdBrief(opts, [ref]) {
   const bot = await botIn(project, ref, opts);
   if (bot.planned) {
     if (opts.json) return { id: bot.id, briefing: null, reason: "planned bots get no briefing" };
-    process.stderr.write(`automagik-herdr: ${bot.name} is planned; planned bots get no briefing.\n`);
+    process.stderr.write(`am: ${bot.name} is planned; planned bots get no briefing.\n`);
     return "";
   }
   // briefing.mjs' own gathering; a failed hc call reads as "no answer" (unreachable), as
@@ -5261,8 +5265,8 @@ async function unboundRefusal(me, address) {
   const { found } = await projectsDefining(labelled, await botProjectHints(me, address));
   const key = found.length === 1 ? found[0].key : "<its project>";
   return `${base} Its ${BOT_LABEL}=${labelled} label is from before the ledger, which no longer reads labels. `
-    + `Tie it: automagik-herdr attach ${labelled} ${address} --project ${key}. A Claude session must run in that project to be `
-    + `attached; if it doesn't, start the bot there: automagik-herdr start ${labelled} --project ${key}.`;
+    + `Tie it: am attach ${labelled} ${address} --project ${key}. A Claude session must run in that project to be `
+    + `attached; if it doesn't, start the bot there: am start ${labelled} --project ${key}.`;
 }
 
 const realDir = (p) => { try { return realpathSync(p); } catch { return null; } };
@@ -5938,7 +5942,7 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS,
       try { await recordPullRequests({ asked, start, budget, every, lines: out.lines }); } catch (e) {
         out.lines.push(`pull requests not recorded: ${e?.message ?? e}`);
       }
-      if (out.more) out.lines.push(`${out.more} more finished ${out.more === 1 ? "worker's worktree" : "workers' worktrees"} left for the next cleanup (automagik-herdr reap)`);
+      if (out.more) out.lines.push(`${out.more} more finished ${out.more === 1 ? "worker's worktree" : "workers' worktrees"} left for the next cleanup (am reap)`);
     } finally { stop(); dropLock(lock, token); }
   } catch (e) {
     out.lines.push(`worktree cleanup failed: ${e?.message ?? e}`);
@@ -5963,7 +5967,7 @@ async function cmdReap(opts, rest) {
  * how a lead ends a worker that has finished. On this computer only.
  */
 async function cmdWorkerKill(opts, panes) {
-  if (panes.length !== 1 || optionLike(panes[0])) throw new CliError("worker kill takes one terminal: automagik-herdr worker kill <pane>.", 2);
+  if (panes.length !== 1 || optionLike(panes[0])) throw new CliError("worker kill takes one terminal: am worker kill <pane>.", 2);
   const [pane] = panes;
   if (pane.includes("/")) throw new CliError(`worker kill ends a worker on this computer only; ${pane} names another machine. Nothing was ended.`);
   const { me, bot } = await callingBot(opts);
@@ -6011,7 +6015,7 @@ async function cmdWorker(opts, rest) {
   // `worker kill <pane>`: a task call always names --branch or --worktree, so the two never mix.
   if (rest[0] === "kill" && opts.branch === undefined && opts.worktree === undefined) return cmdWorkerKill(opts, rest.slice(1));
   const task = rest.join(" ").trim();
-  if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
+  if (!task) throw new CliError('worker needs the task text: am worker "<task>" --branch <name>.', 2);
   if (optionLike(task)) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
   if ((opts.branch === undefined) === (opts.worktree === undefined)) throw new CliError("Give --branch or --worktree (one of them).", 2);
   if (opts.base !== undefined && opts.branch === undefined) throw new CliError("--base goes with --branch.", 2);
@@ -6267,7 +6271,7 @@ async function cmdWorker(opts, rest) {
   const swapped = swap ? [`  swap      yes: ${bot.name}'s planned swap task`] : [];
   return [terminal, `  role      ${role}`, ...contract, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
     ...swapped,
-    `End it once the task merges: automagik-herdr worker kill ${terminal}`].join("\n");
+    `End it once the task merges: am worker kill ${terminal}`].join("\n");
 }
 
 // ---- updates (A14) ----
@@ -6331,7 +6335,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     const restore = r.installed.restored;
     const mods = (restore.failed?.length ? restore.failed : [restore.mod]).filter(Boolean).join(", ");
     const stopped = restore.unavailable ? `; ${restore.unavailable}` : "";
-    const removed = restore.prevRemoved ? " The failed pack was removed, so `automagik-herdr update --rollback` has nothing to go back to." : "";
+    const removed = restore.prevRemoved ? " The failed pack was removed, so `am update --rollback` has nothing to go back to." : "";
     const warnings = Array.isArray(restore.warnings) ? restore.warnings.filter((w) => typeof w === "string" && w !== "") : [];
     const warned = warnings.length > 0 ? ` Warning: ${warnings.join(" ")}` : "";
     return `Automagik Herdr ${restore.failedVersion ?? r.installed.version} failed to load (${mods} failed herdr-app check${stopped}): `
@@ -6342,9 +6346,9 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
       + `It is still installed; auto-update waits for a newer release.${note}`;
   }
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Herdr reloads its mods on its own.${note}${hooksLines(r.installed.hooks?.hooks)}${heldLines(r.installed)}${meter.lines.map((l) => `\n${l}`).join("")}`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`am update --rollback\` puts it back. Herdr reloads its mods on its own.${note}${hooksLines(r.installed.hooks?.hooks)}${heldLines(r.installed)}${meter.lines.map((l) => `\n${l}`).join("")}`;
   }
-  if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
+  if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`am update\` to install it.`;
   return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
 }
 
@@ -6360,7 +6364,7 @@ function autoSetting(opts, io) {
   }
   if (opts.json) return { ...s, checks: !updatesOff(env) };
   const lines = [`Install updates automatically: ${s.on ? "on" : "off"}.`];
-  if (!s.managed) lines.push(`It doesn't apply to this pack (${s.why}): updates stay a notice and \`automagik-herdr update\`.`);
+  if (!s.managed) lines.push(`It doesn't apply to this pack (${s.why}): updates stay a notice and \`am update\`.`);
   else if (s.on && s.skip) lines.push(`${s.skip} was rolled back here: it waits for a release newer than ${s.skip}.`);
   if (updatesOff(env)) lines.push(`Update checks are off (${NO_UPDATE_ENV}=1), so nothing is installed.`);
   return lines.join("\n");
@@ -6402,7 +6406,7 @@ const REVIVE_RESTART_MS = Number(process.env.AUTOMAGIK_HERDR_REVIVE_RESTART_MS) 
 const REVIVE_SETTLE_MS = process.env.AUTOMAGIK_HERDR_REVIVE_SETTLE_MS !== undefined ? Number(process.env.AUTOMAGIK_HERDR_REVIVE_SETTLE_MS) || 0 : 20_000;
 const reviveStampPath = () => join(appHome(), "automagik-herdr", "revive-boot.json");
 const reviveReportPath = () => join(appHome(), "automagik-herdr", "revive-last.json");
-const REVIVE_USAGE = "usage: automagik-herdr revive [--dry-run] [--boot] [--wait SECONDS] [--json] | revive service install|uninstall|status";
+const REVIVE_USAGE = "usage: am revive [--dry-run] [--boot] [--wait SECONDS] [--json] | revive service install|uninstall|status";
 
 /** Waits until herdr-core answers (`hc server status`), up to `seconds`; a CliError when it doesn't. */
 async function coreUp(seconds) {
@@ -6423,7 +6427,7 @@ async function coreUp(seconds) {
 const runSelf = (args) => runProgram(process.execPath, [fileURLToPath(import.meta.url), ...args], { timeout: REVIVE_RESTART_MS });
 
 /** A refusal's first sentence, for the report: what happened, without the advice after it. */
-const firstSentence = (text) => { const t = String(text ?? "").trim().replace(/^automagik-herdr: /, ""); const m = /^(.*?[.!?])(\s|$)/.exec(t); return (m ? m[1] : t).replace(/[.!?]$/, ""); };
+const firstSentence = (text) => { const t = String(text ?? "").trim().replace(/^(?:am|automagik-herdr): /, ""); const m = /^(.*?[.!?])(\s|$)/.exec(t); return (m ? m[1] : t).replace(/[.!?]$/, ""); };
 
 /**
  * One bot back through `restart --tree --revive` (cmdRestart: in its pane's space, tab and
@@ -6472,7 +6476,7 @@ async function cmdRevive(opts, [verb, sub, ...more]) {
   if (opts.boot && !dry) {
     let ran = null;
     try { ran = JSON.parse(readFileSync(reviveStampPath(), "utf8"))?.boot_ms ?? null; } catch { ran = null; }
-    if (sameBoot(ran, bootMs)) return opts.json ? { ran: false, reason: "already ran for this boot" } : "revive already ran for this boot; run automagik-herdr revive to look again.";
+    if (sameBoot(ran, bootMs)) return opts.json ? { ran: false, reason: "already ran for this boot" } : "revive already ran for this boot; run am revive to look again.";
   }
   const core = await coreId();
   const look = async () => {
@@ -6595,7 +6599,7 @@ async function reviveService(opts, verb, more = []) {
   }
   if (process.platform !== "linux") {
     throw new CliError("The revive login service is built for Linux (a systemd user unit) so far; macOS (launchd) is the next delivery of #939. "
-      + "Until then, run automagik-herdr revive by hand after a restart of this computer.");
+      + "Until then, run am revive by hand after a restart of this computer.");
   }
   if (text !== null && !unitIsOurs(text)) throw new CliError(`${unit} is there and isn't one Automagik Herdr wrote, so it was left as it is.`);
   const notes = [];
@@ -6732,7 +6736,7 @@ async function machinesAuto(opts) {
     on = opts.auto === "on";
   }
   if (opts.json) return { machine, on };
-  return `Updates from the Herdr ${machine ?? "this computer"} is linked into: ${on ? "on" : "off"}.${on ? "" : " Nothing is updated there until `automagik-herdr machines --auto on`."}`;
+  return `Updates from the Herdr ${machine ?? "this computer"} is linked into: ${on ? "on" : "off"}.${on ? "" : " Nothing is updated there until `am machines --auto on`."}`;
 }
 
 /**
@@ -6766,7 +6770,7 @@ export async function cmdMachines(opts, [verb, ...rest] = [], io = {}) {
       state.machines = state.machines[opts.machine] ? { [opts.machine]: state.machines[opts.machine] } : {};
     }
     if (opts.json) return { ...state, linked };
-    return stateLines(state, linked).join("\n") || "No machine has been checked yet: automagik-herdr machines update.";
+    return stateLines(state, linked).join("\n") || "No machine has been checked yet: am machines update.";
   }
   if (updatesOff(env)) {
     if (opts.json) return { disabled: true, entries: [], notes: [] };
@@ -6861,7 +6865,7 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       try {
         const approval = approvedProxyState({ project: projectKey, bot: { id: "" }, env });
         if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
-          detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
+          detail: approval.error, fix: "am proxy approve (review the diff)" });
         app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
         let attachRows = [];
         try { attachRows = readAttachFile(attachPath(app)) ?? []; } catch { attachRows = []; }
@@ -6937,8 +6941,8 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         detail: `${bot.name}: ${agy}${perms ? `${perms}; ${guardrail}; ` : ""}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
         ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces } } : {}),
         ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: workerTrusted } } : {}),
-        fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
-          : !ok || bot.warning ? `automagik-herdr restart ${bot.id}` : null });
+        fix: needsApproval ? "am proxy approve (review the diff), then restart"
+          : !ok || bot.warning ? `am restart ${bot.id}` : null });
       if (!ok) r.code = 1;
       if (agent?.leadProject && projectFile) {
         const eff = effectiveLead(projectFile, bot.id, { project: projectKey, projects });
@@ -6949,7 +6953,7 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
           check: `lead:${bot.id}`,
           ok: !eff.warning,
           detail: eff.warning ?? `${bot.name}: lead ${eff.leadBot?.name ?? eff.lead} (${eff.lead}) in ${eff.leadProject}`,
-          fix: eff.warning ? `automagik-herdr edit ${bot.id} --lead <bot> --lead-project <dir>` : null,
+          fix: eff.warning ? `am edit ${bot.id} --lead <bot> --lead-project <dir>` : null,
         });
         if (eff.warning) r.code = 1;
       }
@@ -6960,7 +6964,7 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
             check: `cross-member:${bot.id}`,
             ok: false,
             detail: `${bot.name}: ${w}`,
-            fix: `automagik-herdr edit <member> --project <dir> --lead ${bot.id} --lead-project ${projectKey}`,
+            fix: `am edit <member> --project <dir> --lead ${bot.id} --lead-project ${projectKey}`,
           });
           r.code = 1;
         }
@@ -7000,7 +7004,7 @@ export async function meterAfterUpdate(io) {
     const out = JSON.parse(r.stdout);
     return { lines: [...out.results.map(resultLine), ...(out.notes ?? [])], results: out.results };
   } catch {
-    return { lines: [`Warning: usagemeter was not checked: ${(r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop()}. Run \`automagik-herdr meter install\` to retry.`], results: [] };
+    return { lines: [`Warning: usagemeter was not checked: ${(r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop()}. Run \`am meter install\` to retry.`], results: [] };
   }
 }
 
@@ -7097,7 +7101,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
   } catch (e) {
-    process.stderr.write(`automagik-herdr: ${e.message}\n\n${USAGE}\n`);
+    process.stderr.write(`am: ${e.message}\n\n${USAGE}\n`);
     return 2;
   }
   const { values: opts, positionals } = parsed;
@@ -7106,13 +7110,13 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   if (opts.version && !command) {
     let version = "0.0.0";
     try { version = readFileSync(new URL("../VERSION", import.meta.url), "utf8").trim() || version; } catch { /* no VERSION file */ }
-    process.stdout.write(opts.json ? `${JSON.stringify({ version })}\n` : `automagik-herdr ${version}\n`);
+    process.stdout.write(opts.json ? `${JSON.stringify({ version })}\n` : `am ${version}\n`);
     return 0;
   }
   if (opts.help && command === "proxy") { process.stdout.write(`${PROXY_USAGE}\n`); return 0; }
   if (opts.help || !command || command === "help") { process.stdout.write(`${USAGE}\n`); return command || opts.help ? 0 : 2; }
   const run = COMMANDS[command];
-  if (!run) { process.stderr.write(`automagik-herdr: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
+  if (!run) { process.stderr.write(`am: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
   try {
     if (NEEDS_BOT.has(command) && !rest[0] && !(command === "restart" && (opts.queued || opts["run-queued"]))) throw new CliError(`${command} needs a bot (its id or name).`, 2);
     if (opts.machine !== undefined && !ON_MACHINE.has(command)) {
@@ -7128,7 +7132,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     return exitAfter.code;
   } catch (e) {
     const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
-    process.stderr.write(unprinted(`automagik-herdr: ${message}\n`));
+    process.stderr.write(unprinted(`am: ${message}\n`));
     if (opts.json && e instanceof CliError && e.detail) process.stdout.write(unprinted(`${JSON.stringify({ error: message, ...e.detail }, null, 2)}\n`));
     return e instanceof CliError ? e.code : 1;
   }
