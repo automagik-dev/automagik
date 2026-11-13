@@ -4510,8 +4510,9 @@ fn hourly_equal_to_evidence_adds_nothing() {
 }
 
 #[test]
-fn hourly_below_evidence_adds_nothing_and_a_second_model_still_counts() {
-    // T3, and the two-model hour: the shortfall of one model never hides another's excess.
+fn a_column_over_the_calls_counts_alone_and_a_second_model_counts_too() {
+    // T3, and the two-model hour: a column over the calls counts on its own (the shortfall of
+    // another column takes nothing off it), and one model's shortfall never hides another's excess.
     let s = excess_scene();
     let (since, until) = ("2026-11-08T10:00:00Z", "2026-11-08T11:00:00Z");
     s.store()
@@ -4682,7 +4683,7 @@ fn an_interval_over_whole_hours_equals_the_named_window() {
 
 #[test]
 fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_its_tokens() {
-    // Follow-up 2: the figure that moved by 164,619,743 is pinned at integration level.
+    // Follow-up 2: the window figure is pinned at integration level.
     let s = excess_scene();
     let ask_all = |s: &scenes::Scene| -> Vec<Value> {
         let mut out = Vec::new();
@@ -4714,7 +4715,7 @@ fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_i
         Some(REPO),
         None,
         "2026-11-05T08:00:00Z",
-        [164_619_743, 0, 0, 0, 0],
+        [207_318_459, 0, 0, 0, 0],
         "",
         0,
     );
@@ -4729,7 +4730,7 @@ fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_i
         "",
         0,
     );
-    // An evidence-backed ordinary row (a second hour of normal usage) and a NULL-repo row.
+    // A row with no repo: it is not in the repo's answer.
     put_hourly(
         &s,
         CLAUDE_MODEL,
@@ -4744,8 +4745,8 @@ fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_i
     for (b, a) in base.iter().zip(&after) {
         let (bu, bb) = figures(b);
         let (au, ab) = figures(a);
-        assert_eq!(au - bu, 165_619_743, "{a}");
-        assert_eq!(ab - bb, 165_619_743, "{a}");
+        assert_eq!(au - bu, 208_318_459, "{a}");
+        assert_eq!(ab - bb, 208_318_459, "{a}");
         assert_eq!(
             rows_without_coverage(a),
             rows_without_coverage(b),
@@ -4761,7 +4762,7 @@ fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_i
     );
     assert_eq!(
         figures(&int_after).0 - figures(&int_base).0,
-        165_619_743,
+        208_318_459,
         "the interval agrees: {int_after}"
     );
 }
