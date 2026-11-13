@@ -1009,6 +1009,10 @@ pub fn apply(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<St
         compare_counts(&ro, &c, journal(&ro)?.is_some())?;
         c
     };
+    // A seam for the unit tests only (it does not exist in a release build): a sync landing
+    // between the read-only checks above and the lock below.
+    #[cfg(test)]
+    tests::between_checks_and_lock();
     let _lock = match crate::paths::try_lock(&o.state_dir) {
         Ok(Some(l)) => l,
         Ok(None) => return Err("another sync holds the lock; nothing was written".into()),
@@ -1159,5 +1163,159 @@ pub fn cmd(args: &[String], now_ms: i64) -> u8 {
                 exit::USAGE
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Store;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static BETWEEN: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    }
+
+    /// Runs the test's callback, if any: what a sync writing at that moment would do.
+    pub(super) fn between_checks_and_lock() {
+        BETWEEN.with(|b| {
+            if let Some(f) = b.borrow().as_ref() {
+                f();
+            }
+        });
+    }
+
+    const HOUR: &str = "2026-11-08T10:00:00Z";
+
+    fn put(dir: &Path, id: &str, cache_read: i64) {
+        Connection::open(dir.join("meter.db"))
+            .unwrap()
+            .execute(
+                "INSERT INTO usage(id, hour_ms, harness, model, machine, precision, events,
+                   updated_ms, cache_read) VALUES (?1, ?2, 'dsh-tui', 'm', 'mach', 'exact', 1, 1, ?3)",
+                params![id, parse_rfc3339(HOUR).unwrap(), cache_read],
+            )
+            .unwrap();
+    }
+
+    struct Fx {
+        _d: tempfile::TempDir,
+        store: PathBuf,
+        opts: Opts,
+    }
+
+    /// A store short by 15 on one cell, its oracle, a verified copy, and a lock file in the
+    /// store's folder (a synced store has one).
+    fn fx() -> Fx {
+        let d = tempfile::tempdir().unwrap();
+        let mk = |n: &str| {
+            let p = d.path().join(n);
+            std::fs::create_dir_all(&p).unwrap();
+            drop(Store::open(&p.join("meter.db")).unwrap());
+            p
+        };
+        let (store, oracle) = (mk("store"), mk("oracle"));
+        std::fs::write(store.join("meter.lock"), b"").unwrap();
+        put(&store, "a", 10);
+        put(&oracle, "a", 25);
+        let copy = d.path().join("copy.db");
+        Connection::open(store.join("meter.db"))
+            .unwrap()
+            .execute("VACUUM INTO ?1", [copy.display().to_string()])
+            .unwrap();
+        let sha = crate::event::hex(&Sha256::digest(std::fs::read(&copy).unwrap()));
+        let args: Vec<String> = [
+            "--store",
+            store.to_str().unwrap(),
+            "--against",
+            oracle.to_str().unwrap(),
+            "--apply",
+            "--copy",
+            copy.to_str().unwrap(),
+            "--confirm-copy",
+            &sha,
+        ]
+        .map(String::from)
+        .to_vec();
+        let opts = parse(&args, 1_800_000_000_000).unwrap();
+        Fx { _d: d, store, opts }
+    }
+
+    fn listing(dir: &Path) -> Vec<(String, u64)> {
+        let mut v: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    e.metadata().unwrap().len(),
+                )
+            })
+            .filter(|(n, _)| !n.starts_with("meter.db"))
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn db_bytes(dir: &Path) -> Vec<u8> {
+        std::fs::read(dir.join("meter.db")).unwrap()
+    }
+
+    fn run_with(f: impl Fn() + 'static, fx: &Fx) -> Result<Done, String> {
+        BETWEEN.with(|b| *b.borrow_mut() = Some(Box::new(f)));
+        let r = execute(&fx.opts);
+        BETWEEN.with(|b| *b.borrow_mut() = None);
+        r
+    }
+
+    #[test]
+    fn without_a_sync_in_between_the_apply_goes_through() {
+        let fx = fx();
+        let d = run_with(|| {}, &fx).unwrap();
+        assert_eq!(d.code, exit::OK);
+        assert_eq!(d.applied_days, vec!["2026-11-08"]);
+    }
+
+    #[test]
+    fn a_sync_writing_between_the_checks_and_the_lock_refuses_the_apply() {
+        let fx = fx();
+        let s = fx.store.clone();
+        let before = (listing(&fx.store), db_bytes(&fx.store));
+        // A sync appends a rollup row after the copy was verified and before the lock is taken.
+        let e = match run_with(move || put(&s, "b", 7), &fx) {
+            Err(e) => e,
+            Ok(d) => panic!("applied over a store that changed: code {}", d.code),
+        };
+        assert!(e.contains("make a new copy"), "{e}");
+        // The folder is as it was but for the sync's own row in the database.
+        assert_eq!(listing(&fx.store), before.0);
+        let c = Connection::open(fx.store.join("meter.db")).unwrap();
+        let (n, cr): (i64, i64) = c
+            .query_row("SELECT count(*), sum(cache_read) FROM usage", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((n, cr), (2, 17), "nothing of the repair was written");
+    }
+
+    #[test]
+    fn a_newer_schema_written_between_the_checks_and_the_lock_refuses_the_apply() {
+        let fx = fx();
+        let s = fx.store.clone();
+        let listing_before = listing(&fx.store);
+        let e = match run_with(
+            move || {
+                Connection::open(s.join("meter.db"))
+                    .unwrap()
+                    .execute("UPDATE meta SET v = '99' WHERE k = 'schema_version'", [])
+                    .unwrap();
+            },
+            &fx,
+        ) {
+            Err(e) => e,
+            Ok(d) => panic!("applied on a newer schema: code {}", d.code),
+        };
+        assert!(e.contains("newer"), "{e}");
+        assert_eq!(listing(&fx.store), listing_before);
     }
 }
