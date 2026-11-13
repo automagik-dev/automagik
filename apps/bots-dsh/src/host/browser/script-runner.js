@@ -1,32 +1,59 @@
 // Runs a browser_exec body away from the host process. The model writes the body, and a
-// page can talk the model into writing anything, so the body is treated as owning the
-// whole process it runs in. That process is therefore started with nothing to give:
+// page can talk the model into writing anything. Two walls stand around it.
 //
-//   closed    files (read and write), child processes, worker threads, native addons:
-//             Node's permission model, with nothing granted
-//             the host's environment: the child gets an empty one
+// The inner wall is the boundary: the interpreter (src/script-child/sandbox.js). The body
+// runs in QuickJS compiled to WebAssembly, inside the child process. It shares no object
+// with that process's Node, and what crosses is two functions that take text. It has no
+// file, process, signal or network API, because nothing gives it one.
+//
+// The outer wall is the process, for the day the interpreter has a bug. It is a seat
+// belt and not a second boundary, and Node says so of its permission model: it "does not
+// protect against malicious code", which "can bypass the permission model". So this is a
+// list of what Node refuses a script that got out of the interpreter, not of what such a
+// script cannot do. Each line has a test on both runtimes the Bot team ships on, Node 24
+// and Electron as Node (test/browser-script-wall.test.js):
+//
+//   refused   files through node:fs, node:module and import(): read, write, list, change
+//             the database module that reads and writes files past that (node:sqlite):
+//             switched off
+//             child processes, worker threads, native addons, WASI, its own inspector
+//             the files Node writes on request (a report, a heap snapshot)
+//             a change of working folder; that folder is an empty one made for the run
+//   withheld  the host's environment: the child gets an empty one
 //             the host itself: the one channel is JSON lines on the child's stdin and
 //             stdout, and a line the host does not accept ends the run
-//             time: at the deadline the child is killed, not asked
-//   NOT closed  the network. The permission model of the Node this runs on (24, and the
-//             desktop app's Electron as Node) has no network permission. The vm context
-//             in script-child.js gives the script no network API, and that context is
-//             the only thing between a script and a socket until the script moves to
-//             an interpreter that shares nothing with Node.
+//             time: at the deadline the host kills the child, it does not ask
 //
-// test/browser-script-wall.test.js checks each closed line on both runtimes.
+// What no flag of Node 24 refuses, and so what a script that got out of the interpreter
+// could still do:
+//
+//   - use the network, local sockets included (Node 26 refuses it with these same flags);
+//   - signal, or change the priority of, any process of the same user, this host among
+//     them. A host that was stopped that way kills nothing at the deadline;
+//   - read facts about the machine: user name, home folder, host name, network
+//     interfaces, and whether a path exists (the last one not from Node 24.22);
+//   - on Node 24.9 only, have Node write a trace log or a heap snapshot into the working
+//     folder, which is why that folder is the run's own;
+//   - change V8's flags, which Node names as outside the model, and from there whatever
+//     the bypass Node warns of allows: at worst, what the user's account allows.
 import { spawn } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const SCRIPT_TIMEOUT = 20_000
 const CHILD = fileURLToPath(new URL('./script-child.js', import.meta.url))
 
 // The child's flags and no others: the host's own (loaders, --expose-internals) are not
-// the child's. --permission with no --allow-* flag is the wall. The heap is bounded, and
-// script-child.js needs the vm modules flag for its import hook.
-const CHILD_FLAGS = ['--permission', '--max-old-space-size=128', '--experimental-vm-modules']
+// the child's. --permission with no --allow-* flag refuses what the list above says;
+// node:sqlite is outside that model and goes by its own flag. Memory: the script's is
+// the interpreter's WebAssembly memory, capped here at 2,048 pages of 64 KiB (128 MB),
+// past which the script gets an out-of-memory error of its own; the old space of the
+// child's own heap is capped beside it.
+const CHILD_FLAGS = ['--permission', '--no-experimental-sqlite', '--wasm-max-mem-pages=2048', '--max-old-space-size=128']
 
-// The longest helper arguments a script may send (script-child.js refuses more before
+// The longest helper arguments a script may send (the child refuses more before
 // sending), and the longest line that can carry them: JSON escaping makes at most six
 // characters of one.
 const MAX_ARGS = 4_000_000
@@ -42,7 +69,7 @@ function childEnv() {
   return env
 }
 
-// What script-child.js sends and nothing else: a call of one of the helpers, or the one
+// What the child sends and nothing else: a call of one of the helpers, or the one
 // answer. Anything else comes from a child that is no longer ours.
 function readMessage(line, helpers) {
   let message
@@ -64,6 +91,11 @@ export function runIsolatedScript(body, helpers, { timeout = SCRIPT_TIMEOUT, ent
   return new Promise((resolve, reject) => {
     let settled = false
     let child
+    let folder
+    // The folder goes when the child is gone: only then is nothing writing into it.
+    const clear = () => {
+      try { if (folder !== undefined) rmSync(folder, { recursive: true, force: true }) } catch {}
+    }
     const end = (settle, value) => {
       if (settled) return
       settled = true
@@ -76,12 +108,17 @@ export function runIsolatedScript(body, helpers, { timeout = SCRIPT_TIMEOUT, ent
     // The kill stops a script that never yields, which a Promise.race cannot.
     const timer = setTimeout(() => end(reject, new Error(`Script ran longer than ${timeout / 1000} seconds.`)), timeout)
     try {
+      // An empty working folder of the run's own: what Node itself writes for a process
+      // (a trace log, a snapshot at the heap limit) lands there and not in the host's.
+      folder = mkdtempSync(join(tmpdir(), 'browser-exec-'))
       child = spawn(process.execPath, [...CHILD_FLAGS, entry], {
+        cwd: folder,
         env: childEnv(),
         stdio: ['pipe', 'pipe', 'ignore'],
         windowsHide: true,
       })
     } catch (error) {
+      clear()
       end(reject, new Error(`Could not start the script: ${error?.message ?? error}`))
       return
     }
@@ -133,8 +170,15 @@ export function runIsolatedScript(body, helpers, { timeout = SCRIPT_TIMEOUT, ent
     // A killed child closes its pipes under a write; the exit below reports it.
     child.stdin.on('error', () => {})
     child.stdout.on('error', () => {})
-    child.on('error', error => end(reject, new Error(`Script stopped: ${error?.message ?? error}`)))
-    child.on('exit', (code, signal) => end(reject, new Error(`Script stopped before it finished (${signal ?? `exit ${code}`}).`)))
+    child.on('error', (error) => {
+      // No process came of it: nothing will exit.
+      if (child.pid === undefined) clear()
+      end(reject, new Error(`Script stopped: ${error?.message ?? error}`))
+    })
+    child.on('exit', (code, signal) => {
+      clear()
+      end(reject, new Error(`Script stopped before it finished (${signal ?? `exit ${code}`}).`))
+    })
     send({ type: 'start', body, names: Object.keys(helpers), wait: timeout })
   })
 }

@@ -1,8 +1,10 @@
 // The host's side of test/browser-script-wall.test.js, run by the runtime under test
-// (Node, or Electron as Node): it starts browser-script-wall-child.mjs through the real
-// runner, so the flags, the environment and the channel are the runner's own, and prints
-// what came of it as one line of JSON.
+// (Node, or Electron as Node). It goes through the real runner, so the flags, the
+// environment and the channel are the runner's own, and prints what came of it as one
+// line of JSON. With a check it starts browser-script-wall-child.mjs in the child's
+// place; with a script it runs that script in the real child.
 //   <runtime> browser-script-wall-host.mjs '<{"check": ..., "timeout": ms, ...}>'
+//   <runtime> browser-script-wall-host.mjs '<{"script": "...", "timeout": ms}>'
 import childProcess from 'node:child_process'
 import { syncBuiltinESMExports } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -18,10 +20,12 @@ syncBuiltinESMExports()
 const { runIsolatedScript } = await import('../../src/host/browser/script-runner.js')
 
 let helperCalls = 0
-const helpers = { goto: async () => { helperCalls += 1; return 'ok' } }
-const result = { node: process.versions.node, electron: process.versions.electron ?? null }
+const helpers = { goto: async (url) => { helperCalls += 1; return `went to ${url}` } }
+const result = { node: process.versions.node, electron: process.versions.electron ?? null, hostCwd: process.cwd() }
 try {
-  result.answer = await runIsolatedScript(JSON.stringify(request), helpers, { timeout: request.timeout, entry })
+  result.answer = typeof request.script === 'string'
+    ? await runIsolatedScript(request.script, helpers, { timeout: request.timeout })
+    : await runIsolatedScript(JSON.stringify(request), helpers, { timeout: request.timeout, entry })
 } catch (error) {
   result.error = String(error?.message ?? error)
 }

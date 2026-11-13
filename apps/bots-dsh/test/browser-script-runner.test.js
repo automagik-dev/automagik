@@ -34,7 +34,7 @@ function observeChildren(t) {
   return children
 }
 
-test('the child starts without host environment or flags and with a bounded heap', async t => {
+test('the child starts with the runner\'s flags and folder, and without the host\'s environment', async t => {
   const children = observeChildren(t)
   const name = 'BROWSER_SCRIPT_TEST_SECRET'
   const previous = process.env[name]
@@ -50,8 +50,11 @@ test('the child starts without host environment or flags and with a bounded heap
   assert.equal(options.env[name], undefined)
   assert.deepEqual(Object.keys(options.env).filter(key => !['SystemRoot', 'ELECTRON_RUN_AS_NODE'].includes(key)), [])
   // The flags, then the child's file: no --allow-* flag grants anything back.
-  assert.deepEqual(args.slice(0, -1), ['--permission', '--max-old-space-size=128', '--experimental-vm-modules'])
+  assert.deepEqual(args.slice(0, -1), ['--permission', '--no-experimental-sqlite', '--wasm-max-mem-pages=2048', '--max-old-space-size=128'])
   assert.match(args.at(-1), /script-child\.js$/)
+  // Its working folder is the run's own, not the host's.
+  assert.match(options.cwd, /browser-exec-/)
+  assert.notEqual(options.cwd, process.cwd())
   // No Node IPC channel: the host reads and checks every line itself.
   assert.deepEqual(options.stdio, ['pipe', 'pipe', 'ignore'])
 })
@@ -134,12 +137,15 @@ test('a helper error rejects inside the script and can be caught there', async (
   assert.equal(answer, 'caught: The browser has no open tabs.')
 })
 
-test('a script error rejects the run with its message', async () => {
-  await assert.rejects(runIsolatedScript('throw new Error("boom")', {}), /boom/)
-  await assert.rejects(runIsolatedScript('this is not javascript', {}), /Unexpected|SyntaxError|identifier/i)
+test('a script error rejects the run with its message, and its kind when it has one', async () => {
+  await assert.rejects(runIsolatedScript('throw new Error("boom")', {}), { message: 'boom' })
+  await assert.rejects(runIsolatedScript('throw "plain"', {}), { message: 'plain' })
+  await assert.rejects(runIsolatedScript('this is not javascript', {}), /^Error: SyntaxError: /)
+  await assert.rejects(runIsolatedScript('null.x', {}), /^Error: TypeError: .*'x'/)
+  await assert.rejects(runIsolatedScript('await gotoo("x")', {}), /^Error: ReferenceError: .*gotoo/)
 })
 
-test('the script cannot reach Node: process, require, import(), fetch and constructor escapes all fail', async () => {
+test('the script has no Node to reach: process, require, import(), fetch and the Function constructor find none', async () => {
   const probes = {
     process: 'return typeof process',
     require: 'return typeof require',
@@ -161,7 +167,7 @@ test('the script cannot reach Node: process, require, import(), fetch and constr
   await assert.rejects(runIsolatedScript('await import("node:fs")', {}))
 })
 
-test('import rejection never exposes a Node error constructor, including generated code', async () => {
+test('imports find nothing to load, however they are written, and the error is the script\'s own', async () => {
   const probes = [
     'await import("node:fs")',
     'await import("https://example.com/module.js")',
@@ -176,14 +182,16 @@ test('import rejection never exposes a Node error constructor, including generat
     const answer = await runIsolatedScript(`
       try { ${probe} } catch (error) {
         try { return typeof error.constructor.constructor('return process')() }
-        catch { return 'blocked' }
+        catch { return 'no process' }
       }
       return 'import allowed'
     `, {})
-    assert.equal(answer, 'blocked', probe)
+    assert.ok(answer === 'undefined' || answer === 'no process', `${probe}: ${answer}`)
   }
-  const stack = await runIsolatedScript('try { await import("node:fs") } catch (error) { return error.stack }', {})
-  assert.equal(stack, 'Error: Imports are not available.')
+  const message = await runIsolatedScript('try { await import("node:fs") } catch (error) { return error.message }', {})
+  assert.equal(message, 'Imports are not available.')
+  // An import statement is not part of a function body at all.
+  await assert.rejects(runIsolatedScript('import fs from "node:fs"', {}), /SyntaxError/)
 })
 
 test('a script that never yields is killed at the timeout and the host keeps running', async t => {
@@ -235,11 +243,6 @@ test('a rewritten String cannot make the answer anything but text', async () => 
   assert.equal(answer, 'x')
 })
 
-test('no stack hook can be installed in the script', async () => {
-  const answer = await runIsolatedScript('try { Error.prepareStackTrace = () => 1 } catch { return "locked" } return String(Error.prepareStackTrace)', {})
-  assert.ok(answer === 'locked' || answer === 'undefined', answer)
-})
-
 test('a trailing undefined argument keeps the helper default', async () => {
   const seen = []
   await runIsolatedScript('await click("e3", undefined); done("ok")', { click: async (...args) => { seen.push(args); return 'clicked' } })
@@ -251,8 +254,8 @@ test('a helper result that is not JSON reaches the script as undefined, and an u
   assert.equal(await runIsolatedScript('goto("x"); await new Promise(r => setTimeout(r, 50)); done("still here")', { goto: async () => { throw new Error('no') } }), 'still here')
 })
 
-test('a script that exhausts its heap ends only its own process', async () => {
-  await assert.rejects(runIsolatedScript("const a = 'A'.repeat(60 * 1024 * 1024); const parts = []; for (;;) parts.push(a + parts.length)", {}, { timeout: 15_000 }))
+test('a script that runs out of memory is told so and the host keeps running', async () => {
+  await assert.rejects(runIsolatedScript("const a = 'A'.repeat(60 * 1024 * 1024); const parts = []; for (;;) parts.push(a + parts.length)", {}, { timeout: 15_000 }), /out of memory/)
   assert.equal(await runIsolatedScript('done("alive")', {}), 'alive')
 })
 
@@ -261,7 +264,13 @@ test('an oversized helper argument is refused inside the script', async () => {
   assert.match(answer, /larger than 4 MB/)
 })
 
-test('error stacks carry no frames, so no host paths', async () => {
-  const answer = await runIsolatedScript('try { null.x } catch (error) { return error.stack + " | " + new Error("m").stack }', {})
-  assert.doesNotMatch(answer, /script-child|node:internal|[A-Za-z]:[\\/]/)
+test('an answer longer than 4 MB is refused with an error that says so', async () => {
+  await assert.rejects(runIsolatedScript("done('A'.repeat(5 * 1024 * 1024))", {}), /longer than 4 MB/)
+  assert.equal((await runIsolatedScript("done('A'.repeat(4_000_000))", {})).length, 4_000_000)
+})
+
+test('error stacks name the script\'s own frames and no path of the host', async () => {
+  const answer = await runIsolatedScript('function inner() { null.x }\ntry { inner() } catch (error) { return error.stack + " | " + new Error("m").stack }', {})
+  assert.match(answer, /at inner /)
+  assert.doesNotMatch(answer, /script-child|node:|[\\/]/)
 })
