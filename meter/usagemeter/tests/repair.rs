@@ -60,12 +60,41 @@ impl Fx {
         events: i64,
         state: Option<&str>,
     ) {
+        Fx::put_m(dir, id, harness, h, v, events, state, "mach", None);
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn put_m(
+        dir: &Path,
+        id: &str,
+        harness: &str,
+        h: &str,
+        v: [i64; 7],
+        events: i64,
+        state: Option<&str>,
+        machine: &str,
+        branch: Option<&str>,
+    ) {
+        Fx::put_full(dir, id, harness, h, v, events, state, machine, branch, None);
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn put_full(
+        dir: &Path,
+        id: &str,
+        harness: &str,
+        h: &str,
+        v: [i64; 7],
+        events: i64,
+        state: Option<&str>,
+        machine: &str,
+        branch: Option<&str>,
+        repo: Option<&str>,
+    ) {
         Fx::conn(dir)
             .execute(
                 "INSERT INTO usage(id, hour_ms, harness, model, machine, precision, events,
                    updated_ms, actor_state, input_uncached, cache_read, cache_write_5m,
-                   cache_write_1h, output, reasoning, unsplit)
-                 VALUES (?1, ?2, ?3, 'm', 'mach', 'exact', ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                   cache_write_1h, output, reasoning, unsplit, branch, repo)
+                 VALUES (?1, ?2, ?3, 'm', ?13, 'exact', ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?14, ?15)",
                 rusqlite::params![
                     id,
                     hour(h),
@@ -78,7 +107,10 @@ impl Fx {
                     v[3],
                     v[4],
                     v[5],
-                    v[6]
+                    v[6],
+                    machine,
+                    branch,
+                    repo
                 ],
             )
             .unwrap();
@@ -958,4 +990,472 @@ fn a_failed_apply_never_removes_the_lock_file() {
     assert_eq!(Fx::db_hash(&fx.store), h);
     // And it is still a lock file a sync can take: not held after the failed apply.
     assert!(meter::paths::try_lock(&fx.store).unwrap().is_some());
+}
+
+const ALPHA: &str = "example.test/org/alpha";
+const BETA: &str = "example.test/org/beta";
+
+/// Every column of every row of a store, by id: what "byte-unchanged" compares.
+fn all_rows(dir: &Path) -> Vec<String> {
+    let c = Fx::conn(dir);
+    let mut st = c.prepare("SELECT * FROM usage ORDER BY id").unwrap();
+    let n = st.column_count();
+    let rows = st
+        .query_map([], |r| {
+            Ok((0..n)
+                .map(|i| format!("{:?}", r.get_ref(i).unwrap()))
+                .collect::<Vec<_>>()
+                .join("|"))
+        })
+        .unwrap();
+    rows.map(|r| r.unwrap()).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sr(fx: &Fx, id: &str, v: i64, ev: i64, machine: &str, branch: &str, repo: &str) {
+    Fx::put_full(
+        &fx.store,
+        id,
+        "dsh-tui",
+        H8,
+        cols(CR, v),
+        ev,
+        None,
+        machine,
+        Some(branch),
+        Some(repo),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn or(fx: &Fx, id: &str, v: i64, ev: i64, repo: &str) {
+    Fx::put_full(
+        &fx.oracle,
+        id,
+        "dsh-tui",
+        H8,
+        cols(CR, v),
+        ev,
+        None,
+        "machine-scratch",
+        Some("branch-z"),
+        Some(repo),
+    );
+}
+
+#[test]
+fn coarse_puts_the_shortfall_on_one_new_row_labelled_with_the_one_short_repo() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // A group of two store rows (two machines, two branches, two repos); the oracle, built in a
+    // scratch home, has other machine and branch labels. Only alpha is short: 65 against 40.
+    sr(&fx, "a", 40, 3, "machine-one", "branch-x", ALPHA);
+    sr(&fx, "b", 60, 2, "machine-two", "branch-y", BETA);
+    or(&fx, "o1", 65, 3, ALPHA);
+    or(&fx, "o2", 60, 2, BETA);
+    // Without the option the exact key stays: nothing matches, the plan refuses.
+    let d = repair::execute(&fx.opts(&[])).unwrap();
+    assert_eq!(d.code, exit::CONSERVATION, "{}", d.report.to_text(d.code));
+    assert_eq!(d.report.to_json(d.code)["match"]["mode"], "exact");
+    let old = all_rows(&fx.store);
+    let d = repair::execute(&fx.opts(&["--coarse"])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert!(d.report.passed());
+    assert_eq!(d.report.total_change(), 25);
+    let j = d.report.to_json(d.code);
+    assert_eq!(j["match"]["mode"], "coarse");
+    assert_eq!(j["match"]["store_rows"], 2);
+    assert_eq!(j["match"]["max_rows_per_group"], 2);
+    assert_eq!(j["new_rows_created"], 1);
+    assert_eq!(j["existing_rows_changed"], 0);
+    let t = &j["top_ups"][0];
+    assert_eq!(t["kind"], "new_row");
+    assert_eq!(t["receiving_row"]["repo"], ALPHA);
+    assert_eq!(t["receiving_row"]["machine"], "");
+    assert!(t["receiving_row"]["branch"].is_null());
+    assert_eq!(t["receiving_row"]["precision"], "exact");
+    assert_eq!(t["group_rows"], 2);
+    assert_eq!(t["added"]["cache_read"], 25);
+    assert_eq!(j["added_by_day"][0]["tokens"], 25);
+    let text = d.report.to_text(d.code);
+    assert!(
+        text.contains("as a NEW row:") && text.contains(&format!("repo={ALPHA}")),
+        "{text}"
+    );
+    assert!(text.contains("(group of 2 store rows)"), "{text}");
+    assert!(text.contains("dsh-tui 2026-11-08: +25"), "{text}");
+    assert!(
+        text.contains("new rows created: 1; existing rows changed: 0"),
+        "{text}"
+    );
+    // Apply: one new row, every old row byte-unchanged.
+    let c = fx.copy("c.db");
+    let d = repair::execute(&fx.apply_opts(&["--coarse"], &c)).unwrap();
+    assert_eq!(d.code, exit::OK);
+    let new = all_rows(&fx.store);
+    assert_eq!(new.len(), old.len() + 1);
+    for r in &old {
+        assert!(new.contains(r), "an existing row changed: {r}");
+    }
+    // The new row, read as one string of every label column: NULL shown as "-".
+    let row: String = Fx::conn(&fx.store)
+        .query_row(
+            "SELECT id || '|' || machine || '|' || coalesce(repo, '-') || '|' ||
+                    coalesce(branch, '-') || '|' || coalesce(actor_state, '-') || '|' ||
+                    events || '|' || cache_read || '|' || coalesce(bot, '-')
+             FROM usage WHERE id LIKE 'repair1126:%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let f: Vec<&str> = row.split('|').collect();
+    let (id, machine, repo, branch, state, events, cr, bot) =
+        (f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+    assert!(id.starts_with("repair1126:"));
+    assert_eq!(
+        (machine, repo, branch, state, events, cr, bot),
+        ("", ALPHA, "-", "-", "0", "25", "-")
+    );
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H8, CR), 125);
+    assert_eq!(Fx::events(&fx.store), 5);
+    // A rerun finds nothing: the new row is in the group's sums.
+    assert_eq!(
+        repair::execute(&fx.apply_opts(&["--coarse"], &c))
+            .unwrap()
+            .code,
+        exit::NOTHING
+    );
+}
+
+#[test]
+fn coarse_leaves_the_repo_empty_when_no_single_repo_is_short() {
+    let _g = common_serial();
+    // Alpha +30, beta -20: the group is 10 short, but a repo is over, so the repo stays empty.
+    let fx = Fx::new();
+    sr(&fx, "a", 40, 3, "machine-one", "branch-x", ALPHA);
+    sr(&fx, "b", 60, 2, "machine-two", "branch-y", BETA);
+    or(&fx, "o1", 70, 3, ALPHA);
+    or(&fx, "o2", 40, 2, BETA);
+    let d = repair::execute(&fx.opts(&["--coarse"])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(d.report.total_change(), 10);
+    let t = &d.report.to_json(d.code)["top_ups"][0];
+    assert_eq!(t["kind"], "new_row");
+    assert!(t["receiving_row"]["repo"].is_null());
+    // Two repos short: also empty.
+    let fx = Fx::new();
+    sr(&fx, "a", 40, 3, "machine-one", "branch-x", ALPHA);
+    sr(&fx, "b", 60, 2, "machine-two", "branch-y", BETA);
+    or(&fx, "o1", 50, 3, ALPHA);
+    or(&fx, "o2", 75, 2, BETA);
+    let d = repair::execute(&fx.opts(&["--coarse"])).unwrap();
+    assert_eq!(d.report.total_change(), 25);
+    assert!(d.report.to_json(d.code)["top_ups"][0]["receiving_row"]["repo"].is_null());
+    let c = fx.copy("c.db");
+    repair::execute(&fx.apply_opts(&["--coarse"], &c)).unwrap();
+    let repo: Option<String> = Fx::conn(&fx.store)
+        .query_row(
+            "SELECT repo FROM usage WHERE id LIKE 'repair1126:%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(repo, None);
+}
+
+#[test]
+fn a_repo_alias_joins_two_names_of_one_repo() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // The store knows the repo as dev/alpha, the oracle as si/alpha.
+    sr(
+        &fx,
+        "a",
+        40,
+        3,
+        "machine-one",
+        "branch-x",
+        "example.test/dev/alpha",
+    );
+    or(&fx, "o1", 65, 3, "example.test/si/alpha");
+    // No alias: two repos, one over and one short: empty.
+    let d = repair::execute(&fx.opts(&["--coarse"])).unwrap();
+    assert!(d.report.to_json(d.code)["top_ups"][0]["receiving_row"]["repo"].is_null());
+    // The alias: one repo, short by 25, in the store's naming; printed in the header.
+    let alias = "example.test/si/=example.test/dev/";
+    let d = repair::execute(&fx.opts(&["--coarse", "--repo-alias", alias])).unwrap();
+    assert_eq!(d.code, exit::OK);
+    let j = d.report.to_json(d.code);
+    assert_eq!(
+        j["top_ups"][0]["receiving_row"]["repo"],
+        "example.test/dev/alpha"
+    );
+    assert_eq!(j["repo_aliases"][0]["old"], "example.test/si/");
+    assert!(
+        d.report
+            .to_text(d.code)
+            .contains(&format!("repo aliases: {alias}"))
+    );
+    // An alias needs --coarse and the form OLD=NEW.
+    for bad in [
+        vec!["--repo-alias", alias],
+        vec!["--coarse", "--repo-alias", "nope"],
+    ] {
+        let mut a: Vec<String> = ["--store", "s", "--against", "o"]
+            .map(String::from)
+            .to_vec();
+        a.extend(bad.iter().map(|x| x.to_string()));
+        assert!(repair::parse(&a, NOW).is_err());
+    }
+}
+
+#[test]
+fn without_coarse_two_oracle_machines_match_their_exact_rows() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    Fx::put_m(
+        &fx.store,
+        "a",
+        "dsh-tui",
+        H8,
+        cols(CR, 50),
+        1,
+        None,
+        "machine-one",
+        None,
+    );
+    Fx::put_m(
+        &fx.store,
+        "b",
+        "dsh-tui",
+        H8,
+        cols(CR, 70),
+        1,
+        None,
+        "machine-two",
+        None,
+    );
+    Fx::put_m(
+        &fx.oracle,
+        "oa",
+        "dsh-tui",
+        H8,
+        cols(CR, 60),
+        1,
+        None,
+        "machine-one",
+        None,
+    );
+    Fx::put_m(
+        &fx.oracle,
+        "ob",
+        "dsh-tui",
+        H8,
+        cols(CR, 70),
+        1,
+        None,
+        "machine-two",
+        None,
+    );
+    let d = repair::execute(&fx.opts(&[])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(d.report.total_change(), 10);
+    assert_eq!(d.report.to_json(d.code)["match"]["mode"], "exact");
+    let c = fx.copy("c.db");
+    repair::execute(&fx.apply_opts(&[], &c)).unwrap();
+    let cr = |id: &str| -> i64 {
+        Fx::conn(&fx.store)
+            .query_row("SELECT cache_read FROM usage WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    };
+    assert_eq!((cr("a"), cr("b")), (60, 70));
+}
+
+const H14: &str = "2026-11-10T14:00:00Z";
+
+#[test]
+fn an_hour_bound_leaves_the_later_hours_out_of_every_check() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // Before the bound: short, to be topped up. At and after it: the oracle holds more, events
+    // differ, and the evidence is above the rollup: all of it must stay out of the run.
+    fx.s("early", "dsh-tui", "2026-11-10T13:00:00Z", cols(CR, 10), 1);
+    fx.o("early", "dsh-tui", "2026-11-10T13:00:00Z", cols(CR, 25), 1);
+    // Before the start bound: short too, and out of the run.
+    fx.s("twelve", "dsh-tui", "2026-11-10T12:00:00Z", cols(CR, 10), 1);
+    fx.o("twelve", "dsh-tui", "2026-11-10T12:00:00Z", cols(CR, 20), 1);
+    fx.s("late", "dsh-tui", H14, cols(CR, 10), 1);
+    fx.o("late", "dsh-tui", H14, cols(CR, 99), 7);
+    fx.s("later", "dsh-tui", "2026-11-10T15:00:00Z", cols(CR, 5), 1);
+    Fx::conn(&fx.store)
+        .execute(
+            "INSERT INTO evidence(ts_ms, dim, actor, cache_read) VALUES (?1, 0, 0, 500)",
+            rusqlite::params![hour(H14) + 5],
+        )
+        .unwrap();
+    // The whole day: the later hours break the run (events differ, evidence above the rollup).
+    let d = repair::execute(&fx.opts(&["--from", "2026-11-10", "--until", "2026-11-10"])).unwrap();
+    assert_eq!(d.code, exit::CONSERVATION);
+    // Up to the hour: only 13:00 is in the plan, and the checks do not see 14:00.
+    let args = ["--from", "2026-11-10T13:00:00Z", "--until", H14];
+    let d = repair::execute(&fx.opts(&args)).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(d.report.total_change(), 15);
+    assert_eq!(d.report.to_json(d.code)["range"]["until"], H14);
+    assert!(
+        d.report
+            .to_text(d.code)
+            .contains("up to 2026-11-10T14:00:00Z")
+    );
+    // Apply writes the 13:00 hour and leaves 14:00 and 15:00 as they were.
+    let c = fx.copy("c.db");
+    let d = repair::execute(&fx.apply_opts(&args, &c)).unwrap();
+    assert_eq!(d.code, exit::OK);
+    assert_eq!(
+        Fx::col(&fx.store, "dsh-tui", "2026-11-10T13:00:00Z", CR),
+        25
+    );
+    assert_eq!(
+        Fx::col(&fx.store, "dsh-tui", "2026-11-10T12:00:00Z", CR),
+        10
+    );
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H14, CR), 10);
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", "2026-11-10T15:00:00Z", CR), 5);
+    // A start on the hour works the same way: 13:00 is out of a run that starts at 14:00.
+    let d = repair::execute(&fx.opts(&["--from", H14, "--until", "2026-11-10T15:00:00Z"])).unwrap();
+    assert_eq!(d.code, exit::CONSERVATION, "{}", d.report.to_text(d.code));
+}
+
+#[test]
+fn a_time_not_on_the_hour_is_refused() {
+    let fx = Fx::new();
+    for bad in [
+        "2026-11-10T14:30:00Z",
+        "2026-11-10T14:00:01Z",
+        "2026-11-10T14:00:00+01:00",
+        "2026-11-10T14:00:00",
+        "2026-11-10 14:00",
+    ] {
+        for flag in ["--from", "--until"] {
+            let a: Vec<String> = ["--store", "s", "--against", "o", flag, bad]
+                .map(String::from)
+                .to_vec();
+            let e = repair::parse(&a, NOW).unwrap_err();
+            assert!(e.contains("exactly on the hour"), "{flag} {bad}: {e}");
+        }
+    }
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+        .arg("repair")
+        .arg("--store")
+        .arg(&fx.store)
+        .arg("--against")
+        .arg(&fx.oracle)
+        .args(["--until", "2026-11-10T14:30:00Z"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    // On the hour is accepted, by both flags.
+    let a: Vec<String> = [
+        "--store",
+        "s",
+        "--against",
+        "o",
+        "--from",
+        "2026-11-10T13:00:00Z",
+        "--until",
+        H14,
+    ]
+    .map(String::from)
+    .to_vec();
+    let o = repair::parse(&a, NOW).unwrap();
+    assert_eq!((o.until_ms - o.from_ms) / HOUR_MS, 1);
+}
+
+#[test]
+fn a_new_coarse_row_reads_in_status_and_query() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    sr(&fx, "a", 40, 3, "machine-one", "branch-x", ALPHA);
+    or(&fx, "o1", 65, 3, ALPHA);
+    let c = fx.copy("c.db");
+    assert_eq!(
+        repair::execute(&fx.apply_opts(&["--coarse"], &c))
+            .unwrap()
+            .code,
+        exit::OK
+    );
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+            .args(args)
+            .env_clear()
+            .env("METER_STATE_DIR", &fx.store)
+            .env("HOME", &fx.scratch)
+            .output()
+            .unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).to_string(),
+        )
+    };
+    // status: the store opens and counts the new row (rows 2), nothing breaks on the empty labels.
+    let (code, out) = run(&["status"]);
+    assert_eq!(code, Some(0), "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["rows"], 2, "{out}");
+    // query: answers, branch rows count by branch window so the branch-less row is in none of
+    // them; its precision is one the query accepts (it reads rows of `exact`/`total_only`).
+    let q = |store: &Path, repo: &str| {
+        let o = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+            .args([
+                "query",
+                "--repo",
+                repo,
+                "--branch",
+                "main",
+                "--json",
+                "--since",
+                "2026-11-08T00:00:00Z",
+                "--until",
+                "2026-11-09T00:00:00Z",
+                "--stale-after",
+                "2592000",
+            ])
+            .env_clear()
+            .env("METER_STATE_DIR", store)
+            .env("HOME", &fx.scratch)
+            .output()
+            .unwrap();
+        (
+            o.status.code(),
+            serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap(),
+        )
+    };
+    let (code, v) = q(&fx.store, ALPHA);
+    assert_eq!(code, Some(0), "{v}");
+    assert_eq!(v["status"], "ok");
+    println!(
+        "QUERY_ALPHA unattributed={} rows={}",
+        v["unattributed"], v["rows"]
+    );
+    // A new row with no repo: the query's unattributed bucket may hold it.
+    let fx2 = Fx::new();
+    sr(&fx2, "a", 40, 3, "machine-one", "branch-x", ALPHA);
+    sr(&fx2, "b", 60, 2, "machine-two", "branch-y", BETA);
+    or(&fx2, "o1", 70, 3, ALPHA);
+    or(&fx2, "o2", 40, 2, BETA);
+    let c2 = fx2.copy("c.db");
+    assert_eq!(
+        repair::execute(&fx2.apply_opts(&["--coarse"], &c2))
+            .unwrap()
+            .code,
+        exit::OK
+    );
+    let (code, v) = q(&fx2.store, ALPHA);
+    assert_eq!(code, Some(0), "{v}");
+    println!(
+        "QUERY_EMPTY unattributed={} rows={}",
+        v["unattributed"], v["rows"]
+    );
 }
