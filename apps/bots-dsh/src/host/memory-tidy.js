@@ -232,13 +232,22 @@ export function installTidy(rt, memory) {
     const last = doneOf(job.scope)
     return last?.day !== today() && changedSince(scopeKey(job.scope), last?.time)
   }
+  // The daily tidy asks a model once a day without anyone asking, so it is off
+  // until someone turns it on: the host's setting turns it on for every memory,
+  // and a Bot's own switch (Advanced settings) for that Bot's own memory alone. A
+  // host that says false keeps it off whatever a Bot says.
+  const tidyAllowed = config.memoryTidy !== false
+  const tidyAll = config.memoryTidy === true
+  const ownTidy = botId => tidyAllowed && rt.botOf(botId)?.memoryTidy === true
+  const tidyOn = job => tidyAll || (job.scope.kind === 'bot' && ownTidy(job.scope.botId))
+  const memoryTidyStatus = botId => ({ enabled: tidyAll || ownTidy(botId), allowed: tidyAllowed, always: tidyAll })
   let running = false
   async function tick() {
     if (running || rt.readOnly() !== undefined) return
     running = true
     try {
       await rt.load()
-      const job = jobs().find(due)
+      const job = jobs().filter(tidyOn).find(due)
       if (job !== undefined) await tidy(job)
     } catch (error) {
       rt.warn('omni-ui: the memory tidy failed: %s', typeof error?.code === 'string' ? error.code : 'error')
@@ -247,7 +256,7 @@ export function installTidy(rt, memory) {
     }
   }
 
-  if (config.memoryTidy === true) {
+  if (tidyAllowed) {
     ctx.effect(() => {
       const timer = setInterval(() => void tick(), config.memoryTidyEveryMs ?? EVERY_MS)
       timer.unref?.()
@@ -260,5 +269,5 @@ export function installTidy(rt, memory) {
     const job = jobs().find(item => scopeKey(item.scope) === key)
     if (job !== undefined && doneOf(job.scope)?.day !== today()) await tidy(job)
   }
-  return { tidyView, undoTidy, tidyNow }
+  return { tidyView, undoTidy, tidyNow, memoryTidyStatus }
 }

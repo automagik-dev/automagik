@@ -44,7 +44,8 @@ import { output } from './tools.js'
 export { MEMORY_LIMITS, addLink, cleanEntry, cleanTopic, formatEntry, insertEntry, looksLikeKey, looksSecret, matchEntries, parseAsk, parseMemory, parseReview, removeLink, reviewEntries, splitMeta } from './memory-entries.js'
 export { writtenIn } from './memory-copy.js'
 
-// MEMORY.md overflow is explicit: users move details to a topic themselves.
+// Where entries go when MEMORY.md is at its size.
+const OVERFLOW = 'earlier'
 const RECALL_MAX = 30
 // A model's window is looked up this often, not on every step.
 const WINDOW_ASK_MS = 10 * 60_000
@@ -69,9 +70,20 @@ const SUMMARY_MAX_TOKENS = 16_384
 const SUMMARY_RETRY_MAX_TOKENS = 32_768
 function providerFailure(failure) {
   const label = [failure?.code, failure?.status].filter(part => part !== undefined && part !== '').join(' ')
-  return new Error(`The provider returned an error${label === '' ? '' : ` (${label})`}`)
+  return modelFailure(`The provider returned an error${label === '' ? '' : ` (${label})`}`)
 }
-const failureCode = error => (typeof error?.code === 'string' && /^[\w./-]{1,40}$/.test(error.code) ? error.code : 'error')
+// What a failure may say. A log line and a foreign failure (the file system, a provider) give
+// a code only: their own words can quote a path, an entry or a provider's reply. Memory's own
+// refusals carry a `memory/` code and keep their sentence for the Bot and the panel.
+const failureCode = (error, kind = 'error') => (typeof error?.code === 'string' && /^[\w./-]{1,40}$/.test(error.code) ? error.code : kind)
+const ownFailure = error => typeof error?.code === 'string' && error.code.startsWith('memory/')
+// A write also keeps the sentence of a plain uncoded Error, which only this plugin's own
+// checks throw; the file system's failures carry a code and a parser's are a subclass.
+const ownWriteFailure = error => ownFailure(error) || (error?.constructor === Error && error.code === undefined)
+// A failed model call, in memory's own words: never the provider's.
+const MODEL_FAILED = 'memory/model-failed'
+const modelFailure = message => Object.assign(new Error(message), { code: MODEL_FAILED })
+const failureText = (error, kind = 'error') => (ownFailure(error) ? String(error.message) : failureCode(error, kind))
 const SUMMARY_TEXT_MAX = 8_000
 const ASK_TEXT_MAX = 2_000
 const ASK_CHANGES_MAX = 20
@@ -93,12 +105,13 @@ export function install(rt) {
       renewMemory: () => {},
       archiveBotMemory: async () => {},
       archiveGroupMemory: async () => {},
-      memoryEndpoint: async () => { throw new Error('Memory is turned off on this host') },
-      memoryEdit: async () => { throw new Error('Memory is turned off on this host') },
-      memoryAdd: async () => { throw new Error('Memory is turned off on this host') },
+      memoryEndpoint: async () => { throw Object.assign(new Error('Memory is turned off on this host'), { code: REFUSED }) },
+      memoryEdit: async () => { throw Object.assign(new Error('Memory is turned off on this host'), { code: REFUSED }) },
+      memoryAdd: async () => { throw Object.assign(new Error('Memory is turned off on this host'), { code: REFUSED }) },
       memoryNews: () => ({}),
       memoryReviews: () => 0,
       memoryReviewStatus: () => ({ enabled: false, allowed: false, pending: false, running: false }),
+      memoryTidyStatus: () => ({ enabled: false, allowed: false, always: false }),
     })
     return
   }
@@ -435,17 +448,54 @@ export function install(rt) {
   // ---------------------------------------------------------------------------
   // Changes. Each runs alone, rereads the files, and returns what changed.
 
-  // MEMORY.md keeps its bounded, resident set. Old entries are moved only when the
-  // user explicitly saves them in a topic; automatic overflow movement stays off.
+  // Memory never refuses a fact for lack of room. MEMORY.md is what every conversation
+  // reads, so past its size the oldest entries move to a topic, in the same change, and
+  // recall still finds them. A topic is only as long as one recall can read; a full one
+  // continues in `<name>-2`.
   const bodyOf = lines => bodySize(parseMemory(joinLines(lines)))
   const sizeNote = (file, scope) => (file.topic === undefined ? `${MAIN}: ${bodySize(file)} of ${mainLimit(scope)} characters` : `${file.file}: ${file.content.length} of ${MEMORY_LIMITS.topic} characters`)
-  function makeRoom(files, scope, lines) {
+
+  const overflowName = at => (at === 1 ? OVERFLOW : `${OVERFLOW}-${at}`)
+  function placeMoved(files, moved) {
+    const placed = new Map()
+    let at = 1
+    let size = files.find(file => file.topic === overflowName(at))?.content.length ?? 0
+    for (const line of moved) {
+      while (size > 0 && size + line.length + 1 > MEMORY_LIMITS.topic) {
+        at += 1
+        size = files.find(file => file.topic === overflowName(at))?.content.length ?? 0
+      }
+      placed.set(overflowName(at), [...placed.get(overflowName(at)) ?? [], line])
+      size += line.length + 1
+    }
+    return placed
+  }
+
+  // `keep` is the line this change writes, which is not the one to move.
+  function makeRoom(files, scope, lines, keep) {
     const main = files[0]
     const limit = mainLimit(scope)
-    if (bodyOf(lines) > limit && bodyOf(lines) > bodySize(main)) {
-      throw new Error(`${capital(scope.kind === 'team' ? 'The team memory' : 'Memory')}'s MEMORY.md would have ${bodyOf(lines)} of its ${limit} characters. Make room first: move details into a topic (remember with topic, then forget them here), merge entries with replace, or forget what no longer matters.`)
+    let kept = lines
+    let moved = []
+    let placed = new Map()
+    const linked = () => [...placed.keys()].filter(name => !main.links.includes(name)).reduce((list, name) => addLink(list, name), kept)
+    // A file already past its size (edited by hand) may still shrink.
+    const grew = bodyOf(lines) > bodySize(main)
+    while (grew && bodyOf(linked()) > limit) {
+      const entries = parseMemory(joinLines(kept)).entries.filter(entry => kept[entry.line] !== keep && !isPinned(entry))
+      if (entries.length === 0) break
+      const age = entry => (isExpired(entry, today()) ? '' : String(entry.meta.added ?? ''))
+      const oldest = entries.reduce((a, b) => (age(b) < age(a) ? b : a))
+      moved = [...moved, kept[oldest.line]]
+      kept = kept.filter((_line, at) => at !== oldest.line)
+      placed = placeMoved(files, moved)
     }
-    return { lines, moved: [], steps: [], topics: [] }
+    const steps = [...placed].map(([name, entries]) => {
+      const file = files.find(item => item.topic === name)
+      const base = file === undefined || file.lines.length === 0 ? parseMemory(`# ${name}\n`).lines : file.lines
+      return writeStep(join(dirOf(scope), `${name}.md`), joinLines(entries.reduce(insertEntry, base)))
+    })
+    return { lines: linked(), moved, steps, topics: [...placed.keys()] }
   }
   const movedNote = room => (room.moved.length === 0 ? '' : ` MEMORY.md was at its size, so ${room.moved.length === 1 ? 'its oldest entry' : `its ${room.moved.length} oldest entries`} moved to ${room.topics.map(name => `[[${name}]]`).join(', ')}, where recall finds ${room.moved.length === 1 ? 'it' : 'them'}.`)
   const movedRow = room => (room.moved.length === 0 ? {} : { moved: room.moved, movedTo: room.topics.map(name => `${name}.md`) })
@@ -527,17 +577,37 @@ export function install(rt) {
     const found = matchEntries(allEntries(pool), wanted)
     const shown = String(wanted ?? '').slice(0, 80)
     if (found.length === 0) throw missing(`No entry in ${label}${topic ? ` (topic [[${topic}]])` : ''} matches "${shown}". recall shows what is saved.`)
+    // Entries with the same text are duplicates no text tells apart: one is named
+    // by the id it holds or the topic it is in, never taken as the first.
+    if (found.length > 1 && found.every(entry => squash(cleanEntry(entry.text)) === squash(cleanEntry(found[0].text)))) {
+      const how = new Set(found.map(entryId)).size === found.length ? 'name the one you mean by the id in brackets after it'
+        : topic === undefined && new Set(found.map(entry => entry.file)).size === found.length ? 'name the topic it is in (topic)'
+          : 'there is no way to tell them apart by text, so nothing changed'
+      throw missing(`"${shown}" matches ${found.length} entries with identical text in ${label}; ${how}. recall shows what is saved.`)
+    }
     if (found.length > 1) throw missing(`"${shown}" matches ${found.length} entries in ${label}; quote more of the one you mean:\n${found.slice(0, 8).map(entry => `- ${entry.text} (${fileName(entry.file)})`).join('\n')}`)
     return found[0]
   }
 
+  // `expect` is the entry's text as a numbered list showed it. A change made against
+  // that list holds the entry it was read from, never another one: once an earlier
+  // change has edited it, its old text may be only part of another entry now.
+  // `expect` is already a parsed entry's text, compared as it is.
+  function findExpected(files, topic, match, expect, label) {
+    const old = findOne(files, topic, match, label)
+    if (expect !== undefined && squash(old.text) !== squash(expect)) {
+      throw Object.assign(new Error(`The entry the change names has changed since it was read; the text it had (${String(expect).length} chars) is only part of another entry now. recall shows what is saved.`), { code: NO_MATCH })
+    }
+    return old
+  }
+
   // The entry keeps its place; `topic` only narrows where to look.
-  function replaceEntry({ scope, topic, match, text, meta, actor, label, topicOnly = false }) {
+  function replaceEntry({ scope, topic, match, expect, text, meta, actor, label, topicOnly = false }) {
     return queued(async () => {
       await recoverPending()
       writable(scope, actor)
       const files = loadScope(scope)
-      const old = findOne(files, topic, match, label)
+      const old = findExpected(files, topic, match, expect, label)
       if (topicOnly && old.file.topic === undefined) throw Object.assign(new Error('Changing a team entry that every conversation reads requires always: true.'), { code: DENIED })
       const line = formatEntry(text, { id: entryId(old), ...meta, ...(old.meta.pinned === undefined ? {} : { pinned: old.meta.pinned }) })
       const lines = [...old.file.lines]
@@ -555,12 +625,12 @@ export function install(rt) {
     })
   }
 
-  function removeEntry({ scope, topic, match, actor, label }) {
+  function removeEntry({ scope, topic, match, expect, actor, label }) {
     return queued(async () => {
       await recoverPending()
       writable(scope, actor)
       const files = loadScope(scope)
-      const old = findOne(files, topic, match, label)
+      const old = findExpected(files, topic, match, expect, label)
       return removeEntryNow({ scope, files, old, actor, label })
     })
   }
@@ -1035,7 +1105,7 @@ export function install(rt) {
   // write that broke.
   const writeFailure = failure => failure instanceof MemoryWriteError
     ? failure
-    : new MemoryWriteError(failureCode(failure), ROUTED.has(failure?.code) ? failure.code : FAILED)
+    : new MemoryWriteError(ownWriteFailure(failure) ? String(failure.message) : `The memory could not be changed (${failureCode(failure)}).`, ROUTED.has(failure?.code) ? failure.code : FAILED)
 
   rt.teamTools.push(defineTool({
     name: 'remember',
@@ -1205,7 +1275,7 @@ export function install(rt) {
     const team = rt.isLocalAgentRef?.(state.prefs.defaultBotModel) === true ? undefined : state.prefs.defaultBotModel
     const ref = rt.isLocalAgentRef?.(desired) === true ? (team ?? null) : desired ?? await rt.defaultModel()
     const route = ref === null ? undefined : splitRef(ref)
-    if (route === undefined) throw new Error('No model is available. Add one in Settings > Models.')
+    if (route === undefined) throw modelFailure('No model is available. Add one in Settings > Models.')
     return route
   }
   // The panel's model calls belong to the Bot or group whose memory they serve;
@@ -1241,7 +1311,7 @@ export function install(rt) {
       const assembler = await (rt.assembleLlm ? rt.assembleLlm(callOptions) : assembleLlmStream(ctx, callOptions, { backoff: rt.config?.llmRetryBackoff }))
       const finish = assembler.finish
       // A cancelled call is the caller's decision, not a route that may answer again.
-      if (finish.kind === 'aborted') throw new Error(failureCode(finish.failure))
+      if (finish.kind === 'aborted') throw modelFailure('The model call was aborted.')
       if (finish.kind === 'error') {
         const failure = finish.failure
         // A gateway can report empty output as 502. The pi-ai adapter
@@ -1257,25 +1327,28 @@ export function install(rt) {
       lastKind = finish.kind
     }
     const where = `${budgets.join(' and ')} output tokens`
-    throw new Error(lastKind === 'max-tokens'
+    throw modelFailure(lastKind === 'max-tokens'
       ? `The model's answer was cut off at ${where}; no complete answer was written`
       : `The model wrote nothing within ${where}; no complete answer was written`)
   }
 
   // A served model can still refuse the call (a key without access, say), and
   // desiredModel only falls back for models that are not served; so a failed call
-  // is tried once more on the profile default.
+  // is tried once more on the profile default. The provider's own error is not
+  // passed on: its message may quote the request.
+  const answerFailure = error => (ownFailure(error) ? error : modelFailure(`The model could not answer (${failureCode(error, 'provider error')}).`))
   async function botShot(bot, system, text, tag) {
     const own = await modelFor(bot)
     try {
       return await oneShot(own, system, text, tag)
     } catch (error) {
       const fallback = splitRef(await rt.defaultModel())
-      if (fallback === undefined || (fallback.provider === own.provider && fallback.model === own.model)) throw error
+      if (fallback === undefined || (fallback.provider === own.provider && fallback.model === own.model)) throw answerFailure(error)
       try {
         return await oneShot(fallback, system, text, tag)
       } catch (again) {
-        throw new Error(`${own.provider}/${own.model}: ${failureCode(error)}; ${fallback.provider}/${fallback.model}: ${failureCode(again)}`)
+        const said = failure => failureText(failure, 'provider error')
+        throw modelFailure(`${own.provider}/${own.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`)
       }
     }
   }
@@ -1327,7 +1400,7 @@ export function install(rt) {
       summaryFailures.delete(panel.id)
       if (rt.readOnly() === undefined) await writeText(summaryPath(panel.id), JSON.stringify(value, null, 2))
     })().catch((error) => {
-      summaryFailures.set(panel.id, { hash, model, message: failureCode(error) })
+      summaryFailures.set(panel.id, { hash, model, message: failureText(error, 'provider error') })
       rt.warn('omni-ui: memory summary for %s failed: %s', panel.name, failureCode(error))
     }).finally(() => summarizing.delete(panel.id))
     summarizing.set(panel.id, job)
@@ -1389,8 +1462,8 @@ export function install(rt) {
           if (problem) throw new Error(problem)
         }
         if (op === 'add') await addEntry({ scope, text: next, meta, actor: USER, label })
-        else if (op === 'edit') await replaceEntry({ scope, topic: target.file.topic, match: target.text, text: next, meta, actor: USER, label })
-        else if (op === 'remove') await removeEntry({ scope, topic: target.file.topic, match: target.text, actor: USER, label })
+        else if (op === 'edit') await replaceEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, text: next, meta, actor: USER, label })
+        else if (op === 'remove') await removeEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, actor: USER, label })
         else continue
         changes.push({ op, scope: tag, text: op === 'remove' ? target.text : next, ...(op === 'edit' ? { before: target.text } : {}), ok: true })
       } catch (failure) {
@@ -1732,9 +1805,9 @@ export function install(rt) {
     return await memoryView(panelBody(panel))
   }
 
-  const { memoryReviews, memoryReviewStatus } = installReview(rt, { root, reviewOn, mainLimit, TEAM, ownScope, groupScope, keeperOf, writesTeam, labelOf, fileName, today, writeText, settled, loadScope, addEntry, replaceEntry, removeEntry, entryProblem, secretEntry, botShot, languageNow })
+  const { memoryReviews, memoryReviewStatus } = installReview(rt, { root, reviewOn, mainLimit, TEAM, ownScope, groupScope, keeperOf, writesTeam, labelOf, today, writeText, settled, loadScope, addEntry, replaceEntry, removeEntry, entryProblem, secretEntry, botShot, languageNow })
 
-  const { tidyView, undoTidy, tidyNow } = installTidy(rt, { TEAM, ownScope, groupScope, keeperOf, scopeKey, dirOf, today, queued, recoverPending, writable, settled, loadScope, publish, writeStep, removeStep, writeText, botShot, languageNow, allEntries, entryProblem, USER, changedSince })
+  const { tidyView, undoTidy, tidyNow, memoryTidyStatus } = installTidy(rt, { TEAM, ownScope, groupScope, keeperOf, scopeKey, dirOf, today, queued, recoverPending, writable, settled, loadScope, publish, writeStep, removeStep, writeText, botShot, languageNow, allEntries, entryProblem, USER, changedSince })
 
   async function memoryTidyUndo(body) {
     const panel = panelOf(body)
@@ -1757,8 +1830,21 @@ export function install(rt) {
     throw new Error(`Unknown endpoint ${endpoint}`)
   }
 
+  // The /api channel answers an error by its message only when it carries a `memory/` or
+  // `bot/` code (refusal.js): the panel's own refusals say so here; a foreign failure stays
+  // answered by kind.
+  const panelCall = run => async (...args) => {
+    try {
+      return await run(...args)
+    } catch (error) {
+      if (ownWriteFailure(error) && !ownFailure(error)) error.code = REFUSED
+      throw error
+    }
+  }
+
   Object.assign(rt, {
-    memoryEnabled: true, renewMemory, archiveBotMemory, archiveGroupMemory, memoryEndpoint, memoryEdit, memoryAdd, memoryReviews, memoryReviewStatus,
+    memoryEnabled: true, renewMemory, archiveBotMemory, archiveGroupMemory, memoryReviews, memoryReviewStatus, memoryTidyStatus,
+    memoryEndpoint: panelCall(memoryEndpoint), memoryEdit: panelCall(memoryEdit), memoryAdd: panelCall(memoryAdd),
     memoryNews: () => Object.fromEntries(news), botShot, tidyMemoryNow: tidyNow,
   })
 }

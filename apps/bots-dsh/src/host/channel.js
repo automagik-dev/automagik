@@ -542,7 +542,8 @@ export function install(rt) {
           await rt.load()
           if (typeof body.botId !== 'string' || body.botId === '') return fail('A Bot id is required', 'bot/invalid')
           if (rt.botOf(body.botId) === undefined) return fail('Unknown Bot', 'bot/not-found')
-          return ok(rt.memoryReviewStatus(body.botId))
+          // The Advanced page reads both memory switches of the Bot in one call.
+          return ok({ ...rt.memoryReviewStatus(body.botId), tidy: rt.memoryTidyStatus(body.botId) })
         case 'checkpoint-bot':
           await rt.load()
           return ok(await rt.checkpointBot(body.botId, { sessionId: body.sessionId }))

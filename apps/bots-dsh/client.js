@@ -573,6 +573,13 @@ var ZH = {
   "Memory review pending.": "记忆审核等待中。",
   "Memory review idle.": "记忆审核空闲。",
   "Automatic memory review is off for this Bot.": "此 Bot 已关闭自动记忆审核。",
+  "Memory tidy": "记忆整理",
+  "Daily memory tidy": "每日记忆整理",
+  "Once a day, when this Bot’s own memory has changed, its model merges repeats, retires what is over and moves details into topics. It uses tokens every day, so it is off until you turn it on. The memory panel can undo the latest tidy.": "每天一次，当此 Bot 自己的记忆有变化时，由它的模型合并重复条目、归档已结束的内容，并把细节移入主题。每天都会消耗令牌，因此默认关闭，需手动开启。可在记忆面板撤销最近一次整理。",
+  "The daily memory tidy is disabled by the host configuration.": "主机配置已禁用每日记忆整理。",
+  "The host configuration runs the daily memory tidy for every memory.": "主机配置已为所有记忆开启每日记忆整理。",
+  "The daily memory tidy is on for this Bot.": "此 Bot 已开启每日记忆整理。",
+  "The daily memory tidy is off for this Bot.": "此 Bot 已关闭每日记忆整理。",
   "Stats": "统计",
   "Refresh stats": "刷新统计",
   "Model and permissions are managed in Bot settings.": "模型与权限在 Bot 设置中管理。",
@@ -14376,7 +14383,7 @@ function AdvancedSettings({ bot, roster, actions, save, Card: Card3, Row: Row3, 
       current = false;
       clearInterval(timer);
     };
-  }, [key, bot.advanced, bot.contextCheckRatio, bot.contextRecentTokens, bot.memoryReview, refresh]);
+  }, [key, bot.advanced, bot.contextCheckRatio, bot.contextRecentTokens, bot.memoryReview, bot.memoryTidy, refresh]);
   const shown = snapshot?.key === key ? snapshot : null;
   const context = shown?.context;
   const memory = shown?.memory;
@@ -14435,6 +14442,12 @@ function AdvancedSettings({ bot, roster, actions, save, Card: Card3, Row: Row3, 
         { title: t("Memory review") },
         (0, import_react39.createElement)(SwitchRow2, { label: t("Automatic memory review"), hint: t("Reviews this Bot’s own chat after idle turns. Independent of context compaction; no fixed ordering is promised."), on: memory?.enabled === true, disabled: disabled || !memory?.allowed, onChange: (memoryReview) => save({ memoryReview }) }),
         (0, import_react39.createElement)("p", { className: "bt-set-hint bt-advanced-note", role: "status" }, !memory ? t("Loading…") : !memory.allowed ? t("Automatic memory review is disabled by the host configuration.") : memory.running ? t("Memory review running. Disabling review prevents future passes; this pass may finish.") : memory.pending ? t("Memory review pending.") : memory.enabled ? t("Memory review idle.") : t("Automatic memory review is off for this Bot."))
+      ),
+      (0, import_react39.createElement)(
+        Card3,
+        { title: t("Memory tidy") },
+        (0, import_react39.createElement)(SwitchRow2, { label: t("Daily memory tidy"), hint: t("Once a day, when this Bot’s own memory has changed, its model merges repeats, retires what is over and moves details into topics. It uses tokens every day, so it is off until you turn it on. The memory panel can undo the latest tidy."), on: memory?.tidy?.enabled === true, disabled: disabled || !memory?.tidy?.allowed || memory.tidy.always === true, onChange: (memoryTidy) => save({ memoryTidy }) }),
+        (0, import_react39.createElement)("p", { className: "bt-set-hint bt-advanced-note", role: "status" }, !memory?.tidy ? t("Loading…") : !memory.tidy.allowed ? t("The daily memory tidy is disabled by the host configuration.") : memory.tidy.always ? t("The host configuration runs the daily memory tidy for every memory.") : memory.tidy.enabled ? t("The daily memory tidy is on for this Bot.") : t("The daily memory tidy is off for this Bot."))
       ),
       (0, import_react39.createElement)(Card3, { title: t("Stats") }, (0, import_react39.createElement)("div", { className: "bt-set-row bt-bs-row bt-bs-stack" }, (0, import_react39.createElement)(Statistics, { stats: shown?.stats }), (0, import_react39.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setRefresh((value) => value + 1), disabled: pending }, t("Refresh stats"))))
     )

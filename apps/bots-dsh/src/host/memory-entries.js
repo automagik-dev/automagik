@@ -164,16 +164,22 @@ export function removeLink(lines, topic) {
 
 export const squash = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
 
-// The entry a request means: the one with that exact text, else every entry that
-// contains it.
+// The entries a request means: the one with that id, else every entry with that
+// exact text, else every entry that contains it.
 export function matchEntries(entries, wanted) {
   const key = squash(cleanEntry(wanted))
   if (key === '') return []
   const named = entries.find(entry => entry.meta?.id === key || (/^[0-9a-f]{4}$/.test(key) && entryId(entry) === key))
   if (named !== undefined) return [named]
-  const exact = entries.find(entry => squash(entry.text) === key)
-  if (exact !== undefined) return [exact]
-  return entries.filter(entry => squash(entry.text).includes(key))
+  // Both sides are cleaned the same way: a bullet an entry's text starts with is
+  // formatting, so comparing the cleaned request with the stored text as it is
+  // would keep that entry from ever matching itself. Every entry with that exact
+  // text comes back, never the first alone: no text tells duplicates apart, and
+  // the caller refuses them rather than pick one.
+  const text = entry => squash(cleanEntry(entry.text))
+  const exact = entries.filter(entry => text(entry) === key)
+  if (exact.length > 0) return exact
+  return entries.filter(entry => text(entry).includes(key))
 }
 
 const KEY_PATTERNS = [

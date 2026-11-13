@@ -22,7 +22,7 @@ const REVIEW_PASSES_MAX = 4
 
 export function installReview(rt, memory) {
   const { ctx, config } = rt
-  const { root, reviewOn, mainLimit, TEAM, ownScope, groupScope, keeperOf, writesTeam, labelOf, fileName, today, writeText, settled, loadScope, addEntry, replaceEntry, removeEntry, entryProblem, secretEntry, botShot, languageNow } = memory
+  const { root, reviewOn, mainLimit, TEAM, ownScope, groupScope, keeperOf, writesTeam, labelOf, today, writeText, settled, loadScope, addEntry, replaceEntry, removeEntry, entryProblem, secretEntry, botShot, languageNow } = memory
 
   const cursorsPath = join(root, 'reviewed.json')
   /** @type {Record<string, number> | undefined} */
@@ -123,13 +123,13 @@ export function installReview(rt, memory) {
     if (typeof change.for === 'string' && change.for.trim() !== '') {
       const bot = rt.findBot(change.for)
       if (!rt.isMain(keeper.id)) return { scope: home, error: 'only a Main Bot keeps notes for another Bot' }
-      if (bot === undefined) return { scope: home, error: `there is no Bot named "${clip(change.for, 60)}"` }
+      if (bot === undefined) return { scope: home, error: 'there is no Bot of the name it gives' }
       if (rt.isPrivate(bot.id)) return { scope: home, error: 'a private Bot keeps its own memory' }
       return { scope: ownScope(bot.id) }
     }
     if (typeof change.group === 'string' && change.group.trim() !== '') {
       const room = roomsOf(keeper).find(item => item.name === change.group.trim())
-      return room === undefined ? { scope: home, error: `the keeper is in no group named "${clip(change.group, 60)}"` } : { scope: groupScope(room.id) }
+      return room === undefined ? { scope: home, error: 'the keeper is in no group of the name it gives' } : { scope: groupScope(room.id) }
     }
     return { scope: home }
   }
@@ -162,33 +162,35 @@ export function installReview(rt, memory) {
       const meta = { source, ...(scope.kind === 'team' ? { by: keeper.name } : {}), added: today(), ...(until === undefined ? {} : { until }) }
       // A change memory cannot keep is set aside and said, so what was not saved
       // shows in the diagnostics; the rest of the answer is kept all the same —
-      // the same lines read again would meet the same limit. A secret's text is
-      // not repeated into the log.
+      // the same lines read again would meet the same limit. The reason is said
+      // without the words the model wrote: an entry's text, a name or a number it
+      // gave show as their length at most, so the log holds no memory text.
       const badTopic = op === 'add' && change?.topic !== undefined && String(change.topic).trim() !== '' && topic === undefined
       const problem = op === 'add' || op === 'edit' ? entryProblem(text) : undefined
       const leftOut =
-        op !== 'add' && target === undefined ? `it names entry ${change?.entry}, which is not listed` :
+        op !== 'add' && target === undefined ? 'it names an entry that is not listed' :
         op !== 'add' && isPinned(target) ? 'it changes an entry the user pinned' :
         op !== 'add' && target.scope === 'team' && target.file.topic === undefined ? 'it changes what every Bot always reads, which only the user does' :
         route?.error !== undefined ? route.error :
         scope.kind === 'team' && !team ? 'it is for the team memory, which the review may not write' :
-        badTopic ? `it names the topic "${clip(String(change.topic), 60)}", which cannot be a topic name` :
-        problem !== undefined ? (secretEntry(text) ? 'the entry looks like a key, token, password, or ID number, which memory never keeps' : `the entry "${clip(text, 160)}": ${problem}`) :
+        badTopic ? `it names a topic (${String(change.topic).length} chars) that cannot be a topic name` :
+        problem !== undefined ? (secretEntry(text) ? 'the entry looks like a key, token, password, or ID number, which memory never keeps' : `the entry (${text.length} chars): ${problem}`) :
         undefined
       if (leftOut !== undefined) {
-        rt.warn('omni-ui: memory review of %s left out a change: %s', name, leftOut.startsWith('it names') ? 'invalid target' : leftOut.startsWith('it names the topic') ? 'invalid topic' : leftOut.startsWith('the entry') ? 'invalid entry' : 'not allowed')
+        rt.warn('omni-ui: memory review of %s left out a change: %s', name, leftOut)
         continue
       }
       try {
         if (op === 'add') done.push(await addEntry({ scope, topic, text, meta, actor, label }))
-        else if (op === 'edit') done.push(await replaceEntry({ scope, topic: target.file.topic, match: target.text, text, meta, actor, label }))
-        else if (op === 'remove') done.push(await removeEntry({ scope, topic: target.file.topic, match: target.text, actor, label }))
+        else if (op === 'edit') done.push(await replaceEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, text, meta, actor, label }))
+        else if (op === 'remove') done.push(await removeEntry({ scope, topic: target.file.topic, match: target.text, expect: target.text, actor, label }))
       } catch (failure) {
         if (failure?.code === GONE) return counts()
-        // The change is named by its text and where it was headed, so the
-        // diagnostics say what was not kept, not only why.
+        // The change is named by its kind and where it was headed, so the
+        // diagnostics say what was not kept, not only why; a topic's name is the
+        // model's or the user's word, so it is not repeated.
         const held = op === 'remove' ? 'the removal' : 'the entry'
-        const aimed = `${fileName(op === 'add' ? { topic } : target.file)} of ${label}`
+        const aimed = `${(op === 'add' ? topic : target.file.topic) === undefined ? 'MEMORY.md' : 'a topic'} of ${label}`
         rt.warn('omni-ui: memory review of %s left out a change: %s for %s: %s', name, held, aimed, failureCode(failure))
         if (!ROUTED.has(failure?.code)) failed ??= failure
       }
