@@ -174,7 +174,7 @@ jobs:
     # Only when herdr/ changed, or the workflows and lane tooling that test and pack it.
     name: herdr pack (Node ${{ matrix.node }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       HERDR_CHANGED_PATHS: '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|\.github/scripts/herdr-app-check\.mjs$|scripts/(lane|version)\.ts$)'
     strategy:
