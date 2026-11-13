@@ -138,6 +138,8 @@ test('a Session mount puts its tools in that Session alone; another Session cann
   assert.deepEqual(await env.rt.mountCapability('person-a', 'person-space', grant),
     { sessionId: 'person-a', name: 'person-space', state: 'ready', toolPrefix: PREFIX })
   assert.equal((await env.rt.mountCapability('person-a', 'public-space')).state, 'ready')
+  // Any save or secret change reconciles every tracked Agent, B's too.
+  await env.rt.reconcileCapabilities()
   assert.ok(env.tools(a).includes(TOOL), 'A lists the mounted tool')
   assert.ok(env.tools(a).includes(PUBLIC_TOOL))
   assert.deepEqual(env.tools(b).filter(name => name.startsWith('mcp__')), [], 'B lists none of them')
