@@ -3977,13 +3977,17 @@ async function openSandbox({ call: call2, finish: finish2, overdue = () => void 
 }
 
 // src/script-child/main.js
+var SILENT = 70;
+var silent = false;
 var send = (message) => {
   try {
-    process.stdout.write(`${JSON.stringify(message)}
+    if (!silent) process.stdout.write(`${JSON.stringify(message)}
 `);
   } catch (error) {
-    if (error instanceof RangeError) throw error;
+    if (!(error instanceof RangeError)) return;
+    silent = true;
   }
+  if (silent) process.exit(SILENT);
 };
 var GRACE = 1e3;
 var lastCall = 0;

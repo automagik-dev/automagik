@@ -314,7 +314,7 @@ test('replies a script does not read are held up to a limit, then the run ends',
   // Twenty replies of 3.9 MB for a script that makes its calls and never yields.
   await assert.rejects(
     runIsolatedScript('for (let index = 0; index < 20; index += 1) snapshot(); for (;;) {}', { snapshot: async () => { calls += 1; return 'A'.repeat(3_900_000) } }, { timeout: 15_000 }),
-    /did not read their replies/,
+    /more than 64 MB of helper replies were waiting for it\. It made calls and did not read their replies, or it waited for too many large replies at once\./,
   )
   assert.equal(calls, 20)
   assert.ok(Date.now() - started < 10_000, 'the deadline ended the run, not the limit')

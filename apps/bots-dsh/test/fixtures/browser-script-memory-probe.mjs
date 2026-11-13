@@ -3,7 +3,9 @@
 // runtime with script-runner.js's --wasm-max-mem-pages flag. A real script fills the
 // interpreter to the cap, gives `free` of its arrays back and awaits a helper; this side
 // answers the helper with a reply of `reply` characters. Prints, as one line of JSON, what
-// the script made of it and a fixed sample of the interpreter's memory before and after.
+// the script made of it, whether each text this side placed in the interpreter for that
+// reply came back as text of the interpreter's, and a fixed sample of the interpreter's
+// memory before and after.
 //   <runtime> --wasm-max-mem-pages=2048 browser-script-memory-probe.mjs '<{"free": n, "reply": n}>'
 import { createHash } from 'node:crypto'
 import { openSandbox } from '../../src/script-child/sandbox.js'
@@ -42,8 +44,17 @@ sandbox.start(['big'], `
   const after = [1, 2, 3].map(value => value * 2).join() + ' ' + JSON.stringify({ a: 'b' }) + ' ' + typeof Object.keys + ' ' + kept.length
   return JSON.stringify({ filled, reply, after })
 `)
+// No change to the sandbox: the context's own function is watched from here.
+const placed = []
+const { context } = sandbox
+const newString = context.newString
+context.newString = function (value) {
+  const handle = newString.call(this, value)
+  placed.push(context.typeof(handle) === 'string')
+  return handle
+}
 const before = sample()
 sandbox.settle(1, true, JSON.stringify('A'.repeat(reply)))
 const after = sample()
-console.log(JSON.stringify({ node: process.versions.node, electron: process.versions.electron ?? null, calls, before, after, finishes }))
+console.log(JSON.stringify({ node: process.versions.node, electron: process.versions.electron ?? null, calls, placed, before, after, finishes }))
 process.exit(0)
