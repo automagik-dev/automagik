@@ -7,7 +7,7 @@ sessions or prompt text. Token counts are raw counts; times are UTC.
 | Delivery | Check (the RFC's words) | Conclusion |
 |---|---|---|
 | 7 | a machine that took the pack release runs a meter whose `query --by bot` answers (the wording when this was taken) | **Met**: the owner accepted the reading in "How the meter reached this machine" on 2026-11-12, and the RFC's Check now names the signed meter lane |
-| 8 | `actor_unattributed` falls for the backfilled hours; rows before the ledger stay unknown | **Not met**: both halves of the Check hold, but the backfill changed the store's rollup totals by 0.70%; open until #1114 explains it |
+| 8 | `actor_unattributed` falls for the backfilled hours; rows before the ledger stay unknown | **Not met**: both halves of the Check hold, but the backfill changed the store's rollup totals by 0.70% (reported in #1114; cause fixed by #1127); open until #1126 explains and repairs the loss on this store |
 
 ## How the meter reached this machine
 
@@ -114,7 +114,7 @@ carries no actor state (it is before the evidence).
 
 | Day | Tokens before | Tokens after | Change | After: attributed | After: ambiguous | After: unlinked | After: no state |
 |---|---|---|---|---|---|---|---|
-| 18 days, 2026-10-16 to 2026-11-06 | 9,143,847,675 | 9,143,847,675 | 0 | 0 | 0 | 0 | 9,143,847,675 |
+| The 18 days with rows from 2026-10-16 to 2026-11-06 | 9,143,847,675 | 9,143,847,675 | 0 | 0 | 0 | 0 | 9,143,847,675 |
 | 2026-11-07 | 963,326,332 | 914,972,347 | -48,353,985 | 131,288,134 | 4,795,814 | 217,876,348 | 561,012,051 |
 | 2026-11-08 | 3,518,848,033 | 3,494,853,202 | -23,994,831 | 359,007,538 | 3,551,385 | 948,441,348 | 2,183,852,931 |
 | 2026-11-09 | 7,887,412,393 | 7,805,835,819 | -81,576,574 | 1,304,679,876 | 131,294,703 | 2,481,169,643 | 3,888,691,597 |
@@ -135,12 +135,15 @@ Before the backfill the only rows with a state were Antigravity's (218,603,721 t
 ### What holds
 
 - **`actor_unattributed` falls for the backfilled hours.** In the four backfilled days,
-  2,384,963,330 tokens moved to bot rows, and the tokens with no evidence fell from all of them
-  to 7,930,594,449.
+  2,384,963,330 tokens moved to bot rows, and the tokens with no evidence fell from
+  14,746,758,519 (all of the four days' 14,965,362,240 but Antigravity's 218,603,721, which
+  already carried a state) to 7,930,594,449.
 - **Rows before the ledger stay unknown.** Every hour before 2026-11-07 is unchanged, to the
-  token, and none of it is attributed.
+  token, and none of it is attributed. This half is shown per day only: the oldest ledger row is
+  2026-11-07T17:03Z, and the table does not split that day's 131,288,134 attributed tokens at
+  that hour, so it does not show that none of them fall before it.
 - **The retention bound.** `--days 4`; the 3.118.1 help states 1 to 90 for `--evidence-backfill`.
-  The refusal above 90 was not exercised here (the brief forbids asking past it).
+  The refusal above 90 was not exercised here.
 
 ### What fails
 
@@ -156,4 +159,6 @@ Before the backfill the only rows with a state were Antigravity's (218,603,721 t
   newer meter's sync) moved the total. Nothing was rerun.
 
 **Conclusion: not met.** The Check's two halves hold, but the backfill's own guarantee, that no
-total changes, failed on this machine. Tracked in issue #1114.
+total changes, failed on this machine. Reported in issue #1114, since closed into #1126. #1127
+(merged 2026-11-12) fixed the cause, so a backfill on a later meter loses nothing new; it does not
+explain or repair the 0.70% already lost on this store. Delivery 8 waits on #1126 for that.

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) met on one machine, accepted by the owner 2026-11-12, #1115; 8 open until #1114 explains the backfill's rollup total change; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10; amended by [RFC 0026](0026-bot-tag-coverage.md) (#914), 2026-11-10) |
+| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) met on one machine, accepted by the owner 2026-11-12, #1115; 8 open until #1126 explains and repairs the backfill's rollup total change (reported in #1114; cause fixed by #1127); Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10; amended by [RFC 0026](0026-bot-tag-coverage.md) (#914), 2026-11-10) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); herdr (3.N.P) for ledger rows; meter (3.N.P, RFC 0017) for the crate |
 | Created | 2026-11-09 |
@@ -689,7 +689,9 @@ release.
    unknown.
    *Status (2026-11-12):* open. On the same machine both halves of the Check hold, but the
    store's hourly rollup total fell by 0.70% across the backfill, against "totals never change"
-   ([evidence](../meter/0021-d7-d8-evidence.md)). It stays open until #1114 explains that loss.
+   ([evidence](../meter/0021-d7-d8-evidence.md), reported in #1114). #1127 fixed the cause, so a
+   backfill loses nothing new; it does not explain or repair the 0.70% already lost on that
+   store. The delivery stays open until #1126 does.
 
 agy follows once the meter has an agy source and Herdr launches agy workers with start rows.
 
