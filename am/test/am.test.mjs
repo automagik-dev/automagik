@@ -90,6 +90,22 @@ test("every Bot verb's output is byte for byte the pack's automagik-herdr's, und
   assert.ok(help.endsWith(s.run(pack, ["--help"]).stdout));
 });
 
+test("am update --rollback and --auto are the pack's own update, as its help says", (t) => {
+  const s = scratch(t);
+  assert.equal(s.am("self", "install").status, 0);
+  const pack = join(PACK, "bin", "automagik-herdr");
+  for (const args of [["update", "--auto", "status"], ["update", "--auto=status", "--json"], ["update", "--rollback"], ["update", "--auto", "maybe"]]) {
+    const want = s.run(pack, args);
+    const got = s.installed(...args);
+    assert.deepEqual([got.status, got.stdout, got.stderr], [want.status, want.stdout, want.stderr], `am ${args.join(" ")}`);
+    assert.doesNotMatch(got.stderr, /unknown option/, `am ${args.join(" ")}`);
+  }
+  assert.match(s.installed("update", "--auto", "status").stdout, /^Install updates automatically: (?:on|off)\.$/m);
+  // An option neither knows is still am's usage error.
+  const bad = s.installed("update", "--nope");
+  assert.deepEqual([bad.status, bad.stdout, bad.stderr], [2, "", "am: unknown option --nope (am help)\n"]);
+});
+
 test("self install: the store, the links and the briefing entry; doctor is healthy", (t) => {
   const s = scratch(t);
   const r = s.am("self", "install", "--json");
@@ -104,7 +120,7 @@ test("self install: the store, the links and the briefing entry; doctor is healt
   assert.equal(doctor.status, 0, doctor.stdout);
   const restart = doctor.stdout.trim().split("\n").map((l) => JSON.parse(l)).find((l) => l.check === "restart-path");
   assert.equal(restart?.ok, true);
-  assert.match(restart.detail, /automagik-herdr restart <bot>.*am restart <bot>.*never \/restart/);
+  assert.match(restart.detail, /with am restart <bot>, never \/restart/);
   for (const line of doctor.stdout.trim().split("\n").map((l) => JSON.parse(l))) {
     assert.deepEqual(Object.keys(line).slice(0, 4), ["part", "check", "ok", "detail"]);
     assert.equal(line.ok, true, line.detail);
@@ -125,7 +141,7 @@ test("update from a file:// am-lane: newer moves, a lower sequence is refused, r
   const first = s.am("update", "automagik.am", "--json");
   assert.equal(first.status, 0, first.stderr);
   assert.deepEqual([json(first).am.state, json(first).am.to], ["updated", "3.70.1"]);
-  assert.equal(s.installed("--version").stdout.trim(), "automagik-herdr 3.70.1");
+  assert.equal(s.installed("--version").stdout.trim(), "am 3.70.1");
   assert.deepEqual([record(s).current.signed, record(s).current.sequence, record(s).seen], [true, sequenceOf("3.70.1"), sequenceOf("3.70.1")]);
   assert.equal(json(s.installed("update", "automagik.am", "--json")).am.state, "current");
 
@@ -136,23 +152,23 @@ test("update from a file:// am-lane: newer moves, a lower sequence is refused, r
   post(s, "3.71.0");
   assert.equal(json(s.installed("update", "automagik.am", "--json")).am.to, "3.71.0");
   assert.deepEqual(versions(s), ["3.70.2", "3.71.0"], "only current and previous are kept");
-  assert.equal(s.installed("--version").stdout.trim(), "automagik-herdr 3.71.0");
+  assert.equal(s.installed("--version").stdout.trim(), "am 3.71.0");
 
   // A replayed older pointer (validly signed) is refused, and nothing moves.
   post(s, "3.70.2");
   const older = s.installed("update", "automagik.am");
   assert.equal(older.status, 1);
   assert.match(older.stderr, /older than the newest this machine took \(sequence 710000\): refusing it/);
-  assert.equal(s.installed("--version").stdout.trim(), "automagik-herdr 3.71.0");
+  assert.equal(s.installed("--version").stdout.trim(), "am 3.71.0");
 
   // Rollback goes back to the kept copy; the next update moves forward again.
   const back = s.installed("rollback", "automagik.am");
   assert.equal(back.status, 0, back.stderr);
-  assert.equal(s.installed("--version").stdout.trim(), "automagik-herdr 3.70.2");
+  assert.equal(s.installed("--version").stdout.trim(), "am 3.70.2");
   assert.equal(record(s).seen, sequenceOf("3.71.0"), "a rollback keeps the newest sequence taken");
   post(s, "3.71.0");
   assert.equal(json(s.installed("update", "automagik.am", "--json")).am.to, "3.71.0");
-  assert.equal(s.installed("--version").stdout.trim(), "automagik-herdr 3.71.0");
+  assert.equal(s.installed("--version").stdout.trim(), "am 3.71.0");
 });
 
 test("refused, with nothing installed: a tarball that is not the signed one, an unsigned pointer, an unsafe tarball", (t) => {
@@ -281,7 +297,7 @@ test("a self install records its version's sequence: an older signed pointer is 
   const r = s.installed("update", "automagik.am");
   assert.equal(r.status, 1);
   assert.match(r.stderr, /older than the newest this machine took/);
-  assert.equal(s.installed("--version").stdout.trim(), `automagik-herdr ${version}`);
+  assert.equal(s.installed("--version").stdout.trim(), `am ${version}`);
 });
 
 test("one am at a time: a live lock refuses an update, a stale one is taken over", (t) => {
@@ -316,7 +332,7 @@ test("reinstalling the current version goes into a fresh folder: current never n
   assert.equal(record(s).current.dir, second);
   assert.ok(existsSync(join(s.store, "current", "bin", "am.mjs")));
   assert.deepEqual(readdirSync(s.store).filter((n) => !n.startsWith(".") && /^\d/.test(n)), [second], "the replaced folder is pruned");
-  assert.equal(s.installed("--version").stdout.trim(), `automagik-herdr ${version}`);
+  assert.equal(s.installed("--version").stdout.trim(), `am ${version}`);
   // Run from the store itself, it is that folder: nothing is copied.
   assert.equal(s.installed("self", "install").status, 0);
   assert.equal(readlinkSync(join(s.store, "current")), second);

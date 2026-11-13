@@ -689,7 +689,7 @@ test("the stable runner must match its baked node, and the baked node must still
   writeFileSync(runner, stableRunnerText(gone));
   await assert.rejects(
     startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
-    /the baked node .* is gone; run automagik-herdr dsh-tui install again/,
+    /the baked node .* is gone; run am dsh-tui install again/,
   );
 });
 
@@ -1123,7 +1123,7 @@ test(
   assert.equal(started.policy.file.bots.some((bot) => bot.id === "b-zzzzzzzzzz"), false);
   const warnings = events.filter((event) => event.ev === "roster_unapproved");
   assert.equal(warnings.length, 1, "one warning for the start, not one per request");
-  assert.match(warnings[0].message, /automagik-herdr proxy approve/);
+  assert.match(warnings[0].message, /am proxy approve/);
   assert.match(warnings[0].message, /differs from the approved one/);
 });
 
@@ -1134,7 +1134,7 @@ test("G1 (c): a missing record refuses a proxied pane and names the command", as
   rmSync(recordFileOf(s.project, s.env));
   await assert.rejects(
     start("t200", { caller: { bot: ID.dev, project: s.project, worker: false }, bound: true }),
-    /no approved roster .*automagik-herdr proxy approve/s,
+    /no approved roster .*am proxy approve/s,
   );
 });
 

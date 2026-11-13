@@ -609,7 +609,7 @@ test("relink: the CLI link follows the sidebar folder; --version works through i
   assert.equal(readlinkSync(link), join(s.mods, "am-sidebar", "bin", "automagik-herdr"));
   const v = spawnSync(link, ["--version"], { encoding: "utf8", env: { PATH: `${NODE_DIR}:/usr/bin:/bin`, HOME: join(s.root, "home"), HERDR_APP_HOME: s.app } });
   assert.equal(v.status, 0, v.stderr);
-  assert.equal(v.stdout, `automagik-herdr ${read(join(PACK, "VERSION")).trim()}\n`);
+  assert.equal(v.stdout, `am ${read(join(PACK, "VERSION")).trim()}\n`);
   assert.equal(relink({ binDir: bin, modsDir: s.mods, owned }), null, "already there");
   assert.deepEqual(readdirSync(bin), ["automagik-herdr"], "no temp name left");
   // Another link, a file, nothing: left as they are.
@@ -663,8 +663,8 @@ test("update.mjs: install across the rename moves the hooks; rollback to v0.3 pu
   const said = installed.stderr.split("\n").filter((l) => l.startsWith("notice: ")).map((l) => l.slice(8));
   assert.match(said[0], /^IMPORTANT: the bots' briefing hook moved to a new path in 2 settings files:$/);
   for (const dir of [s.proj, s.worker]) assert.ok(said.includes(`  ${dir}: ${settings(dir)}`), `${dir} is listed: ${said.join("\n")}`);
-  assert.ok(said.some((l) => /keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)/.test(l)));
-  assert.ok(said.some((l) => /not rewritten .*automagik-herdr start <bot>.*automagik-herdr attach <bot>/.test(l)));
+  assert.ok(said.some((l) => /keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: am restart <bot> \(or the bot row's Restart\)/.test(l)));
+  assert.ok(said.some((l) => /not rewritten .*am start <bot>.*am attach <bot>/.test(l)));
   assert.ok(installed.stderr.trimEnd().endsWith(said.at(-1)), "the notice is the last thing logged");
   const viaEntry = s.hook(hookCommand(s.app));
   assert.match(viaEntry.stdout, /You are Genie/, `the hook runs am-sidebar's briefing (${viaEntry.ms} ms, stderr: ${viaEntry.stderr})`);
@@ -683,7 +683,7 @@ test("update.mjs: install across the rename moves the hooks; rollback to v0.3 pu
   assert.equal(readlinkSync(link), join(s.mods, "spaces-agents", "bin", "automagik-herdr"));
   const v = spawnSync(link, ["--version"], { encoding: "utf8", env: { PATH: `${NODE_DIR}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: s.app } });
   assert.equal(v.status, 0, v.stderr);
-  assert.match(v.stdout, /^automagik-herdr \d+\.\d+\.\d+\n$/);
+  assert.match(v.stdout, /^am \d+\.\d+\.\d+\n$/);
   assert.equal(read(join(s.mods, "pocket-link", ".state", "pairing.key")), "secret\n");
   assert.deepEqual(readdirSync(join(s.mods, "pocket-link")), [".state"]);
 });
@@ -705,7 +705,7 @@ test("hooksNotice: every file with its project, the running sessions, unknown pr
   const forward = hooksNotice({ direction: "forward", rewritten: files, skipped: [] });
   assert.deepEqual(forward.slice(0, 3), ["IMPORTANT: the bots' briefing hook moved to a new path in 2 settings files:",
     `  /p/a: ${files[0]}`, `  /p/b/sub: ${files[1]}`]);
-  assert.match(forward[3], /running .* keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: automagik-herdr restart <bot> \(or the bot row's Restart\)\.$/);
+  assert.match(forward[3], /running .* keeps the OLD hook and gets NO briefing until it is restarted\. Restart the bot: am restart <bot> \(or the bot row's Restart\)\.$/);
   assert.match(forward[4], /^Projects the pack doesn't know about were not rewritten/);
   const back = hooksNotice({ direction: "back", restored: [files[0]], skipped: [] });
   assert.equal(back[0], "IMPORTANT: the bots' briefing hook went back to the older release's path in 1 settings file:");

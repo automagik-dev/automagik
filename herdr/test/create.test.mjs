@@ -240,7 +240,7 @@ test("Copy copies only a line the form would save; a refused one shows why", asy
   form.inputs.name.type("qa", cx);
   draw();
   await click("bot-copy");
-  assert.match(cx.clip, /^automagik-herdr create --name=qa /);
+  assert.match(cx.clip, /^am create --name=qa /);
   // The model is read once per agent, not on every render.
   assert.ok(form.models.has("claude"));
 });
@@ -907,7 +907,7 @@ test("the CLI and the form word the pull warning for an uncommitted or changed b
   assert.equal(first.status, 0, first.stderr);
   assert.equal(untracked, warningOf(first.stderr));
   // A long TMPDIR adds the CLI's tidy warning after the note; the compare keeps the note alone.
-  assert.equal(warningOf(`${first.stderr}\nautomagik-herdr: tidy: hc ls --json failed: socket path too long`), untracked);
+  assert.equal(warningOf(`${first.stderr}\nam: tidy: hc ls --json failed: socket path too long`), untracked);
   // Modified: commit it in the main checkout, then change it there.
   g("add", ".herdr/bots.json");
   g("commit", "-q", "-m", "bots");
