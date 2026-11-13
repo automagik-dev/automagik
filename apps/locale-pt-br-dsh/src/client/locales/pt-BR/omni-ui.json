@@ -1,4 +1,7 @@
 {
+  "1 approval waiting": "1 aprovação pendente",
+  "{count} approvals waiting": "{count} aprovações pendentes",
+  "{count} requests to use {tool}": "{count} pedidos para usar {tool}",
   "Pair Hermes Bot": "Parear Bot Hermes",
   "Not paired": "Não pareado",
   "Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it.": "Usa o Bot Chat existente deste perfil. Outros bots, grupos e tarefas não podem usar este pareamento. Desfaça o pareamento antes de alterá-lo.",
