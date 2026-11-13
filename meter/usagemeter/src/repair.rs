@@ -1674,6 +1674,43 @@ mod tests {
     }
 
     #[test]
+    fn evidence_written_between_the_checks_and_the_lock_rolls_the_day_back() {
+        let fx = fx();
+        let s = fx.store.clone();
+        let before = (listing(&fx.store), 10i64);
+        // The plan passed (no evidence then). A sync lands evidence above what the repaired
+        // rollup will hold (25) in the planned hour: the day's own after-check must refuse it.
+        let e = match run_with(
+            move || {
+                Connection::open(s.join("meter.db"))
+                    .unwrap()
+                    .execute(
+                        "INSERT INTO evidence(ts_ms, dim, actor, cache_read) VALUES (?1, 0, 0, 500)",
+                        [parse_rfc3339(HOUR).unwrap() + 5],
+                    )
+                    .unwrap();
+            },
+            &fx,
+        ) {
+            Err(e) => e,
+            Ok(d) => panic!("applied over evidence above the rollup: code {}", d.code),
+        };
+        assert!(
+            e.contains("evidence above the rollup") && e.contains("rolled back"),
+            "{e}"
+        );
+        let c = Connection::open(fx.store.join("meter.db")).unwrap();
+        let cr: i64 = c
+            .query_row("SELECT cache_read FROM usage WHERE id = 'a'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(cr, before.1, "the day was rolled back");
+        assert_eq!(listing(&fx.store), before.0);
+        assert_eq!(journal(&c).unwrap(), None);
+    }
+
+    #[test]
     fn a_newer_schema_written_between_the_checks_and_the_lock_refuses_the_apply() {
         let fx = fx();
         let s = fx.store.clone();
