@@ -12,6 +12,7 @@ import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest 
 import { AgentRun, isStopped, isUnanswered, valuesOf, waited } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
+import { chatProfileModes } from './codex-chat-profiles.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYNTHETIC_KIND, URL_ENV } from './names.js'
 import { shownText } from './shown-text.js'
 import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missedBy, replayBlocks, turnStart } from './switch.js'
@@ -1017,7 +1018,10 @@ export class AcpAdapter extends LlmAdapter {
         // session start is tried once more on that one: the turn is not lost to a bad release.
         for (let attempt = 0; ; attempt += 1) {
           try {
-            const spec = await agent.spawn()
+            // The chat profile modes belong to this process's home, read once at its start: a
+            // later spawn or a replaced agent object never changes what a running session asks.
+            const { profileModes, ...spec } = await agent.spawn()
+            state.profileModes = profileModes
             if (this.bridgeOn(agent)) {
               await this.backchannel.listen()
               state.bridge = this.backchannel.mint({ sessionId, agent: dshAgent, name: agent.name })
@@ -1144,8 +1148,10 @@ export class AcpAdapter extends LlmAdapter {
         return yield finish('error', why)
       }
       const level = levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))
-      const modes = agent.modeFor?.(level)
-      const strict = modes?.at(-1)
+      const originalModes = agent.modeFor?.(level)
+      const profiles = live.profileModes
+      const modes = profiles ? chatProfileModes(originalModes, profiles) : originalModes
+      const strict = profiles ? chatProfileModes([originalModes?.at(-1)], profiles) : [originalModes?.at(-1)]
       const possible = agent.ownMode !== undefined && level.sandbox === 'workspace-write' && level.policy === 'ask' && !level.full && !level.auto
       const candidate = possible && live.run.modes?.availableModes?.some(mode => mode.id === agent.ownMode)
       let own = 'none'
@@ -1165,7 +1171,7 @@ export class AcpAdapter extends LlmAdapter {
       }
       try {
         if (possible && own !== 'yes') {
-          if (live.ownSent === true) await live.run.setMode([strict], { signal: options.signal, force: true })
+          if (live.ownSent === true) await live.run.setMode(strict, { signal: options.signal, force: true })
           else await live.run.setMode(modes, { signal: options.signal })
         } else if (!possible) await live.run.setMode(modes, { signal: options.signal })
         if (live.held !== undefined) return yield* stopped(live.held)
@@ -1191,7 +1197,7 @@ export class AcpAdapter extends LlmAdapter {
         if (live.held !== undefined) return yield* stopped(live.held)
         if (again !== 'yes') {
           own = 'changed'
-          try { await live.run.setMode([strict], { signal: options.signal, force: true }) } catch (error) {
+          try { await live.run.setMode(strict, { signal: options.signal, force: true }) } catch (error) {
             if (live.held !== undefined) return yield* stopped(live.held)
             const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
             if (left !== undefined) return yield left
