@@ -595,7 +595,7 @@ export class BotForm {
     if (section === "inspect" && !this.history) {
       cx.spawn(async (cx) => {
         const r = await runCli(["history", this.p.bot, "--project", this.p.project]);
-        this.history = r.code === 0 && r.out ? r.out : { error: r.err || `automagik-herdr history failed (exit ${r.code}).` };
+        this.history = r.code === 0 && r.out ? r.out : { error: r.err || `am history failed (exit ${r.code}).` };
         cx.notify();
       });
     }
@@ -688,7 +688,7 @@ export class BotForm {
     cx.spawn(async (cx) => {
       const r = await runCli(["detach", this.p.bot, "--project", this.p.project, ...(this.machine ? ["--machine", this.machine] : [])]);
       this.busy = false;
-      if (r.code !== 0) this.error = r.err || `automagik-herdr detach failed (exit ${r.code}).`;
+      if (r.code !== 0) this.error = r.err || `am detach failed (exit ${r.code}).`;
       else { run("am-sidebar.refresh"); closeOverlay(this.p.overlay); }
       cx.notify();
     });

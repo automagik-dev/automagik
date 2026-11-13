@@ -113,7 +113,7 @@ test("linked Linux starts require approval, then refuse approved on even with wo
   Object.assign(file.bots[0], { agent: "dsh-tui", hcProxy: true });
   writeFileSync(path, JSON.stringify(file));
   const unapproved = s.cli(["start", "Atlas", ...s.on, "--json"]);
-  assert.match(unapproved.err, /run automagik-herdr proxy approve first/);
+  assert.match(unapproved.err, /run am proxy approve first/);
   s.approve();
   file.bots[0].hcProxy = false;
   writeFileSync(path, JSON.stringify(file));
@@ -188,7 +188,7 @@ test("the same invalid record warns off to plain linked argv and refuses working
     assert.deepEqual(s.calls().filter((call) => call[0] === "run").at(-1), plain);
     assert.equal((off.err.match(/WARNING hc proxy:/g) ?? []).length, 1);
     assert.ok(off.err.includes(path));
-    assert.match(off.err, /does not match its sha256.*starting plain.*automagik-herdr proxy approve/);
+    assert.match(off.err, /does not match its sha256.*starting plain.*am proxy approve/);
     assert.doesNotMatch(off.out, /^WARNING hc proxy:/m);
     reset();
     file.bots[0].hcProxy = true;
@@ -196,7 +196,7 @@ test("the same invalid record warns off to plain linked argv and refuses working
     const before = s.calls().filter((call) => call[0] === "run").length;
     const on = s.cli(args);
     assert.notEqual(on.code, 0);
-    assert.match(on.err, /does not match its sha256.*automagik-herdr proxy approve first/);
+    assert.match(on.err, /does not match its sha256.*am proxy approve first/);
     assert.equal(s.calls().filter((call) => call[0] === "run").length, before);
     assert.equal(readFileSync(path, "utf8"), corrupt);
   }
@@ -213,7 +213,7 @@ test("linked uname failure warns off to a plain start and refuses working on", (
   const off = s.cli(["start", "Atlas", ...s.on, "--json"]);
   assert.equal(off.code, 0, off.err);
   assert.match(off.err, /WARNING hc proxy: cannot check the target platform:.*starting plain/);
-  assert.match(off.err, /automagik-herdr proxy approve/);
+  assert.match(off.err, /am proxy approve/);
   const run = s.calls().find((call) => call[0] === "run");
   assert.ok(run.includes("dsh-tui"));
   assert.equal(run.some((word) => word.endsWith("/hcPane.mjs")), false);
@@ -651,14 +651,14 @@ test("start --machine of an Antigravity bot: its 0600 permission file is written
 test("start and restart --machine of an Antigravity bot with no app home there: one clear refusal, nothing started, nothing written here", (t) => {
   const s = agyScene(t, { appHome: false });
   const line = new RegExp(`^Atlas runs on vm without its Antigravity permission list: its app home there, `
-    + `${vmApp(s)}, isn't a folder, and a start never makes one\\. Install automagik-herdr on vm, or set `
+    + `${vmApp(s)}, isn't a folder, and a start never makes one\\. Install Automagik Herdr on vm, or set `
     + `HERDR_APP_HOME in the project's \\.herdr/pane-env there to an app home that is there\\. Nothing was started\\.$`);
   for (const args of [["start", "Atlas", ...s.on], ["restart", "Atlas", ...s.on, "--force"]]) {
     const r = s.cli(args);
     assert.equal(r.code, 1, args.join(" "));
     const said = r.err.split("\n").filter((x) => x.includes("Antigravity permission list"));
     assert.equal(said.length, 1, r.err);
-    assert.match(said[0].replace(/^automagik-herdr: /, ""), line);
+    assert.match(said[0].replace(/^am: /, ""), line);
   }
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 0, "nothing started");
   assert.equal(existsSync(join(s.root, "vm/.config")), false, "no app home made there");
@@ -1123,7 +1123,7 @@ test("start --machine under the sidebar's 30 s deadline (#444): too little left 
   const late = s.cli(["start", "Atlas", ...s.on], { AUTOMAGIK_HERDR_DEADLINE: String(Date.now() + 5000) });
   assert.equal(late.code, 1, late.err);
   assert.match(late.err, /Only \d s of this Herdr's 30 s limit for the sidebar's programs was left, and starting Atlas on vm needs 20 s to finish once its pane starts, so nothing was started\. /);
-  assert.ok(late.err.trim().endsWith(`Start it from a terminal: automagik-herdr start ${ATLAS} --project ${s.project} --machine vm`), late.err);
+  assert.ok(late.err.trim().endsWith(`Start it from a terminal: am start ${ATLAS} --project ${s.project} --machine vm`), late.err);
   assert.equal((DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS) / 1000, 20);
   assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
   assert.deepEqual(s.rows(), []);
