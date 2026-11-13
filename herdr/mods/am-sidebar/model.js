@@ -176,11 +176,16 @@ export function parseBots(text) {
       warnings.push(`${where}: hcProxy is not a boolean; ignored`);
       delete bot.hcProxy;
     }
-    // Codex's auto mode switch (#946): true (the default) passes --approve-for-me; false opts
-    // out and leaves Codex its own approvals.
+    // Codex's auto mode switch (#946). Since #1125 (the owner's ruling: every Codex seat and
+    // worker runs in auto mode with its sandbox on) false no longer opts out: kept as written,
+    // ignored, and said once here.
     if (bot.codexAuto !== undefined && typeof bot.codexAuto !== "boolean") {
       warnings.push(`${where}: codexAuto is not a boolean; ignored`);
       delete bot.codexAuto;
+    }
+    if (bot.codexAuto === false) {
+      warnings.push(`${where}: codexAuto false no longer opts out: every Codex seat and worker runs in auto mode `
+        + "(--approve-for-me) with its sandbox on (#1125); remove the field");
     }
     if (!ID_SHAPE.test(bot.id)) warnings.push(`${where}: id is not b- plus 10 base32 characters`);
     if (typeof bot.role !== "string") { if (bot.role !== undefined) warnings.push(`${where}: role is not text`); bot.role = ""; }

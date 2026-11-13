@@ -22,9 +22,9 @@ It is documentation. No build, app or release reads this folder.
 | Folder | What it holds |
 | --- | --- |
 | `logo/svg/` | The triskle, in three colours (the mark) and in ink and cream (the fallback), with a drawing for each size. Genie's lamp, Omni's vortex and Mykes's cords, in ink and cream |
-| `logo/png/` | The mark at 1024 and 512px, clear ground |
+| `logo/png/` | The mark at 1024 and 512px, and two small pictures of the three-colour mark's 32px drawing (64 and 128px), clear ground |
 | `logo/lockups/` | The mark with the wordmark: the triskle for automagik, and each product's own mark for genie, omni and mykes. The older `genie-lockup-*` and `omni-lockup-*` files there are RETIRED |
-| `logo/wordmark/` | The name alone, for automagik, genie and omni |
+| `logo/wordmark/` | The name alone, for automagik, genie, omni and mykes |
 | `favicon/` | The browser tab and home screen set |
 | `genie/` | The one Genie |
 | `tokens/` | The colours in both themes, type, radius, shadow and layout values, as `tokens.json` and `tokens.css` |
@@ -49,14 +49,16 @@ It is documentation. No build, app or release reads this folder.
 | RETIRED, do not use | `logo/lockups/genie-lockup-*` and `logo/lockups/omni-lockup-*`: they carry the triskle (rule 1). The files stay for older work that points at them |
 | The mark alone, 100px or more | `logo/svg/triskle-three-colours.svg` |
 | The mark alone at about 64, 32 or 16px | `logo/svg/triskle-three-colours-64.svg`, `-32.svg`, `-16.svg` |
+| The mark alone at about 32px or less, where an SVG cannot be used | `logo/png/triskle-three-colours-64.png` or `logo/png/triskle-three-colours-128.png`: the 32px drawing as a picture, for sharp screens |
 | A browser tab | `favicon/favicon.ico` and `favicon/favicon.svg` |
 | A phone's home screen, a web manifest | `favicon/apple-touch-icon.png`, `favicon/icon-192.png`, `favicon/icon-512.png` |
 | Automagik's name without the mark | `logo/wordmark/automagik-wordmark-ink.svg` or `-cream.svg` |
+| Mykes's name without the mark | `logo/wordmark/mykes-wordmark-ink.svg` or `-cream.svg` |
 | Colour cannot be used | the files with `-ink` or `-cream` and no `three-colours` in the name |
 
 - "ink" means ink letters, for light grounds. "cream" means cream letters, for dark grounds.
 - Keep clear space around the lockup of at least the height of its small letters.
-- Do not set the lockup under 28px high. From about 36px the dot reads as a sparkle; under that it is a soft plus, which is fine.
+- Do not set the lockup under 28px high. From about 36px the dot reads as a sparkle; under that it is a soft plus, which is fine. One exception: lockups may be set at 24px in the family drawer's phone layout (480px wide and under), as in the drawer the owner approved. The 28px floor stands everywhere else.
 - The grounds the logo was drawn for are `bt-main` in its light and its dark value. On a photo or a strong colour, put it on one of those first.
 - The SVGs that carry the triskle use masks and blur. Every current browser draws them. For a tool that does not (some slide and print tools), use a PNG. Genie's, Omni's and Mykes's marks are plain filled shapes, which any tool draws.
 - Genie's, Omni's and Mykes's marks have no drawing for 16px, so rule 6 keeps them out of a favicon or a 16px icon: at that size Omni's vortex closes into a blot and the thin ends of Mykes's cords fade. Omni is the one with two drawings: under about 56px its large drawing's suckers turn to specks, and the small drawing (`-32`, and the lockup's `-header`) is the one to use. The lamp and the cords have one drawing each, and the cords are the lightest of the three: at a header's size their thin ends are about one pixel wide. (Every file was looked at on 13 November 2026 at 16, 32, 64 and 256px and at the site header's sizes, on both grounds.)
@@ -64,7 +66,7 @@ It is documentation. No build, app or release reads this folder.
 
 ## PNG files
 
-Only the mark at 1024 and 512px is kept here as PNG. Every other PNG is made from an SVG with `export-png.mjs`. The SVGs use masks and blur, so the script draws them in a browser: it needs `playwright-core` (in the root `package.json`) and a Chromium, either the one playwright installs (`bunx playwright-core install chromium`) or your own, with its path in `BRAND_CHROME`.
+Only the mark at 1024 and 512px is kept here as PNG, with two small pictures of the three-colour mark: `logo/png/triskle-three-colours-64.png` and `logo/png/triskle-three-colours-128.png`. Both are the 32px drawing (`logo/svg/triskle-three-colours-32.svg`) at two and four times its size, for a place that shows the mark at about 32px or less on a sharp screen and cannot use an SVG. The number in their name is the picture's size in pixels, not the size to show it at: for the mark shown at 64px, the drawing is `-64.svg`. Every other PNG is made from an SVG with `export-png.mjs`. The SVGs use masks and blur, so the script draws them in a browser: it needs `playwright-core` (in the root `package.json`) and a Chromium, either the one playwright installs (`bunx playwright-core install chromium`) or your own, with its path in `BRAND_CHROME`.
 
 ```sh
 node docs/brand/export-png.mjs <file.svg> <height in px> [out.png]
@@ -155,7 +157,6 @@ These are on the site but are not part of this folder:
 - **The Open Intelligence tag** and the IBM Plex Mono face it is set in. They are we unfold's.
 - **Omni's art and the pet art.** No approved file for them is in this set, and pets are never marks.
 - **Any other drawing of a lamp, a vortex or cords.** The approved marks of Genie, Omni and Mykes are the files in `logo/svg/` and `logo/lockups/` (rule 9), and nothing else. The site's `lamp.webp` is not Genie's mark.
-- **A wordmark file for Mykes.** Its letters are in its lockup only.
 - **Other projects' marks** in the "made possible by" row, and Arca's logo.
 - **The home page's layouts**: the hero with the cast, the grid's arrangement, the phone menu.
 - **Motion.** The site's motion rules are in the component stylesheet; there are no motion tokens.

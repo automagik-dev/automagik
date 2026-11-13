@@ -68,6 +68,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
     + `if [ -f "${join(root, "gh.json")}" ]; then cat "${join(root, "gh.json")}"; exit 0; fi\necho "fake gh: no answer" >&2\nexit 1\n`);
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
+  mkdirSync(join(home, ".config/herdr-app"), { recursive: true });
   const app = join(root, "app");
   mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
   if (briefing) writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
@@ -313,29 +314,47 @@ test("a dsh-tui worker reads its bot's approved switch; other agents keep the or
   assert.equal(s.runs().at(-1).some((word) => word.endsWith("/hcPane.mjs")), false);
 });
 
+// #1125: Codex's launch mode, spelled out, and a Codex run's --add-dir grants taken apart from its
+// other words (the tool-cache grants follow the runner's environment, so they are not compared).
+const CODEX_MODE = ["--approve-for-me", "--disable", "hooks", "--no-daemon", "-c", "sandbox_workspace_write.network_access=true"];
+const grantsApart = (words) => {
+  const rest = [];
+  const dirs = [];
+  for (let i = 0; i < words.length; i += 1) {
+    if (words[i] === "--add-dir") dirs.push(words[++i]);
+    else rest.push(words[i]);
+  }
+  return { words: rest, dirs };
+};
+// A Codex worker's first two grants: its worktree's own git dir, then the project's .git.
+const workerGitDirs = (s, worktree) => [realpathSync(join(s.project, ".git", "worktrees", worktree)), realpathSync(join(s.project, ".git"))];
+
 test("worker: the bot's worker defaults are used, and per-task --agent/--model/--effort win", (t) => {
   const s = scene(t);
   const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["codex", "gpt-5.5", "medium"]);
-  assert.deepEqual(after(s.runs()[0]), ["codex", "--approve-for-me", "--disable", "hooks", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  const codex = grantsApart(after(s.runs()[0]));
+  assert.deepEqual(codex.words, ["codex", ...CODEX_MODE, "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  assert.deepEqual(codex.dirs.slice(0, 2), workerGitDirs(s, "feat-login"));
   const o = s.cli(["worker", "review it", "--branch", "feat/review", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
   assert.equal(o.code, 0, o.err);
   assert.deepEqual([o.json().agent, o.json().model, o.json().effort], ["claude", "opus", "max"]);
   assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--permission-mode", "auto", "--model", "opus", "--effort", "max", "review it"]);
 });
 
-test("worker #946: a bot's codexAuto false leaves its Codex workers on Codex's default approvals", (t) => {
+test("worker #1125: a bot's codexAuto false no longer opts out (#946 retired): its Codex workers run the launch mode", (t) => {
   const file = team();
   file.bots[2].codexAuto = false;
   const s = scene(t, { file });
   const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  assert.deepEqual(grantsApart(after(s.runs()[0])).words, ["codex", ...CODEX_MODE, "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
   const o = s.cli(["worker", "tune it", "--branch", "feat/tune", "--agent", "codex", "--json"]);
   assert.equal(o.code, 0, o.err);
-  assert.equal(s.runs()[1].includes("--approve-for-me"), false, "a per-task --agent codex keeps the opt-out");
+  assert.deepEqual(grantsApart(after(s.runs()[1])).words.slice(0, 1 + CODEX_MODE.length), ["codex", ...CODEX_MODE], "a per-task --agent codex too");
+  assert.equal(s.runs()[1].includes("--dangerously-bypass-approvals-and-sandbox"), false);
 });
 
 test("worker kill (#955): a bot ends a worker it started and nothing else: a seat, another bot's worker, its own pane and a plain pane are refused", (t) => {
@@ -1009,7 +1028,9 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // --model alone is a per-task pick too: the default template steps aside for the default agent.
   const m = s.cli(["worker", "tune it", "--branch", "feat/tune", "--model", "gpt-6", "--json"]);
   assert.equal(m.code, 0, m.err);
-  assert.deepEqual(after(s.runs()[3]), ["codex", "--approve-for-me", "--disable", "hooks", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
+  const tuned = grantsApart(after(s.runs()[3]));
+  assert.deepEqual(tuned.words, ["codex", ...CODEX_MODE, "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
+  assert.deepEqual(tuned.dirs.slice(0, 2), workerGitDirs(s, "feat-tune"));
 });
 
 test("worker --template: an agent the command doesn't name skips the hook with a warning; no template list refuses", (t) => {

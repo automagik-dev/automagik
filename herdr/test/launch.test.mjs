@@ -511,8 +511,7 @@ for (const probe of ["ignores", "unreadable"]) {
     state.execTimeouts = [];
     const again = restartAnswer(await machineCli(restartArgs({ botId: ID.dev, projectKey: project, machine: "vm" }), "restart"));
     assert.deepEqual([again.forceable, again.freshable], [false, false]);
-    assert.match(again.refused, /^This Herdr ends the sidebar's programs at 30 s .*a restart on vm .*that pane running beside the old one, both on one session\. Nothing was restarted\. /);
-    assert.ok(again.refused.endsWith(`Restart it from a terminal: am restart ${ID.dev} --project ${project} --machine vm`), again.refused);
+    assert.equal(again.refused, "This Herdr cannot wait long enough for a linked-machine restart; restart it from a terminal.");
     assert.deepEqual(state.execTimeouts, [{ command: "true", timeout: "probe" }], "only the probe ran");
     assert.equal(w.calls().length, runs, "no hc call");
     assert.equal(w.ledger().length, 1);
@@ -525,13 +524,10 @@ test("Herdr ending the CLI (its 30 s, or the 600 s): may have stopped part-way, 
   state.execFault = (command) => (command === "env" ? new Error("env took longer than 600 s and was stopped") : null);
   t.after(() => { delete state.execFault; });
   const r = await startBot(project, ID.dev, {}, "vm");
-  assert.match(r.refused, /^Herdr ended am start on vm \(env took longer than 600 s and was stopped\), and it may have stopped part-way: a pane may run it with no attach row: /);
-  assert.match(r.refused, new RegExp(`am whois --bot ${ID.dev} --project ${project} --machine vm and vm's panes \\(hc ls\\)`));
-  assert.ok(r.refused.endsWith(`Then start it from a terminal if it isn't running: am start ${ID.dev} --project ${project} --machine vm`), r.refused);
+  assert.equal(r.refused, "Herdr stopped the start command before it finished; check the panes for a partial start before retrying from a terminal.");
   const again = restartAnswer(await machineCli(restartArgs({ botId: ID.dev, projectKey: project, force: true, machine: "vm" }), "restart"));
   assert.deepEqual([again.forceable, again.freshable], [false, false], "--force in the command offers no Restart anyway");
-  assert.match(again.refused, /its old pane and a new one may both run it/);
-  assert.ok(again.refused.endsWith(`am restart ${ID.dev} --project ${project} --machine vm --force`));
+  assert.equal(again.refused, "Herdr stopped the restart command before it finished; check the panes for a partial start before retrying from a terminal.");
 });
 
 test("the terminal command quotes a folder the shell would split", async () => {

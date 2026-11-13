@@ -355,6 +355,39 @@ test('a matching image restores its inputs from its own lock when the workspace 
   assertInstallInputs(f.target)
 })
 
+// S10 MARKER_RECORDS_MERGED: the marker's base must stay the image's own manifest, or a plugin
+// the person later removes reads as an edit to the image's part and the profile stops following.
+test('after an update the marker records the image manifest, so removing an added plugin still follows', async t => {
+  const f = fixture(t); await prepare(f); const { name } = addPlugin(f.target)
+  const result = await prepare(f, f.next, ({ profile }) => {
+    successful(f.next.source)({ profile })
+    cpSync(join(f.target, 'node_modules', name), join(profile, 'node_modules', name), { recursive: true })
+  })
+  assert.equal(result.result, 'updated')
+  const marker = JSON.parse(readFileSync(join(f.target, SEED_MARKER), 'utf8'))
+  assert.deepEqual(marker.imagePackage, JSON.parse(readFileSync(join(f.next.source, 'package.json'), 'utf8')))
+  assert.equal(marker.packageSha256, packageHash(f.target))
+  const path = join(f.target, 'package.json'), pkg = JSON.parse(readFileSync(path, 'utf8'))
+  delete pkg.dependencies[name]; pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter(bundle => bundle !== name)
+  write(path, `${JSON.stringify(pkg, null, 2)}\n`)
+  assert.equal(ownership(f.target, f.next.source).managed, true, 'removing an added plugin keeps the profile following')
+})
+
+// S7 ADDED_PLUGIN_NOT_INSTALLED: an added plugin missing before the update cannot be shown to
+// survive it, so nothing is staged and the live profile stays as it is.
+test('an added plugin that is not installed stops the update before anything is staged', async t => {
+  const f = fixture(t); await prepare(f); const { name } = addPlugin(f.target)
+  rmSync(join(f.target, 'node_modules', name), { recursive: true })
+  const files = ['package.json', 'pnpm-lock.yaml', SEED_MARKER], before = files.map(file => readFileSync(join(f.target, file), 'utf8'))
+  let called = false
+  const result = await prepare(f, f.next, args => { called = true; successful(f.next.source)(args) })
+  assert.equal(result.result, 'update-rolled-back'); assert.equal(called, false)
+  assert.equal(existsSync(join(f.dshHome, 'backups')), false)
+  assert.deepEqual(files.map(file => readFileSync(join(f.target, file), 'utf8')), before)
+  assert.equal(installedPlugins(f.target)[PLUGINS[0]], '3.90.1')
+})
+
+// S3 BUNDLE_WITHOUT_DEPENDENCY, N5 DUPLICATE_ADDED_BUNDLE: neither is what the welcome or DSH writes.
 test('changes to the image-owned dependencies, bundles or metadata still opt out', async t => {
   for (const change of [
     pkg => { pkg.dependencies[PLUGINS[0]] = '1.0.0' },
@@ -362,6 +395,8 @@ test('changes to the image-owned dependencies, bundles or metadata still opt out
     pkg => { pkg.dsh.profile.bundles.shift() },
     pkg => { pkg.dsh.profile.bundles.reverse() },
     pkg => { pkg.scripts = { start: 'custom' } },
+    pkg => { pkg.dsh.profile.bundles.push('@example/not-a-dependency') },
+    pkg => { pkg.dsh.profile.bundles.push(pkg.dsh.profile.bundles.at(-1)) },
   ]) {
     const f = fixture(t); await prepare(f); addPlugin(f.target)
     const path = join(f.target, 'package.json'), pkg = JSON.parse(readFileSync(path, 'utf8')); change(pkg)
