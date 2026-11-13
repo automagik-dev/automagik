@@ -87,7 +87,14 @@ From `omni-marks-light`:
 | `lockups/omni-mark-lockup-ink-header.svg` | `lockups/omni-lockup-small-day.svg` | `cef19f7a34cba707c8995eac9ded832bc6b4ddf6361793ed62ddc6d7d20c387a` |
 | `lockups/omni-mark-lockup-cream-header.svg` | `lockups/omni-lockup-small-night.svg` | `8af9ca4d1c5b075c98913b82ae63ef9b9a9b28e0babea28d6e71f0f95fe08f16` |
 
-A file whose sha256 is not the one in these tables was changed: put its package's file back (`scripts/brand-marks.test.ts` checks it).
+The mykes word, from we unfold's Mykes deck (the `wordmark/` notes above):
+
+| File | In the deck | sha256 |
+| --- | --- | --- |
+| `wordmark/mykes-wordmark-ink.svg` | `mykes-word-day.svg` | `28c80ac26bea923146094869fafe032a9397d85c4fd0ad6432a885ceb24219dc` |
+| `wordmark/mykes-wordmark-cream.svg` | `mykes-word-night.svg` | `9099d9566ebee75e3cc683987f5b69bfc8c1c41873871f5415654a1efbc12752` |
+
+A file whose sha256 is not the one in these tables was changed: put its package's file back (`scripts/brand-marks.test.ts` checks the marks and the lockups; the site's `apps/landing/landing.test.mjs` checks the mykes word).
 
 ## Omni's vortex on curves
 
