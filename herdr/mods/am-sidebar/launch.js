@@ -31,7 +31,7 @@ export async function runCli(args, { timeout, env = [] } = {}) {
   }
   let out = null;
   try { out = JSON.parse(r.stdout); } catch { out = null; }
-  return { code: r.code, out, err: String(r.stderr ?? "").replace(/^automagik-herdr: /gm, "").trim() };
+  return { code: r.code, out, err: String(r.stderr ?? "").replace(/^(?:am|automagik-herdr): /gm, "").trim() };
 }
 
 // ---- Start and Restart on a linked machine (#444): Herdr's exec limit ----
@@ -85,7 +85,7 @@ export async function machineCli(args, what) {
   const at = args.indexOf("--machine");
   const machine = at >= 0 ? args[at + 1] : "this computer";
   const onMachine = at >= 0 ? ` --machine ${shellWord(machine)}` : "";
-  const command = `automagik-herdr ${args.map(shellWord).join(" ")}`;
+  const command = `am ${args.map(shellWord).join(" ")}`;
   const long = await honoursTimeout();
   if (!long && what === "restart") {
     return { code: 1, out: null, asIs: true,
@@ -99,16 +99,16 @@ export async function machineCli(args, what) {
   const bot = shellWord(args[1]);
   const project = args.indexOf("--project") >= 0 ? ` --project ${shellWord(args[args.indexOf("--project") + 1])}` : "";
   const check = what === "restart"
-    ? `its old pane and a new one may both run it: check ${machine}'s panes (hc ls) and end the one automagik-herdr whois --bot ${bot}${project}${onMachine} doesn't name with hc kill`
-    : `a pane may run it with no attach row: check with automagik-herdr whois --bot ${bot}${project}${onMachine} and ${machine}'s panes (hc ls), and end a pane of it the attach ledger doesn't name with hc kill`;
+    ? `its old pane and a new one may both run it: check ${machine}'s panes (hc ls) and end the one am whois --bot ${bot}${project}${onMachine} doesn't name with hc kill`
+    : `a pane may run it with no attach row: check with am whois --bot ${bot}${project}${onMachine} and ${machine}'s panes (hc ls), and end a pane of it the attach ledger doesn't name with hc kill`;
   return { code: 1, out: null, asIs: true,
-    err: `Herdr ended automagik-herdr ${what} on ${machine} (${r.err}), and it may have stopped part-way: ${check}. `
+    err: `Herdr ended am ${what} on ${machine} (${r.err}), and it may have stopped part-way: ${check}. `
       + `Then ${what} it from a terminal if it isn't running: ${command}` };
 }
 
 const refusedBy = (r, what) => {
-  if (what !== "start") return { refused: r.err || `automagik-herdr ${what} failed (exit ${r.code}).` };
-  console.error(`automagik-herdr ${what}: ${r.err || `exit ${r.code}`}`);
+  if (what !== "start") return { refused: r.err || `am ${what} failed (exit ${r.code}).` };
+  console.error(`am ${what}: ${r.err || `exit ${r.code}`}`);
   return { refused: actionError(r.err, what === "start" ? "Start" : "Attach") };
 };
 const warn = (bodies) => { for (const body of bodies ?? []) notify({ title: "Bots", body, level: "warning", timeout: 15000 }); };

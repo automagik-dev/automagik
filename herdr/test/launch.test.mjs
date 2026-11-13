@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 import { state } from "./use-stubs.mjs";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, freshSpare, shellIdle, spareTab, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
 import { GUARD_DIR, stableGuardDir, stableHelper, stableRunner } from "../mods/am-sidebar/workers.js";
-const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/am-sidebar/launch.js");
+const { startBot, attachBot, liveTerminalOf, botOfTerminal, runCli } = await import("../mods/am-sidebar/launch.js");
 import { briefingFilePath } from "../mods/am-sidebar/briefingText.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 
@@ -411,6 +411,22 @@ test("attachBot runs the CLI: an attach row by attach; a bot attached elsewhere 
   assert.deepEqual(state.hcCalls, []);
 });
 
+test("runCli drops the CLI's own prefix from every stderr line: am's, and the long one an older CLI wrote", async (t) => {
+  const w = await world(t, { terminals: (main) => [term("t1", { bot: ID.main, cwd: main })] });
+  // The real CLI: a refusal reaches the sidebar without its "am: ".
+  const taken = await attachBot(w.main, ID.dev, "t1");
+  assert.match(taken.refused, /^t1 already plays Genie \(b-aaaaaaaaaa\)/);
+  // A stand-in CLI under another app home (the pack's own launcher runs it) that writes both.
+  const app = join(w.root, "app2"), bin = join(app, "mods/am-sidebar/bin");
+  mkdirSync(bin, { recursive: true });
+  symlinkSync(join(MOD, "bin/run.sh"), join(bin, "run.sh"));
+  writeFileSync(join(bin, "automagik-herdr.mjs"),
+    "process.stderr.write(\"am: a warning first.\\nautomagik-herdr: an older CLI wrote this.\\nam: refused.\\n\");\nprocess.exitCode = 1;\n");
+  state.appHome = app;
+  const r = await runCli(["attach", ID.dev, "t1"]);
+  assert.deepEqual([r.code, r.out, r.err], [1, null, "a warning first.\nan older CLI wrote this.\nrefused."]);
+});
+
 test("liveTerminalOf and botOfTerminal follow the ledger: a relabel moves nothing", async (t) => {
   const w = await world(t, { terminals: (main) => [term("t1", { bot: ID.main, cwd: main }), term("t2", { cwd: main })] });
   assert.deepEqual(await liveTerminalOf(ID.main), { terminal: "t1", duplicate: false });
@@ -518,7 +534,7 @@ test("the terminal command quotes a folder the shell would split", async () => {
   state.timeoutProbe = "ignores";
   try {
     const r = await machineCli(["restart", ID.dev, "--project", "/srv/my proj's", "--machine", "vm"], "restart");
-    assert.ok(r.err.endsWith(`automagik-herdr restart ${ID.dev} --project '/srv/my proj'\\''s' --machine vm`), r.err);
+    assert.ok(r.err.endsWith(`am restart ${ID.dev} --project '/srv/my proj'\\''s' --machine vm`), r.err);
   } finally { delete state.timeoutProbe; }
 });
 

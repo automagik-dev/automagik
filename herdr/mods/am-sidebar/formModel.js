@@ -308,7 +308,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
   let categoryId = state.category;
   if (byMain && state.category === NEW_CATEGORY) {
     categoryId = newCategoryId(state.catTitle.trim() || "category", cats);
-    pre.push(["automagik-herdr category add", opt("id", categoryId), opt("title", state.catTitle.trim()),
+    pre.push(["am category add", opt("id", categoryId), opt("title", state.catTitle.trim()),
       ...(state.catSub.trim() ? [opt("sub", state.catSub.trim())] : []), ...project].join(" "));
   }
   const parts = [];
@@ -316,7 +316,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
   const changed = (k) => !was || was[k] !== state[k];
   const wave = String(state.wave);
   if (!was) {
-    parts.push("automagik-herdr create", opt("name", state.name.trim() || "new-bot"));
+    parts.push("am create", opt("name", state.name.trim() || "new-bot"));
     if (state.kind === "main") parts.push(opt("kind", "main"));
     if (state.agent) parts.push(opt("agent", state.agent));
     if (state.role.trim()) parts.push(opt("role", state.role.trim()));
@@ -334,7 +334,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
     parts.push(...project);
     if (state.instructions) parts.push(opt("instructions", state.instructions));
   } else {
-    parts.push(`automagik-herdr edit ${shellQuote(state.id)}`);
+    parts.push(`am edit ${shellQuote(state.id)}`);
     if (changed("name")) parts.push(opt("name", state.name.trim()));
     if (changed("agent") && state.agent) parts.push(opt("agent", state.agent));
     if (changed("role")) parts.push(opt("role", state.role.trim()));
