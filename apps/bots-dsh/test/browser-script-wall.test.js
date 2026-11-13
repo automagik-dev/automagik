@@ -12,6 +12,9 @@
 //
 // The last tests run real scripts in the real child on both runtimes: the interpreter is
 // what a script meets, with no Node in reach, and its memory stops at the runner's cap.
+// At that cap a helper's reply that does not fit is refused: once through the real child,
+// and once in a process that reads the interpreter's memory before and after
+// (fixtures/browser-script-memory-probe.mjs).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -23,6 +26,11 @@ import { fileURLToPath } from 'node:url'
 import { GLOBALS } from './fixtures/browser-script-globals.js'
 
 const HOST = fileURLToPath(new URL('./fixtures/browser-script-wall-host.mjs', import.meta.url))
+const MEMORY_PROBE = fileURLToPath(new URL('./fixtures/browser-script-memory-probe.mjs', import.meta.url))
+// script-runner.js's cap on the interpreter's memory, and what sandbox.js tells a script
+// whose memory has no room for a reply.
+const MEMORY_CAP = '--wasm-max-mem-pages=2048'
+const NO_ROOM = 'Error: The helper\'s reply does not fit in the memory the script has left.'
 const SECRET = 'BROWSER_SCRIPT_TEST_SECRET'
 const REFUSED = /not a helper call or an answer/
 
@@ -46,15 +54,16 @@ const RUNTIMES = [
   { name: 'Electron as Node', find: electronGuard, env: { ELECTRON_RUN_AS_NODE: '1' }, electron: true },
 ]
 
-// Runs one check in a host on this runtime; undefined when the test was skipped.
-async function check(t, runtime, request) {
+// Runs one check in a host on this runtime; undefined when the test was skipped. With
+// `args` it runs those in place of the host: a fixture of its own.
+async function check(t, runtime, request, args = [HOST, JSON.stringify({ timeout: 10_000, ...request })]) {
   const { path, skip } = runtime.find()
   if (skip) {
     t.skip(skip)
     return undefined
   }
   const stdout = await new Promise((done, fail) => {
-    execFile(path, [HOST, JSON.stringify({ timeout: 10_000, ...request })], {
+    execFile(path, args, {
       env: { ...process.env, ...runtime.env, [SECRET]: 'test-only-value' },
       timeout: 30_000,
       maxBuffer: 1024 * 1024,
@@ -209,7 +218,7 @@ for (const runtime of RUNTIMES) {
   })
 
   test(`${runtime.name}: helper arguments longer than the host takes end the run`, async (t) => {
-    // One character past script-runner.js MAX_ARGS, in a line well under its MAX_LINE.
+    // One character past script-runner.js MAX_TEXT, in a line well under its MAX_LINE.
     const over = await check(t, runtime, { check: 'argsTooLong', length: 4_000_000 - 3, timeout: 3_000 })
     if (!over) return
     assert.match(over.error ?? `answered ${over.answer}`, REFUSED)
@@ -218,6 +227,23 @@ for (const runtime of RUNTIMES) {
     const at = await check(t, runtime, { check: 'argsTooLong', length: 4_000_000 - 4, timeout: 1_000 })
     assert.match(at.error, /longer than 1 seconds/)
     assert.equal(at.helperCalls, 1)
+  })
+
+  test(`${runtime.name}: an answer or an error longer than the host takes ends the run`, async (t) => {
+    // One character past script-runner.js MAX_TEXT, in a line well under its MAX_LINE.
+    for (const line of ['answerOfLength', 'errorOfLength']) {
+      const over = await check(t, runtime, { check: line, length: 4_000_000 + 1, timeout: 3_000 })
+      if (!over) return
+      assert.match(over.error ?? `answered ${over.answerLength} characters`, REFUSED, line)
+      assert.notEqual(over.exit, 'survived', line)
+    }
+    // At the limit both are taken.
+    const answer = await check(t, runtime, { check: 'answerOfLength', length: 4_000_000, timeout: 3_000 })
+    assert.equal(answer.error, undefined)
+    assert.equal(answer.answerLength, 4_000_000)
+    const error = await check(t, runtime, { check: 'errorOfLength', length: 4_000_000, timeout: 3_000 })
+    assert.equal(error.answer, undefined)
+    assert.equal(error.errorLength, 4_000_000)
   })
 
   test(`${runtime.name}: a message with no end ends the run`, async (t) => {
@@ -264,6 +290,51 @@ for (const runtime of RUNTIMES) {
     assert.match(error, /^(InternalError: out of memory|null)$/)
     // Each array is 100,000 numbers, about 0.8 MB: 128 MB holds fewer than 160 of them.
     assert.ok(arrays > 40 && arrays < 160, `${arrays} arrays`)
+  })
+
+  test(`${runtime.name}: a helper reply too large for the memory a script has left fails that call, and the script goes on`, async (t) => {
+    // The script fills the interpreter to the cap, gives 1.6 MB back and asks for 3.9 MB.
+    const result = await check(t, runtime, {
+      script: `
+        const kept = []
+        try { while (kept.length < 400) kept.push(new Array(100000).fill(kept.length)) } catch (error) {}
+        const filled = kept.length
+        kept.length -= 2
+        let reply
+        try { reply = 'got ' + (await big(3900000)).length } catch (error) { reply = error === null ? 'null' : error.name + ': ' + error.message }
+        kept.length = 0
+        const fits = (await big(3900000)).length
+        return JSON.stringify({ filled, reply, fits, sum: [1, 2, 3].map(value => value * 2).join() })
+      `,
+    })
+    if (!result) return
+    assert.equal(result.error, undefined)
+    const { filled, reply, fits, sum } = JSON.parse(result.answer)
+    assert.ok(filled > 40 && filled < 160, `${filled} arrays`)
+    assert.equal(reply, NO_ROOM)
+    assert.equal(fits, 3_900_000)
+    assert.equal(sum, '2,4,6')
+    assert.equal(result.helperCalls, 2)
+  })
+
+  test(`${runtime.name}: a helper reply the interpreter has no room for is refused, and its memory is as it was`, async (t) => {
+    const probe = request => check(t, runtime, request, [MEMORY_CAP, MEMORY_PROBE, JSON.stringify(request)])
+    // Full to the cap but for 1.6 MB, and a reply of 3.9 MB.
+    const result = await probe({ free: 2, reply: 3_900_000 })
+    if (!result) return
+    assert.deepEqual(result.calls, ['big'])
+    assert.equal(result.before.megabytes > 100 && result.before.megabytes <= 128, true, `${result.before.megabytes} MB`)
+    assert.deepEqual(result.after, result.before)
+    assert.equal(result.finishes.length, 1, JSON.stringify(result.finishes))
+    assert.equal(result.finishes[0][1], null)
+    const { filled, reply, after } = JSON.parse(result.finishes[0][0])
+    assert.ok(filled > 40 && filled < 160, `${filled} arrays`)
+    assert.equal(reply, NO_ROOM)
+    assert.equal(after, `2,4,6 {"a":"b"} function ${filled - 2}`)
+    // The same script with a reply that fits gets it, and the memory is as it was too.
+    const fits = await probe({ free: 2, reply: 500 })
+    assert.deepEqual(fits.after, fits.before)
+    assert.equal(JSON.parse(fits.finishes[0][0]).reply, 'got 500')
   })
 
   test(`${runtime.name}: a script that recurses too deep gets a stack error and the run goes on`, async (t) => {

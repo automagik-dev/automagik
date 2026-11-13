@@ -7,12 +7,25 @@
 // host can kill a process whose script never returns.
 import { openSandbox } from './sandbox.js'
 
+// A write to a host that is gone fails, and there is no one to tell. An error of this
+// process's stack is not that: the sandbox ends the run on it.
 const send = (message) => {
-  try { process.stdout.write(`${JSON.stringify(message)}\n`) } catch {}
+  try {
+    process.stdout.write(`${JSON.stringify(message)}\n`)
+  } catch (error) {
+    if (error instanceof RangeError) throw error
+  }
 }
+
+// The host kills this process at the run's deadline. A host that is gone, or stopped,
+// kills nothing, so the process keeps the deadline too, this long after the host's: a
+// script that never yields is stopped by the interpreter (sandbox.js `overdue`), and the
+// process then leaves.
+const GRACE = 1_000
 
 let lastCall = 0
 let waitLimit = 0
+let deadline = Infinity
 let sandbox
 
 // A helper call of the script: `wait` is this process's own timer, every other name is
@@ -34,11 +47,15 @@ const finish = (answer, error) => send({ type: 'done', answer, error })
 let started = false
 const receive = async (message) => {
   if (message?.type === 'start') {
-    if (started || typeof message.body !== 'string' || !Array.isArray(message.names)) return
+    if (started || typeof message.body !== 'string' || !Array.isArray(message.names) || !(message.wait > 0)) return
     started = true
     waitLimit = message.wait
+    // By the clock that only runs forward: a change of the machine's time moves nothing.
+    deadline = performance.now() + waitLimit + GRACE
+    setTimeout(() => process.exit(0), waitLimit + GRACE)
+    const overdue = () => performance.now() >= deadline ? `Script ran longer than ${waitLimit / 1000} seconds.` : undefined
     try {
-      sandbox = await openSandbox({ call, finish })
+      sandbox = await openSandbox({ call, finish, overdue })
       sandbox.start(message.names, message.body)
     } catch {
       finish(null, 'Script failed.')

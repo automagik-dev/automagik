@@ -20,7 +20,10 @@ syncBuiltinESMExports()
 const { runIsolatedScript } = await import('../../src/host/browser/script-runner.js')
 
 let helperCalls = 0
-const helpers = { goto: async (url) => { helperCalls += 1; return `went to ${url}` } }
+const helpers = {
+  goto: async (url) => { helperCalls += 1; return `went to ${url}` },
+  big: async (size) => { helperCalls += 1; return 'A'.repeat(size) },
+}
 const result = { node: process.versions.node, electron: process.versions.electron ?? null, hostCwd: process.cwd() }
 try {
   result.answer = typeof request.script === 'string'
@@ -28,6 +31,12 @@ try {
     : await runIsolatedScript(JSON.stringify(request), helpers, { timeout: request.timeout, entry })
 } catch (error) {
   result.error = String(error?.message ?? error)
+}
+// A long answer or error is told by its length and its ends: the test reads one line of this.
+for (const name of ['answer', 'error']) {
+  if (typeof result[name] !== 'string' || result[name].length <= 10_000) continue
+  result[`${name}Length`] = result[name].length
+  result[name] = `${result[name].slice(0, 20)}...${result[name].slice(-20)}`
 }
 result.helperCalls = helperCalls
 // A settled run alone does not prove that the process stopped.

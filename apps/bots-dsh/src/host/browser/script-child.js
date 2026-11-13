@@ -3698,6 +3698,15 @@ function smartUnwrap(val) {
 // src/script-child/sandbox.js
 var STACK_LIMIT = 256 * 1024;
 var MAX_TEXT = 4e6;
+var MAX_JSON = MAX_TEXT * 6 + 2;
+var NOT_TEXT = "Script produced an answer that is not text, or is longer than 4 MB.";
+var NO_ROOM = "The helper's reply does not fit in the memory the script has left.";
+var NoRoom = class extends Error {
+};
+var fatal = (error) => {
+  if (error instanceof RangeError) return "InternalError: stack overflow";
+  return error instanceof NoRoom ? "InternalError: out of memory" : void 0;
+};
 var PRELUDE = `(function (call, finish, namesJson, body) {
   'use strict'
   const { parse, stringify } = JSON
@@ -3714,6 +3723,12 @@ var PRELUDE = `(function (call, finish, namesJson, body) {
       const name = typeof error.name === 'string' && error.name !== 'Error' ? error.name + ': ' : ''
       return name + toText(error.message)
     } catch { return 'Script failed.' }
+  }
+  // An error, and the run's end, as finish takes them: JSON.
+  const fail = (error) => {
+    let text = '"Script failed."'
+    try { text = stringify(describe(error)) } catch {}
+    finish(null, text)
   }
   const waiting = { __proto__: null }
   const ask = name => (...args) => new PromiseOf((resolve, reject) => {
@@ -3769,84 +3784,151 @@ var PRELUDE = `(function (call, finish, namesJson, body) {
   }
   const end = (value) => {
     let text = null
-    try { text = value === undefined ? null : toText(value) } catch (error) { finish(null, describe(error)); return }
-    finish(text, null)
+    try {
+      if (value !== undefined) {
+        const answer = toText(value)
+        // Too long is said before the JSON of it is made, which can be six times as long.
+        text = answer.length > ${MAX_TEXT} ? undefined : stringify(answer)
+      }
+    } catch (error) {
+      fail(error)
+      return
+    }
+    if (text === undefined) finish(null, ${JSON.stringify(JSON.stringify(NOT_TEXT))})
+    else finish(text, null)
   }
   let run
   try {
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
     run = new AsyncFunction(...names, 'done', 'setTimeout', 'clearTimeout', 'console', '"use strict";\\n' + body)
   } catch (error) {
-    finish(null, describe(error))
+    fail(error)
     return settle
   }
-  run(...helpers, done, setTimeout, clearTimeout, console).then(value => end(answer ?? value), error => finish(null, describe(error)))
+  run(...helpers, done, setTimeout, clearTimeout, console).then(value => end(answer ?? value), fail)
   return settle
 })`;
-async function openSandbox({ call: call2, finish: finish2, prelude = PRELUDE }) {
+async function openSandbox({ call: call2, finish: finish2, overdue = () => void 0, prelude = PRELUDE }) {
   const QuickJS = await newQuickJSWASMModuleFromVariant(src_default);
+  const allocate = QuickJS.module._malloc;
+  QuickJS.module._malloc = (size) => {
+    const at = allocate(size);
+    if (at === 0 && size > 0) throw new NoRoom();
+    return at;
+  };
   const runtime = QuickJS.newRuntime();
   runtime.setMaxStackSize(STACK_LIMIT);
   runtime.setModuleLoader(() => ({ error: new Error("Imports are not available.") }));
   const context = runtime.newContext();
-  const text = (handle) => {
+  const keys = { length: context.newString("length"), name: context.newString("name"), message: context.newString("message") };
+  let broken;
+  let told = false;
+  const tell = () => {
+    if (broken === void 0 || told) return;
+    try {
+      finish2(null, broken);
+      told = true;
+    } catch {
+    }
+  };
+  const breakWith = (message) => {
+    if (broken !== void 0) return;
+    broken = message;
+    tell();
+  };
+  const caught = (error) => {
+    const message = fatal(error);
+    if (message !== void 0) breakWith(message);
+  };
+  runtime.setInterruptHandler(() => {
+    try {
+      const late = broken === void 0 ? overdue() : void 0;
+      if (late !== void 0) breakWith(String(late));
+    } catch {
+    }
+    return broken !== void 0;
+  });
+  const text = (handle, limit = MAX_TEXT) => {
     if (handle === void 0 || context.typeof(handle) !== "string") return void 0;
-    const length = context.getProp(handle, "length").consume((value) => context.getNumber(value));
-    return length <= MAX_TEXT ? context.getString(handle) : void 0;
+    const length = context.getProp(handle, keys.length).consume((value) => context.getNumber(value));
+    if (!(length <= limit)) return void 0;
+    const copy = context.getString(handle);
+    return copy.length <= limit ? copy : void 0;
   };
   const textOrNull = (handle) => {
     if (handle === void 0) return void 0;
     const type = context.typeof(handle);
-    if (type === "string") return text(handle);
-    return type === "object" && context.sameValue(handle, context.null) ? null : void 0;
+    if (type !== "string") return type === "object" && context.sameValue(handle, context.null) ? null : void 0;
+    const json = text(handle, MAX_JSON);
+    if (json === void 0) return void 0;
+    let value;
+    try {
+      value = JSON.parse(json);
+    } catch {
+      return void 0;
+    }
+    return typeof value === "string" && value.length <= MAX_TEXT ? value : void 0;
   };
   const callFunction = context.newFunction("call", (nameHandle, argsHandle) => {
     let id = 0;
-    try {
-      const name = text(nameHandle);
-      const args = text(argsHandle);
-      if (name !== void 0 && args !== void 0) id = call2(name, args);
-    } catch {
+    if (broken === void 0) {
+      try {
+        const name = text(nameHandle);
+        const args = text(argsHandle);
+        if (name !== void 0 && args !== void 0) id = call2(name, args);
+      } catch (error) {
+        caught(error);
+      }
     }
     return context.newNumber(Number.isSafeInteger(id) && id > 0 ? id : 0);
   });
   const finishFunction = context.newFunction("finish", (answerHandle, errorHandle) => {
-    try {
-      const answer = textOrNull(answerHandle);
-      const error = textOrNull(errorHandle);
-      if (answer === void 0 || error === void 0) finish2(null, "Script produced an answer that is not text, or is longer than 4 MB.");
-      else finish2(answer, error);
-    } catch {
+    if (broken === void 0) {
+      try {
+        const answer = textOrNull(answerHandle);
+        const error = textOrNull(errorHandle);
+        if (answer === void 0 || error === void 0) finish2(null, NOT_TEXT);
+        else finish2(answer, error);
+      } catch (error) {
+        caught(error);
+      }
     }
     return context.undefined;
   });
-  let broken = false;
-  const breakWith = (message) => {
-    if (broken) return;
-    broken = true;
-    finish2(null, message);
-  };
   const describe = (handle) => {
     try {
       const read = (key) => context.getProp(handle, key).consume((value) => context.typeof(value) === "string" ? context.getString(value) : "");
-      const name = read("name");
-      const message = read("message");
+      const name = read(keys.name);
+      const message = read(keys.message);
       return name && message ? `${name}: ${message}` : name || message || "Script failed.";
-    } catch {
-      return "Script failed.";
+    } catch (error) {
+      return fatal(error) ?? "Script failed.";
     }
   };
   const enter = (fn) => {
-    if (broken) return;
+    if (broken !== void 0) return;
     try {
       fn();
-      while (!broken && runtime.hasPendingJob()) {
+      while (broken === void 0 && runtime.hasPendingJob()) {
         const result = runtime.executePendingJobs();
         if (result.error) result.error.consume((error) => breakWith(describe(error)));
       }
     } catch (error) {
-      breakWith(error instanceof RangeError ? "InternalError: stack overflow" : "Script failed.");
+      breakWith(fatal(error) ?? "Script failed.");
     }
+    tell();
+  };
+  const place = (value) => {
+    let handle;
+    try {
+      handle = context.newString(value);
+    } catch (error) {
+      if (error instanceof NoRoom) return void 0;
+      throw error;
+    }
+    if (context.typeof(handle) === "string") return handle;
+    handle.dispose();
+    return void 0;
   };
   let settleHandle;
   return {
@@ -3870,15 +3952,24 @@ async function openSandbox({ call: call2, finish: finish2, prelude = PRELUDE }) 
     settle(id, ok, value) {
       enter(() => {
         if (settleHandle === void 0 || context.typeof(settleHandle) !== "function") return;
+        const placed = typeof value === "string";
+        let valueHandle = context.null;
+        if (placed) {
+          valueHandle = place(value);
+          if (valueHandle === void 0) {
+            ok = false;
+            valueHandle = place(NO_ROOM);
+            if (valueHandle === void 0) throw new NoRoom();
+          }
+        }
         const idHandle = context.newNumber(id);
-        const valueHandle = typeof value === "string" ? context.newString(value) : context.null;
         try {
           const result = context.callFunction(settleHandle, context.undefined, idHandle, ok ? context.true : context.false, valueHandle);
           if (result.error) result.error.consume((error) => breakWith(describe(error)));
           else result.value.dispose();
         } finally {
           idHandle.dispose();
-          if (typeof value === "string") valueHandle.dispose();
+          if (placed) valueHandle.dispose();
         }
       });
     }
@@ -3890,11 +3981,14 @@ var send = (message) => {
   try {
     process.stdout.write(`${JSON.stringify(message)}
 `);
-  } catch {
+  } catch (error) {
+    if (error instanceof RangeError) throw error;
   }
 };
+var GRACE = 1e3;
 var lastCall = 0;
 var waitLimit = 0;
+var deadline = Infinity;
 var sandbox;
 var call = (name, args) => {
   const id = ++lastCall;
@@ -3914,11 +4008,14 @@ var finish = (answer, error) => send({ type: "done", answer, error });
 var started = false;
 var receive = async (message) => {
   if (message?.type === "start") {
-    if (started || typeof message.body !== "string" || !Array.isArray(message.names)) return;
+    if (started || typeof message.body !== "string" || !Array.isArray(message.names) || !(message.wait > 0)) return;
     started = true;
     waitLimit = message.wait;
+    deadline = performance.now() + waitLimit + GRACE;
+    setTimeout(() => process.exit(0), waitLimit + GRACE);
+    const overdue = () => performance.now() >= deadline ? `Script ran longer than ${waitLimit / 1e3} seconds.` : void 0;
     try {
-      sandbox = await openSandbox({ call, finish });
+      sandbox = await openSandbox({ call, finish, overdue });
       sandbox.start(message.names, message.body);
     } catch {
       finish(null, "Script failed.");

@@ -2,9 +2,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import childProcess from 'node:child_process'
 import { syncBuiltinESMExports } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { runIsolatedScript, SCRIPT_TIMEOUT } from '../src/host/browser/script-runner.js'
 import { createSession } from '../src/host/browser/session.js'
 import { gateScope } from '../src/host/browser/gate.js'
+
+// The flags script-runner.js starts the child with, and the child.
+const CHILD_FLAGS = ['--permission', '--no-experimental-sqlite', '--wasm-max-mem-pages=2048', '--max-old-space-size=128']
+const CHILD = fileURLToPath(new URL('../src/host/browser/script-child.js', import.meta.url))
 
 const helpers = () => {
   const calls = []
@@ -50,7 +55,7 @@ test('the child starts with the runner\'s flags and folder, and without the host
   assert.equal(options.env[name], undefined)
   assert.deepEqual(Object.keys(options.env).filter(key => !['SystemRoot', 'ELECTRON_RUN_AS_NODE'].includes(key)), [])
   // The flags, then the child's file: no --allow-* flag grants anything back.
-  assert.deepEqual(args.slice(0, -1), ['--permission', '--no-experimental-sqlite', '--wasm-max-mem-pages=2048', '--max-old-space-size=128'])
+  assert.deepEqual(args.slice(0, -1), CHILD_FLAGS)
   assert.match(args.at(-1), /script-child\.js$/)
   // Its working folder is the run's own, not the host's.
   assert.match(options.cwd, /browser-exec-/)
@@ -267,6 +272,86 @@ test('an oversized helper argument is refused inside the script', async () => {
 test('an answer longer than 4 MB is refused with an error that says so', async () => {
   await assert.rejects(runIsolatedScript("done('A'.repeat(5 * 1024 * 1024))", {}), /longer than 4 MB/)
   assert.equal((await runIsolatedScript("done('A'.repeat(4_000_000))", {})).length, 4_000_000)
+})
+
+test('an answer and an error text come back whole: a NUL character, half a surrogate pair', async () => {
+  assert.equal(await runIsolatedScript('done("ab\\u0000cd\\ud800ef")', {}), 'ab\u0000cd\ud800ef')
+  assert.equal(await runIsolatedScript('return "\\u0000"', {}), '\u0000')
+  await assert.rejects(runIsolatedScript('throw new Error("ab\\u0000cd\\udc00ef")', {}), { message: 'ab\u0000cd\udc00ef' })
+  await assert.rejects(runIsolatedScript('throw "ab\\u0000cd"', {}), { message: 'ab\u0000cd' })
+  // Helper arguments and results were whole already: they cross as JSON.
+  const seen = []
+  const echo = async (text) => { seen.push(text); return text }
+  assert.equal(await runIsolatedScript('return await echo("a\\u0000b\\ud800")', { echo }), 'a\u0000b\ud800')
+  assert.deepEqual(seen, ['a\u0000b\ud800'])
+})
+
+test('the longest answer is 4 MB of any characters: half pairs are not counted as more on the way', async () => {
+  const answer = await runIsolatedScript("done('\\ud800'.repeat(4_000_000))", {})
+  assert.equal(answer.length, 4_000_000)
+  assert.equal(answer, '\ud800'.repeat(4_000_000))
+  await assert.rejects(runIsolatedScript("done('\\ud800'.repeat(4_000_001))", {}), /longer than 4 MB/)
+  await assert.rejects(runIsolatedScript("throw new Error('\\ud800'.repeat(4_000_001))", {}), /longer than 4 MB/)
+})
+
+test('a helper result larger than 4 MB fails that call inside the script, and so does an error text that long', async () => {
+  // As JSON a text is two quotes longer than itself.
+  const answer = await runIsolatedScript(`
+    const sizes = []
+    for (const size of [4_000_000 - 1, 4_000_000 - 2]) {
+      try { sizes.push((await snapshot(size)).length) } catch (error) { sizes.push(error.message) }
+    }
+    try { await click() } catch (error) { sizes.push(error.message) }
+    return JSON.stringify(sizes)
+  `, { snapshot: async size => 'A'.repeat(size), click: async () => { throw new Error('A'.repeat(4_000_001)) } })
+  assert.deepEqual(JSON.parse(answer), ['The helper\'s result is larger than 4 MB.', 3_999_998, 'The helper failed.'])
+})
+
+test('replies a script does not read are held up to a limit, then the run ends', async (t) => {
+  const children = observeChildren(t)
+  let calls = 0
+  const started = Date.now()
+  // Twenty replies of 3.9 MB for a script that makes its calls and never yields.
+  await assert.rejects(
+    runIsolatedScript('for (let index = 0; index < 20; index += 1) snapshot(); for (;;) {}', { snapshot: async () => { calls += 1; return 'A'.repeat(3_900_000) } }, { timeout: 15_000 }),
+    /did not read their replies/,
+  )
+  assert.equal(calls, 20)
+  assert.ok(Date.now() - started < 10_000, 'the deadline ended the run, not the limit')
+  const { child } = children[0]
+  if (child.exitCode === null && child.signalCode === null) await new Promise(resolve => child.once('exit', resolve))
+  assert.equal(child.signalCode, 'SIGKILL')
+})
+
+test('the child keeps the deadline itself: with no host to stop it, it ends its script and leaves', async (t) => {
+  // Started as the runner starts it, then left alone: its input stays open, so it is not
+  // told that its host is gone, and nothing here kills it before it is seen to leave.
+  const run = async (body) => {
+    const child = childProcess.spawn(process.execPath, [...CHILD_FLAGS, CHILD], { env: {}, stdio: ['pipe', 'pipe', 'ignore'] })
+    t.after(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    })
+    let lines = ''
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { lines += chunk })
+    const started = Date.now()
+    child.stdin.write(`${JSON.stringify({ type: 'start', body, names: [], wait: 300 })}\n`)
+    const exit = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve('still running after 8 seconds'), 8_000)
+      child.once('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal }) })
+    })
+    return { exit, lines, ms: Date.now() - started }
+  }
+  // A script that never yields: the interpreter stops it, the run ends with the error
+  // the host gives at its own deadline, and the process leaves.
+  const loop = await run('for (;;) {}')
+  assert.deepEqual(loop.exit, { code: 0, signal: null })
+  assert.ok(loop.ms >= 300, `left after ${loop.ms} ms`)
+  assert.deepEqual(loop.lines.trim().split('\n').map(line => JSON.parse(line)), [{ type: 'done', answer: null, error: 'Script ran longer than 0.3 seconds.' }])
+  // A script that waits for what never comes has nothing to stop; the process leaves.
+  const waits = await run('await new Promise(() => {})')
+  assert.deepEqual(waits.exit, { code: 0, signal: null })
+  assert.ok(waits.ms >= 300, `left after ${waits.ms} ms`)
+  assert.equal(waits.lines, '')
 })
 
 test('error stacks name the script\'s own frames and no path of the host', async () => {

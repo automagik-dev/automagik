@@ -22,20 +22,30 @@
 //   withheld  the host's environment: the child gets an empty one
 //             the host itself: the one channel is JSON lines on the child's stdin and
 //             stdout, and a line the host does not accept ends the run
-//             time: at the deadline the host kills the child, it does not ask
+//             time: at the deadline the host kills the child, it does not ask; a child
+//             whose host is gone or stopped ends its script and leaves a second later
 //
 // What no flag of Node 24 refuses, and so what a script that got out of the interpreter
 // could still do:
 //
 //   - use the network, local sockets included (Node 26 refuses it with these same flags);
 //   - signal, or change the priority of, any process of the same user, this host among
-//     them. A host that was stopped that way kills nothing at the deadline;
+//     them. A host that was stopped that way kills nothing at the deadline, and the
+//     child's own deadline is the script's to remove once it is out;
 //   - read facts about the machine: user name, home folder, host name, network
 //     interfaces, and whether a path exists (the last one not from Node 24.22);
 //   - on Node 24.9 only, have Node write a trace log or a heap snapshot into the working
 //     folder, which is why that folder is the run's own;
 //   - change V8's flags, which Node names as outside the model, and from there whatever
 //     the bypass Node warns of allows: at worst, what the user's account allows.
+//
+// Also not bounded or not cleaned, for any script:
+//
+//   - memory: the two flags below bound the interpreter's WebAssembly memory and the old
+//     space of the child's heap. The rest of the child's memory has no flag bound;
+//   - the run's folder stays behind when the host exits before it sees the child exit;
+//   - the path of the child's entry file is in the interpreter's memory. A script has no
+//     way to read it short of a bug in the interpreter.
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -50,14 +60,20 @@ const CHILD = fileURLToPath(new URL('./script-child.js', import.meta.url))
 // node:sqlite is outside that model and goes by its own flag. Memory: the script's is
 // the interpreter's WebAssembly memory, capped here at 2,048 pages of 64 KiB (128 MB),
 // past which the script gets an out-of-memory error of its own; the old space of the
-// child's own heap is capped beside it.
+// child's own heap is capped beside it at 128 MB. These two flags bound only those two:
+// the rest of the child's memory (the young space of its heap, and what Node and the
+// interpreter hold outside both) has no flag bound.
 const CHILD_FLAGS = ['--permission', '--no-experimental-sqlite', '--wasm-max-mem-pages=2048', '--max-old-space-size=128']
 
-// The longest helper arguments a script may send (the child refuses more before
-// sending), and the longest line that can carry them: JSON escaping makes at most six
-// characters of one.
-const MAX_ARGS = 4_000_000
-const MAX_LINE = MAX_ARGS * 6 + 1_000
+// The longest text that crosses, either way: a helper call's arguments, a helper's reply,
+// the answer and an error. The child keeps the same limit on what it sends; this side
+// does not take its word for it. And the longest line that can carry such a text: JSON
+// escaping makes at most six characters of one.
+const MAX_TEXT = 4_000_000
+const MAX_LINE = MAX_TEXT * 6 + 1_000
+// The most reply text that may wait for a child that is not reading it: a script can
+// make calls and then never yield, and each reply is held here until it is read.
+const MAX_WAITING = MAX_TEXT * 16
 
 // The child sees none of the host's environment (keys, tokens, DSH_HOME). Windows needs
 // SystemRoot to start a process; the desktop app's host is Electron run as Node, and so
@@ -75,13 +91,13 @@ function readMessage(line, helpers) {
   let message
   try { message = JSON.parse(line) } catch { return undefined }
   if (message === null || typeof message !== 'object' || Array.isArray(message)) return undefined
-  const text = value => typeof value === 'string' || value === null
+  const text = value => value === null || (typeof value === 'string' && value.length <= MAX_TEXT)
   if (message.type === 'done') return text(message.answer) && text(message.error) ? message : undefined
   if (message.type !== 'call') return undefined
   const { id, name, args } = message
   if (!Number.isSafeInteger(id) || id < 1) return undefined
   if (typeof name !== 'string' || !Object.hasOwn(helpers, name)) return undefined
-  if (typeof args !== 'string' || args.length > MAX_ARGS) return undefined
+  if (typeof args !== 'string' || args.length > MAX_TEXT) return undefined
   return message
 }
 
@@ -139,11 +155,16 @@ export function runIsolatedScript(body, helpers, { timeout = SCRIPT_TIMEOUT, ent
         const args = JSON.parse(message.args)
         const value = await helpers[message.name](...(Array.isArray(args) ? args : []))
         const json = JSON.stringify(value)
+        // A reply the script's memory may have no room for is not sent: the call fails.
+        if (json !== undefined && json.length > MAX_TEXT) throw new Error('The helper\'s result is larger than 4 MB.')
         reply = { id: message.id, ok: true, value: json === undefined ? null : json }
       } catch (error) {
-        reply = { id: message.id, ok: false, error: String(error?.message ?? error) }
+        const text = String(error?.message ?? error)
+        reply = { id: message.id, ok: false, error: text.length > MAX_TEXT ? 'The helper failed.' : text }
       }
-      if (!settled) send(reply)
+      if (settled) return
+      send(reply)
+      if (child.stdin.writableLength > MAX_WAITING) end(reject, new Error('Script stopped: it made helper calls and did not read their replies.'))
     }
     // One message a line. What has no line end yet is held, up to the longest line.
     let held = []

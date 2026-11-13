@@ -124,6 +124,8 @@ const checks = {
   idNotANumber: () => message({ type: 'call', id: 'one', name: 'goto', args: '[]' }),
   answerNotText: () => message({ type: 'done', answer: { text: 'x' }, error: null }),
   errorNotText: () => message({ type: 'done', answer: null, error: 5 }),
+  answerOfLength: ({ length }) => message({ type: 'done', answer: 'x'.repeat(length), error: null }),
+  errorOfLength: ({ length }) => message({ type: 'done', answer: null, error: 'x'.repeat(length) }),
   // A message with no end: more than the host holds for one line.
   endlessLine: ({ length }) => process.stdout.write('x'.repeat(length)),
 }
