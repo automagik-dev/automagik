@@ -481,7 +481,56 @@ export const CODEX_DIR_VARS = ["HOME", "HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_
 /** Whether a shell assignment to `name` could move a Codex launch's folders or its program (#1142). */
 export const codexDirVar = (name) => CODEX_DIR_VARS.includes(name) || name === "PATH" || /^(XDG_|CODEX_|npm_config_|BUN_INSTALL)/i.test(name);
 
-/** `-c`/`--config`'s key=value at `words[i]` in any form: { key, span } (span: words it takes), or null. */
+// TOML's one-letter basic-string escapes (\uXXXX and \UXXXXXXXX are read apart).
+const TOML_ESCAPES = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", "\"": "\"", "\\": "\\" };
+
+/**
+ * A trimmed TOML key part unquoted: a basic string "…" with its escapes decoded, a literal string
+ * '…' as it is, a bare key as written. An escape TOML lacks reads as its letter (toward dropping).
+ */
+function tomlKeyPart(part) {
+  if (part.length >= 2 && part[0] === "'" && part.endsWith("'")) return part.slice(1, -1);
+  if (!(part.length >= 2 && part[0] === "\"" && part.endsWith("\""))) return part;
+  return part.slice(1, -1).replace(/\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (m, e) => {
+    if (e.length === 1) return TOML_ESCAPES[e] ?? e;
+    const cp = parseInt(e.slice(1), 16);
+    return cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+  });
+}
+
+/**
+ * A config text's key parts as TOML reads them: the dotted key before the first `=` outside
+ * quotes, split on the dots outside quotes, each part trimmed, then unquoted (tomlKeyPart).
+ * null when a quote doesn't close.
+ */
+function tomlKeyParts(text) {
+  const parts = [];
+  let start = 0, quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (quote === "\"" && ch === "\\") i += 1;
+      else if (ch === quote) quote = null;
+    } else if (ch === "\"" || ch === "'") quote = ch;
+    else if (ch === "." || ch === "=") {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+      if (ch === "=") return parts.map((p) => tomlKeyPart(p.trim()));
+    }
+  }
+  if (quote) return null;
+  parts.push(text.slice(start));
+  return parts.map((p) => tomlKeyPart(p.trim()));
+}
+
+/**
+ * `-c`/`--config`'s key=value at `words[i]` in any form: { heads, text, span } (span: words it
+ * takes), or null. The key is matched by its meaning, never its spelling (#1125: config keys
+ * written in another valid TOML spelling were kept): `heads` is its first part in each reading,
+ * TOML's (tomlKeyParts), Codex's own (the text before the first `=`, split on every dot, each
+ * part trimmed) and the one before (the raw key, one outer quote off), which alone reads a key
+ * whose quotes don't close. A head in CODEX_CONFIG_KEYS in any reading drops the word.
+ */
 function codexConfigAt(words, i) {
   const w = words[i];
   let text = null, span = 1;
@@ -489,7 +538,9 @@ function codexConfigAt(words, i) {
   else if (w.startsWith("--config=")) text = w.slice("--config=".length);
   else if (w.startsWith("-c")) text = w.slice(w[2] === "=" ? 3 : 2);
   if (text === null) return null;
-  return { key: text.split("=")[0].trim().replace(/^["']|["']$/g, ""), text, span };
+  const raw = text.split("=")[0];
+  const heads = [tomlKeyParts(text)?.[0], raw.split(".")[0].trim(), raw.trim().replace(/^["']|["']$/g, "").split(".")[0]];
+  return { heads, text, span };
 }
 
 /** The approval or sandbox flag at `w` in any form (`-a x`, `-ax`, `-a=x`, `--sandbox=x`): { flag (as written, no value), next }, or null. */
@@ -739,7 +790,9 @@ export function codexClean(run, where = null) {
     if (config) {
       // The pack's own network word goes quietly, as --approve-for-me does: launchRun adds it once.
       if (config.text.trim() === CODEX_NETWORK) { i += config.span - 1; continue; }
-      const key = CODEX_CONFIG_KEYS.find((k) => config.key === k || config.key.startsWith(`${k}.`));
+      // Any other spelling of that word is a config key like the rest: dropped and named (launchRun
+      // still adds the exact one).
+      const key = CODEX_CONFIG_KEYS.find((k) => config.heads.includes(k));
       if (key) drop(`-c ${key}`);
       else argv.push(...words.slice(i, i + config.span));
       i += config.span - 1;
