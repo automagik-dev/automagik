@@ -789,7 +789,8 @@ pub fn execute(o: &Opts) -> Result<Done, String> {
     };
     let code = if !report.passed() {
         exit::CONSERVATION
-    } else if report.total_change() == 0 {
+    } else if report.changes.is_empty() {
+        // Not the counted total: a gap in `reasoning` alone is a change too, printed and applied.
         exit::NOTHING
     } else {
         exit::OK
@@ -869,6 +870,31 @@ fn verify_copy(store: &Connection, copy: &Copy, resuming: bool) -> Result<(), St
     Ok(())
 }
 
+/// The columns to order a table's rows by: its primary key, else `rowid`. A table made `WITHOUT
+/// ROWID` (the outcomes `pr` table) has no `rowid` column but always has a primary key.
+fn order_by(tx: &Transaction, table: &str) -> rusqlite::Result<String> {
+    let pk: Vec<String> = tx
+        .prepare("SELECT name FROM pragma_table_info(?1) WHERE pk > 0 ORDER BY pk")?
+        .query_map([table], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(if pk.is_empty() {
+        "rowid".to_string()
+    } else {
+        pk.iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
+}
+
+/// The fingerprint of a whole store file (every table whole, the rollup rows outside `[lo,
+/// hi)`), for a test to see that every table the schema makes can be hashed.
+pub fn fingerprint_file(db: &Path, lo: i64, hi: i64) -> Result<String, String> {
+    let mut c = Connection::open(db).map_err(|e| e.to_string())?;
+    let tx = c.transaction().map_err(|e| e.to_string())?;
+    fingerprint(&tx, lo, hi).map_err(|e| e.to_string())
+}
+
 /// A hash of every row the repair must leave alone: the rollup rows outside `[lo, hi)`, the
 /// `meta` rows but the journal, and every other table whole.
 fn fingerprint(tx: &Transaction, lo: i64, hi: i64) -> rusqlite::Result<String> {
@@ -887,7 +913,7 @@ fn fingerprint(tx: &Transaction, lo: i64, hi: i64) -> rusqlite::Result<String> {
                 format!("SELECT * FROM usage WHERE hour_ms < {lo} OR hour_ms >= {hi} ORDER BY id")
             }
             "meta" => format!("SELECT * FROM meta WHERE k != '{JOURNAL}' ORDER BY k"),
-            _ => format!("SELECT * FROM \"{n}\" ORDER BY rowid"),
+            _ => format!("SELECT * FROM \"{n}\" ORDER BY {}", order_by(tx, &n)?),
         };
         let mut st = tx.prepare(&sql)?;
         let cols = st.column_count();
@@ -923,7 +949,43 @@ fn fingerprint(tx: &Transaction, lo: i64, hi: i64) -> rusqlite::Result<String> {
 
 /// Writes the plan, one transaction per day, at most `limit` days (a test's stand-in for a kill
 /// between days). Returns the days committed.
+/// The copy must be a separate file: not the store by any spelling, not a symlink, and not the
+/// store's own inode (a hard link has the store's bytes and sha256 and would pass as a copy).
+fn check_separate(db: &Path, copy: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let link = std::fs::symlink_metadata(copy).map_err(|e| format!("the copy: {e}"))?;
+    if link.file_type().is_symlink() {
+        return Err("the copy is a symbolic link; it must be a separate file".into());
+    }
+    let (a, b) = (
+        std::fs::metadata(db).map_err(|e| format!("the store: {e}"))?,
+        std::fs::metadata(copy).map_err(|e| format!("the copy: {e}"))?,
+    );
+    let same_path = match (std::fs::canonicalize(db), std::fs::canonicalize(copy)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    };
+    if same_path || (a.dev() == b.dev() && a.ino() == b.ino()) {
+        return Err("the copy is the store itself (same file); it must be a separate file".into());
+    }
+    Ok(())
+}
+
 pub fn apply(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<String>, String> {
+    // A refused apply leaves nothing behind: the lock file is the one thing it may create, and
+    // when it was not there before, a failed apply removes it again (the lock itself is released
+    // when the inner call returns).
+    let lock_file = o.state_dir.join("meter.lock");
+    let existed = lock_file.symlink_metadata().is_ok();
+    let r = apply_inner(o, copy, rep, limit);
+    if r.is_err() && !existed {
+        let _ = std::fs::remove_file(&lock_file);
+    }
+    r
+}
+
+fn apply_inner(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<String>, String> {
+    check_separate(&o.state_dir.join("meter.db"), &copy.path)?;
     let _lock = match crate::paths::try_lock(&o.state_dir) {
         Ok(Some(l)) => l,
         Ok(None) => return Err("another sync holds the lock; nothing was written".into()),
@@ -942,9 +1004,6 @@ pub fn apply(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<St
         }
         Some(v) if v == SCHEMA_VERSION => {}
         _ => return Err(format!("the store is not at schema {SCHEMA_VERSION}")),
-    }
-    if copy.path == db {
-        return Err("the copy must be another file than the store".into());
     }
     let done: Option<String> = conn
         .query_row("SELECT v FROM meta WHERE k = ?1", [JOURNAL], |r| r.get(0))

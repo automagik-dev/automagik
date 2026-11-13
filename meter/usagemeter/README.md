@@ -748,13 +748,16 @@ usagemeter repair --store STORE_DIR --against ORACLE_DIR --apply --copy FILE --c
   hour's evidence sum passes its rollup and no token is attributed without a call behind it; a
   short group with no evidence-free row is left alone and listed as unresolved. Every total
   (TOTAL, unresolved, kept, outside) adds the six counted columns: `reasoning` is part of
-  `output`, repaired in its own column but never added to a total. Codex and Antigravity must
-  change by 0.
+  `output`, repaired in its own column but never added to a total. A gap in `reasoning` alone
+  is still a change: it is printed, exits 0 and is applied (so the store ends equal to the oracle
+  in every column), with a counted total of 0. Codex and Antigravity must change by 0.
 - Exit: 0 a plan (or applied), 1 conservation failed, 2 usage or unreadable store, 3 nothing to
   repair, 12 the store is from a newer meter.
 - `--apply` is refused without a copy. Take the sync lock's quiet moment, make the copy with
   `sqlite3 meter.db "VACUUM INTO 'copy.db'"` (or any consistent copy), `sha256sum` it, and pass
-  `--copy copy.db --confirm-copy <that sha256>`. The command checks the file's sha256, its
+  `--copy copy.db --confirm-copy <that sha256>`. The copy must be a separate file: a symbolic
+  link, a hard link or any spelling of the store itself is refused. A refused apply leaves
+  the store's folder as it was (no lock file left behind that was not there before). The command checks the file's sha256, its
   `quick_check`, and that it holds as many rollup rows and tokens as the store (after a partly
   done run, the store may hold more). It then takes the sync lock, refuses a newer schema, and
   writes one transaction per day. Each day checks its own conservation inside the transaction and

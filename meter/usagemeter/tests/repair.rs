@@ -1,10 +1,11 @@
 //! `usagemeter repair` (issue 1126) on fixture stores in temp dirs. Synthetic rows only.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use meter::repair::{self, Copy, Opts, exit};
-use meter::store::Store;
 use meter::time::{HOUR_MS, parse_rfc3339};
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
@@ -19,6 +20,7 @@ fn hour(s: &str) -> i64 {
 
 struct Fx {
     _dir: tempfile::TempDir,
+    _envs: [common::Env; 2],
     store: PathBuf,
     oracle: PathBuf,
     scratch: PathBuf,
@@ -27,16 +29,20 @@ struct Fx {
 impl Fx {
     fn new() -> Fx {
         let dir = tempfile::tempdir().unwrap();
-        let mk = |n: &str| {
-            let p = dir.path().join(n);
-            fs::create_dir_all(&p).unwrap();
-            drop(Store::open(&p.join("meter.db")).unwrap());
-            p
+        // The real schema path: a sync of an empty home, so every table sync makes (the outcomes
+        // `pr` table, `WITHOUT ROWID`, included) is in the fixture store.
+        let mk = || {
+            let env = common::Env::new();
+            env.run(&env.opts());
+            env
         };
-        let (store, oracle, scratch) = (mk("store"), mk("oracle"), dir.path().join("scratch"));
+        let envs = [mk(), mk()];
+        let (store, oracle) = (envs[0].state(), envs[1].state());
+        let scratch = dir.path().join("scratch");
         fs::create_dir_all(&scratch).unwrap();
         Fx {
             _dir: dir,
+            _envs: envs,
             store,
             oracle,
             scratch,
@@ -391,11 +397,30 @@ fn dry_run_writes_nothing() {
     fx.s("a", "dsh-tui", H8, cols(CR, 100), 5);
     fx.o("a", "dsh-tui", H8, cols(CR, 160), 5);
     let (hs, ho) = (Fx::db_hash(&fx.store), Fx::db_hash(&fx.oracle));
+    let files_before = {
+        let mut v: Vec<String> = fs::read_dir(&fx.store)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.ends_with("-wal") && !n.ends_with("-shm"))
+            .collect();
+        v.sort();
+        v
+    };
     let d = repair::execute(&fx.opts(&["--dry-run"])).unwrap();
     assert_eq!(d.code, exit::OK);
     assert_eq!(Fx::db_hash(&fx.store), hs);
     assert_eq!(Fx::db_hash(&fx.oracle), ho);
-    assert!(!fx.store.join("meter.lock").exists());
+    // No file is added to the store's folder but SQLite's own read-only companions.
+    let files = |d: &Path| -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.ends_with("-wal") && !n.ends_with("-shm"))
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(files(&fx.store), files_before);
     assert!(fx.journal().is_none());
 }
 
@@ -669,4 +694,244 @@ fn common_serial() -> impl Drop {
     // One lock-taking test at a time: the apply tests take the store's sync lock.
     static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
     M.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[test]
+fn a_store_made_by_sync_applies_end_to_end_and_every_table_hashes() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // What sync made: every table the real schema path creates, `pr` (WITHOUT ROWID) included.
+    let tables: Vec<String> = Fx::conn(&fx.store)
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    for t in [
+        "pr",
+        "ev_error",
+        "evidence",
+        "launch",
+        "link",
+        "ev_dim",
+        "ev_actor",
+        "ev_cwd",
+        "ledgers",
+        "meta",
+        "usage",
+        "files",
+        "seen",
+        "sessions",
+        "cwd_repo",
+        "health",
+        "codex_threads",
+    ] {
+        assert!(tables.iter().any(|x| x == t), "{t} missing from {tables:?}");
+    }
+    let c = Fx::conn(&fx.store);
+    c.execute(
+        "INSERT INTO pr(project, branch, pr, state, at_ms) VALUES ('p', 'b', 1, 'open', 1)",
+        [],
+    )
+    .unwrap();
+    drop(c);
+    // Every table hashes, the hash is stable, and a change to a `pr` row changes it.
+    let db = fx.store.join("meter.db");
+    let h = repair::fingerprint_file(&db, 0, 1).unwrap();
+    assert_eq!(repair::fingerprint_file(&db, 0, 1).unwrap(), h);
+    Fx::conn(&fx.store)
+        .execute("UPDATE pr SET state = 'merged'", [])
+        .unwrap();
+    assert_ne!(repair::fingerprint_file(&db, 0, 1).unwrap(), h);
+    // And a repair runs on it.
+    fx.s("a", "dsh-tui", H8, cols(CR, 100), 5);
+    fx.o("a", "dsh-tui", H8, cols(CR, 160), 5);
+    let c = fx.copy("c.db");
+    let d = repair::execute(&fx.apply_opts(&[], &c)).unwrap();
+    assert_eq!(d.code, exit::OK);
+    assert_eq!(d.applied_days, vec!["2026-11-08"]);
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H8, CR), 160);
+}
+
+#[test]
+fn the_copy_must_be_a_separate_file() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    fx.s("a", "dsh-tui", H8, cols(CR, 100), 5);
+    fx.o("a", "dsh-tui", H8, cols(CR, 160), 5);
+    let db = fx.store.join("meter.db");
+    let sha = meter::event::hex(&Sha256::digest(fs::read(&db).unwrap()));
+    let h = Fx::db_hash(&fx.store);
+    let refused = |path: PathBuf, what: &str| {
+        let c = Copy {
+            path,
+            sha256: sha.clone(),
+        };
+        match repair::execute(&fx.apply_opts(&[], &c)) {
+            Err(e) => assert!(e.contains("copy"), "{what}: {e}"),
+            Ok(d) => panic!("{what}: applied, code {}", d.code),
+        }
+        assert_eq!(Fx::db_hash(&fx.store), h, "{what}");
+    };
+    // The same bytes and sha256, by every way a path can name the store.
+    let sym = fx.scratch.join("sym.db");
+    std::os::unix::fs::symlink(&db, &sym).unwrap();
+    refused(sym, "symlink");
+    let hard = fx.scratch.join("hard.db");
+    fs::hard_link(&db, &hard).unwrap();
+    refused(hard, "hard link");
+    refused(fx.store.join(".").join("meter.db"), "./ spelling");
+    refused(db.clone(), "the store itself");
+    // A real, separate copy passes.
+    let c = fx.copy("real.db");
+    assert_eq!(
+        repair::execute(&fx.apply_opts(&[], &c)).unwrap().code,
+        exit::OK
+    );
+}
+
+#[test]
+fn a_reasoning_only_gap_is_printed_and_applied_not_dropped() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    let mut s = [0; 7];
+    s[4] = 100;
+    s[5] = 10;
+    let mut o = s;
+    o[5] = 40;
+    fx.s("a", "claude-code", H8, s, 1);
+    fx.o("a", "claude-code", H8, o, 1);
+    // The dry run prints the change and its exit agrees: a plan (0), not "nothing to repair" (3).
+    let d = repair::execute(&fx.opts(&[])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(d.report.total_change(), 0, "reasoning is never in a total");
+    let j = d.report.to_json(d.code);
+    assert_eq!(j["cells"][0]["column"], "reasoning");
+    assert_eq!(j["cells"][0]["change"], 30);
+    // The apply writes it.
+    let c = fx.copy("c.db");
+    let d = repair::execute(&fx.apply_opts(&[], &c)).unwrap();
+    assert_eq!(d.code, exit::OK);
+    assert_eq!(d.applied_days, vec!["2026-11-08"]);
+    assert_eq!(Fx::col(&fx.store, "claude-code", H8, 5), 40);
+    assert_eq!(Fx::col(&fx.store, "claude-code", H8, 4), 100);
+    // Then nothing is left.
+    assert_eq!(
+        repair::execute(&fx.apply_opts(&[], &c)).unwrap().code,
+        exit::NOTHING
+    );
+}
+
+/// What a refused apply must not change in the store's folder: every file but the database and
+/// SQLite's own companions, by name, size and mtime.
+fn listing(dir: &Path) -> Vec<(String, u64, std::time::SystemTime)> {
+    let mut v: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| {
+            let e = e.unwrap();
+            let m = e.metadata().unwrap();
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                m.len(),
+                m.modified().unwrap(),
+            )
+        })
+        .filter(|(n, _, _)| !n.starts_with("meter.db"))
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn a_refused_apply_leaves_nothing_behind_in_the_store_folder() {
+    let _g = common_serial();
+    // Each refusal path, on a store with its lock file (a synced store has one) and on one
+    // without: the folder listing is identical before and after, and the store is unchanged.
+    for with_lock in [true, false] {
+        let fx = Fx::new();
+        fx.s("a", "dsh-tui", H8, cols(CR, 100), 5);
+        fx.o("a", "dsh-tui", H8, cols(CR, 160), 5);
+        let good = fx.copy("good.db");
+        if !with_lock {
+            fs::remove_file(fx.store.join("meter.lock")).unwrap();
+        }
+        let db = fx.store.join("meter.db");
+        let sha = |p: &Path| meter::event::hex(&Sha256::digest(fs::read(p).unwrap()));
+        let notdb = fx.scratch.join("notdb.db");
+        fs::write(&notdb, b"not a database").unwrap();
+        let hard = fx.scratch.join("hard.db");
+        fs::hard_link(&db, &hard).unwrap();
+        let copies: Vec<(&str, Copy)> = vec![
+            (
+                "wrong sha",
+                Copy {
+                    path: good.path.clone(),
+                    sha256: "0".repeat(64),
+                },
+            ),
+            (
+                "missing copy",
+                Copy {
+                    path: fx.scratch.join("nope.db"),
+                    sha256: good.sha256.clone(),
+                },
+            ),
+            (
+                "not a database",
+                Copy {
+                    sha256: sha(&notdb),
+                    path: notdb,
+                },
+            ),
+            (
+                "hard link",
+                Copy {
+                    sha256: sha(&hard),
+                    path: hard,
+                },
+            ),
+        ];
+        let (before, h) = (listing(&fx.store), Fx::db_hash(&fx.store));
+        for (what, c) in copies {
+            assert!(repair::execute(&fx.apply_opts(&[], &c)).is_err(), "{what}");
+            assert_eq!(listing(&fx.store), before, "{what} (lock file {with_lock})");
+            assert_eq!(Fx::db_hash(&fx.store), h, "{what}");
+        }
+        // A copy that no longer matches the store's rows (taken, then the store grew).
+        let stale = fx.copy("stale.db");
+        fx.s("x", "omp", H9, cols(IN, 1), 1);
+        let (before, h) = (listing(&fx.store), Fx::db_hash(&fx.store));
+        assert!(
+            repair::execute(&fx.apply_opts(&[], &stale)).is_err(),
+            "stale"
+        );
+        assert_eq!(listing(&fx.store), before, "stale (lock file {with_lock})");
+        assert_eq!(Fx::db_hash(&fx.store), h);
+        // Conservation fails (events differ): refused before any lock.
+        fx.o("e", "dsh-tui", H9, cols(CR, 9), 2);
+        fx.s("e", "dsh-tui", H9, cols(CR, 3), 1);
+        let (before, h) = (listing(&fx.store), Fx::db_hash(&fx.store));
+        let d = repair::execute(&fx.apply_opts(&[], &good)).unwrap();
+        assert_eq!(d.code, exit::CONSERVATION);
+        assert_eq!(
+            listing(&fx.store),
+            before,
+            "conservation (lock file {with_lock})"
+        );
+        assert_eq!(Fx::db_hash(&fx.store), h);
+        // A newer store: refused before any lock.
+        Fx::conn(&fx.store)
+            .execute("UPDATE meta SET v = '99' WHERE k = 'schema_version'", [])
+            .unwrap();
+        let (before, h) = (listing(&fx.store), Fx::db_hash(&fx.store));
+        let d = repair::execute(&fx.apply_opts(&[], &good)).unwrap();
+        assert_eq!(d.code, exit::NEWER_SCHEMA);
+        assert_eq!(
+            listing(&fx.store),
+            before,
+            "newer schema (lock file {with_lock})"
+        );
+        assert_eq!(Fx::db_hash(&fx.store), h);
+    }
 }
