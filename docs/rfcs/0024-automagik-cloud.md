@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]; (f)'s machine-link rule: amendment proposed by [RFC 0022][22]'s (l), Q17, 2026-11-10) |
+| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]; (f)'s machine-link rule: amendment proposed by [RFC 0022][22]'s (l), Q17, 2026-11-10; Invitations by project accepted by the owner, 2026-11-12, Decided 27) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service in its own private repository in the owner's organisation (its contracts stay public here) |
@@ -170,6 +170,15 @@ From the owner (2026-11-10, Q18):
     Bots' reach ((f)). The narrower alternative, members and guests limited to Bots with no shell
     or file tools in the meantime, is not adopted: a Bot's tools change over time, and one
     mistake makes a member owner-equivalent.
+
+From the owner (2026-11-12):
+
+27. **Invitations are by project, in Cloud.** One invite system serves Automagik, Arca and
+    later products. Staff mint and revoke; the owner hands over the link. Each invite works
+    once and expires. Its record decides the project, never the link or message. Website
+    sign-in and WhatsApp use the same redeem call. No code means no reply and no requests
+    queue. Build this as Cloud's first service delivery, then add the WhatsApp consumer.
+    This shares admission, not identity providers: Arca keeps its own sign-in (Decided 13).
 
 Carried, not new:
 
@@ -449,12 +458,15 @@ are added to. Someone an individual invites joins that personal account's worksp
 or a guest, never as its owner.
 
 **Invitations are Cloud records.** Single use, with an expiry, revocable, and checked on the
-server when accepted. An email may address an invitation, but membership binds to the `(issuer,
-sub)` of the person who accepts it, never to the email. If the person has no account at the
-identity service yet, they need one first. The identity service is Cloud's (Decided 13), and
-Tactu may join it later, so its admin key reaches Cloud's accounts and, if Tactu moves, Tactu's
-too; Arca keeps its own sign-in, outside it. Cloud's web tier never holds it. A one-use signup
-link comes from a narrow, audited backend job in the operator's control, which takes only "one
+server when accepted. Decided 27 and "Invitations by project" below define project admission.
+An email may address an invitation, but membership binds to the `(issuer, sub)` of the person
+who accepts it, never to the email. A WhatsApp redemption may precede sign-in; it grants no
+workspace membership until identity is joined and the workspace's safeguards hold. For Cloud
+sign-in, a person without an identity account needs one first. The identity service is Cloud's
+(Decided 13), and Tactu may join it later, so its admin key reaches Cloud's accounts and, if
+Tactu moves, Tactu's too; Arca keeps its own sign-in, outside it. Cloud's web tier never holds
+it. A one-use signup link comes from a narrow, audited backend job in the operator's control,
+which takes only "one
 link, one use, Cloud's group, this expiry" and is never reachable from a workspace or a page.
 Cloud's client and groups are Cloud's own, separate from Tactu's and Arca's, so an account made
 for Cloud gets nothing in another product.
@@ -480,6 +492,79 @@ Removing someone who had a shell is followed by rotating the workspace's secrets
 processes, or by a restore from before they joined. "Sign out everywhere", and the identity
 service's own end-session where its discovery document offers one; the Cloud session is revoked
 either way.
+
+### Invitations by project
+
+Amendment accepted by the owner, 2026-11-12 (Decided 27). These are planned contracts;
+this docs change deploys no service. Cloud owns the records for every product. Automagik ID
+only proves identity. The cx WhatsApp receiver keeps no second invite database.
+
+**Record.** Cloud stores `id`, `project`, `issuer` (the staff actor), `created_at`,
+`expires_at`, nullable `used_at`, `used_by` (channel and verified sender or identity id),
+`revoked_at`, and `code_sha256`. `used_by` and `revoked_at` start null. Times are UTC.
+Only the canonical code's SHA-256 is stored, never the code or link. `project` is a fixed product key, initially `automagik` or `arca`;
+staff may mint only for a registered project. Later, staff attach `workspace_id` for the
+person's own compute and the verified `(issuer, subject)` identity binding. A workspace
+must belong to that project. Neither field changes the original sender or project.
+
+**Code and link.** Every product uses `INV-` plus eight random Crockford base32 characters
+and one check character. The alphabet is `0123456789ABCDEFGHJKMNPQRSTVWXYZ`. Eight characters
+give 2^40 possibilities; the check adds no entropy. Use a cryptographic random source and a
+unique hash constraint. Upper-case and map O to 0 and I or L to 1 before checking and hashing.
+The check is Luhn mod 32: from the rightmost data character, alternate factors 2 and 1,
+sum each product's quotient and remainder on division by 32, then choose the alphabet index
+`(32 - sum % 32) % 32`. `INV-7K2QX9MD4` passes; `INV-7KQQX9MD4` and `INV-K72QX9MD4` fail.
+The normalized shape is `^INV-[0-9A-HJKMNP-TV-Z]{9}$`.
+
+The link is `https://automagik.si/invite/arca#INV-7K2QX9MD4`. Its path labels the page for
+the person. The fragment keeps the code out of an HTTP URL; the page sends it only in the
+redeem POST, never in analytics, logs or a query. Opening the link does not consume it.
+Cloud reads the project from the record alone. A changed path or product name in a message
+cannot grant another project. The page uses the returned project for the next step.
+
+**Three calls, owned by Cloud.**
+
+- **Mint**, `POST /v1/invitations`: staff authentication, a registered `project`; a 201
+  returns `invite_id`, `project`, `expires_at`, `code` and `link`, the last two shown once.
+  The expiry is 14 days after creation. A member, guest, tenant Bot or public page cannot mint.
+- **Revoke**, `POST /v1/invitations/{invite_id}/revoke`: staff authentication; 204, including
+  a retry. It sets `revoked_at`. A used invite never becomes unused. Revoking an invite
+  blocks redemption and its receipts; removing access already granted is a separate action
+  through the product's access rules and Cloud's session revocation.
+- **Redeem**, `POST /v1/invitations/redeem`: code, channel and who, with the channel's message
+  or submission id. It returns the stored project or a refusal. The detailed contract is
+  below. Cloud atomically consumes the code and stores the receipt; retries cannot consume
+  it again. Mint and revoke credentials never reach the receiver or a browser.
+
+**Identity after WhatsApp.** `payload.from` is an opaque sender id, including an `@lid` when
+that is what the support instance supplies. Keep it exactly, scoped to the configured
+instance; do not infer a phone number. At first sign-in, Cloud joins this admission to the
+authenticated `(issuer, subject)` only after a short-lived, single-use linking challenge
+proves control of that same WhatsApp sender. The signed-in session starts this Cloud-owned
+proof flow; an authenticated callback verifies the sender's response. This attaches a Cloud
+admission to one principal; it neither merges identity accounts nor enables phone sign-in.
+An invite code, email, display name or typed sender id alone cannot attach an admission. A conflicting existing binding is
+refused. Arca's own sign-in must prove its principal through a trusted product integration;
+this does not move Arca to Automagik ID or widen another product's access.
+
+**Admission and service.** A redeem admits the person to its project. It creates no workspace,
+billing entitlement or member role. The owner provisions each person's compute and links it
+later. Until the person's answer routing and file access are provisioned, admission gives
+no answers from another person's compute. Existing hand-kept admissions need no new code.
+Workspace membership still obeys (f), including the owner-only line in Decided 26.
+
+**WhatsApp consumer, later.** An automation on the support instance matches an `INV-` code
+in a `message.received` event and calls the cx receiver. The receiver checks the event, calls
+Cloud redeem, and only on success writes the sender's allow rule. It records the rule by
+`invite_id`, so a retry after an interrupted write makes no second rule. Only after the rule
+exists does it return the retained welcome text as `{reply}`. The automation alone sends it,
+with `send_message` content exactly `{{r.reply}}`; no other reply path exists. A refusal,
+timeout or failed write gives no reply. The admission event is excluded from answer mode.
+
+No code means no admission reply, no staff follow-up and no requests queue. It stores no
+request for later admission. The support instance stays default-deny. The guard's revoke
+command must delete only its hand-kept allow rules, never rules marked `invite:<invite_id>`.
+The receiver has only the access-rule permissions it needs, never a Cloud staff key.
 
 ### (f) Workspaces, people and Bots
 
@@ -737,6 +822,130 @@ All new; nothing existing is renamed or moved.
   exchange, revocation and the entitlements document. Frozen at merge; later changes are additive
   only, with a version on each contract.
 
+### Project invitation redeem, version 1
+
+These additive contracts belong to Cloud and its cx consumer. They do not change the frozen
+workspace contracts or [RFC 0027 D3b](0027-automagik-site-and-readme.md)'s waitlist endpoint.
+
+**Cloud redeem.** HTTPS `POST /v1/invitations/redeem`, JSON only. Trusted consumers use
+`Authorization: Bearer <INVITE_REDEEM_SECRET>`, compared in constant time. Each consumer has
+its own rotatable credential, scoped to its channel and sender namespace; none can mint or
+revoke. Website sign-in calls through its authenticated backend, with origin/CSRF checks;
+the browser cannot assert who signed in or hold this credential.
+
+```json
+{
+  "code": "INV-7K2QX9MD4",
+  "channel": "whatsapp",
+  "who": { "id": "<opaque sender id>" },
+  "message_id": "<external message id>",
+  "event_id": "<stable event id>",
+  "received_at": 1794441600000,
+  "message_at": 1794441600000
+}
+```
+
+`channel` is `whatsapp` or `sign-in`. For WhatsApp, `who.id` is the exact `payload.from`;
+the credential supplies its instance namespace. For sign-in, `who` is
+`{"issuer":"<verified issuer>","subject":"<verified subject>"}` from the verified session,
+`message_id` is a backend-issued submission id kept across retries, and `received_at` is
+the backend's receive time. `event_id` and `message_at` are required for WhatsApp and absent
+for sign-in. `message_at` is the parsed original message time in Unix milliseconds.
+`project` is not a request field. The caller cannot select a different project for a code.
+
+`received_at` is a finite integer in Unix milliseconds. As in RFC 0027 D3b, missing or
+invalid time, or a time more than 120 seconds ahead, is 400. Accept only
+`created_at <= received_at <= expires_at` and processing at or before
+`expires_at + 180 days`, inclusive to the millisecond. Revocation always wins. The WhatsApp
+receiver adds the stricter live-message guard below; the shared backlog rule does not admit
+old WhatsApp messages. A sign-in backend stamps a new submission with the current time.
+
+Cloud checks and reserves rate limits per caller, sender and code hash before a consume.
+The single-use update and receipt are one transaction. Receipt keys are the authenticated
+consumer namespace, channel and `message_id`, with `event_id` as a second WhatsApp key.
+A receipt binds the normalized code hash, exact `who` and both original times. A changed
+binding under either key is 409. A new message id for a used code is also 409. Concurrent
+consumers cannot both win. Receipts contain no raw code, link, text or envelope. Keep them
+through the processing window; expiry, revocation and timing checks apply to retries too.
+An eligible identical retry returns the stored status and body, including a business refusal;
+429 and 503 are transient and do not consume a code or reserve a final receipt. Refusal
+receipts with no matching invite expire 180 days after the request's server receive time.
+
+| Status | Body and meaning |
+|---|---|
+| 200 | `{"invite_id":"<id>","project":"arca"}`; first use or an identical eligible retry. |
+| 400 | `{"status":"invalid_request"}`; malformed JSON, fields, code check or timestamp. |
+| 401 | Empty body; missing or wrong Bearer. |
+| 404 | `{"status":"unknown_or_expired"}`; absent, expired, revoked or outside the time window. |
+| 409 | `{"status":"already_used"}`; used by a new message or a conflicting receipt binding. |
+| 429 | `{"status":"rate_limited"}`; no consume. |
+| 503 | `{"status":"unavailable"}`; missing configuration or store unavailable; no success. |
+
+Wrong method is 405; wrong media type is 415. A failed checksum reveals no record state.
+No response echoes the code, sender or identity. A project mismatch never silently becomes
+access to the product named by the caller; the consumer must support the returned project
+before granting that project's access.
+
+**cx WhatsApp receiver.** HTTPS `POST /api/invitations/whatsapp-redeem`, JSON only (else 415).
+Reuse RFC 0027 D3b's event envelope, headers, Bearer comparison and message-id replay rules:
+
+1. `Authorization: Bearer <INVITE_RECEIVER_SECRET>` authenticates the automation. It is
+   separate from the Cloud redeem credential and the waitlist secret. Missing or wrong is
+   401 with an empty body. No per-event signature is added; the authenticated caller's
+   receive time is trusted, as in D3b.
+2. The body is Omni's unchanged envelope:
+
+   ```json
+   {
+     "id": "<event id>",
+     "type": "message.received",
+     "timestamp": 1794441600000,
+     "metadata": {},
+     "payload": {
+       "externalId": "<message id>",
+       "chatId": "<chat id>",
+       "from": "<opaque sender id>",
+       "senderName": "<display name>",
+       "content": { "text": "My invite: INV-7K2QX9MD4" }
+     }
+   }
+   ```
+
+   It also carries the original `rawPayload` age fields from Omni. Headers are
+   `X-Omni-Event-Id` (stable across retries), `X-Omni-Delivery-Id` and Authorization.
+   Require the event header to match `id`. A wrong type, malformed JSON, missing text,
+   sender, message id or event id is 400. Take `received_at` from envelope `timestamp`,
+   `message_id` from `payload.externalId`, and `event_id` from `X-Omni-Event-Id`.
+   Delivery id never determines single use. The receiver accepts only its configured
+   support instance. Unlike the waitlist's contact normalization, retain `from` exactly
+   for the allow rule and identity binding; it may be an opaque `@lid`.
+3. Extract one code anywhere in the text, case-insensitively; normalize and check it as
+   above. No code is 204, no reply and no queue. More than one code is 400. The automation
+   matches `[Ii][Nn][Vv]-[0-9A-Za-z]{9}`; the receiver does the authoritative shape and
+   check-character validation. Neither the message's product name nor a URL path is trusted.
+4. Before calling Cloud or returning a replay, drop with 204 and no reply when
+   `metadata.ingestMode` is `history-sync`, `rawPayload.isHistorySync` is true,
+   `rawPayload.key.fromMe` is true, or, on Baileys, `rawPayload.upsertType` is not `notify`.
+   Require `rawPayload.messageTimestamp`; parse seconds, milliseconds or a protobuf Long.
+   Missing or invalid message time is 400. Drop when either the message time or envelope
+   receive time is older than ten minutes; more than 120 seconds ahead is 400. Both must
+   be at or after the invite's creation. Cloud checks receive time; the receiver passes
+   the parsed original message time as `message_at` on WhatsApp redeems so Cloud can also
+   check it against `created_at`. Invalid `message_at` is 400; before creation is 404.
+   This is the invite plan's age guard on top of D3b's timing contract, not a change to D3b.
+5. After Cloud success and the allow-rule write, return 200 `{"reply":"<welcome text>"}`.
+   An eligible identical retry returns that same retained text. Pass through Cloud's
+   400/401/404/409/429/503 refusals without a reply field; an allow-rule failure is 503.
+   Only a 2xx body with a nonempty `reply` permits the automation to send. A 204, non-2xx
+   or timeout sends nothing. Check an existing invite receipt before the already-allowed
+   shortcut, so an eligible retry still gets its original reply. A sender already admitted
+   by another message or a hand-kept rule consumes no code and gets no new admission reply.
+   The receiver itself sends no WhatsApp message.
+6. Store only the admission/receipt fields, allow-rule id and retained reply needed for
+   retries. Text, sender name, chat id, raw payload and metadata are read in memory and
+   discarded. Disable request-body logging throughout both services, including errors;
+   logs may contain only status and request id. Never log credentials, codes or links.
+
 ## Threat model
 
 **Self-hosted web instance.**
@@ -791,6 +1000,18 @@ or the owner accepts the risk in writing for that OS.
 - **The Cloud service.** Holds the client secret and token keys, never on the build host, in two
   slots; any admin key of the identity service only in a narrow, audited backend job.
 
+**Project invitations.**
+
+| Threat | Boundary |
+|---|---|
+| Guessing | 2^40 random codes; the check character adds no entropy. Rate limits per caller, sender and code hash; generic refusals. A database copy holds only hashes, but offline search is possible in this finite space. |
+| Replay | Atomic single use and message-id receipts bound to code and sender. Changed bindings or a new message for a used code get 409. Expiry, revocation, the backlog bound and the live-message age guard apply on retries. |
+| A leaked link | It is a bearer invitation: its holder may win first use until expiry or revocation. The fragment avoids HTTP URL logs, not copying or screenshots. Staff revoke and reissue; no automatic workspace or identity grant. |
+| A staff key leak | It can mint or revoke within its scope. Staff-only, audited calls, narrow scopes and rotation; never put a staff key in a consumer, page or workspace. Review invites minted with the key and revoke unused ones; review granted access separately. |
+| Project confusion | Only the stored project decides. Editing the path, message or client state grants no other product. The consumer grants access only for the returned project. |
+| A consumer key leak | Bearer proves the integration, not the sender. A stolen key can forge receive times and sender claims. Separate receiver/redeem keys, channel scopes, rate limits and rotation bound this accepted D3b cost; no staff power. |
+| A false identity join | Require the signed-in principal and control of the recorded WhatsApp sender. A code or typed contact alone never attaches an admission to an account. |
+
 **Undo.** Self-hosted: the host reset, or an image without the gate (DSH's fence is still behind
 it). Cloud: turn off Cloud sign-in (apps fall back to not signed in), revoke sessions, stop
 workspaces, remove the client, close the ingress. No Cloud step touches a self-hosted instance.
@@ -841,12 +1062,47 @@ host name, issuer or client id in a test or a default config.
    - the gate reads DSH's volume read-only, and DSH never mounts the gate's;
    - the settings and the RFC say that a cookie leaked on loopback can be replayed by a local
      process, or the session is bound to something besides the cookie.
-3. **The Cloud service and web sign-in** (outside this repository). Personal accounts,
-   organisations, roles, invitations, sessions, revocation; the new identity service and its
-   ingress (Decided 13), the owner's OK given 2026-11-10 (Decided 16). *Check:* an invitation
-   binds to the accepting `(issuer, sub)`, not the email; a reused rotated secret revokes the
-   family; a request after removal is refused. *Rollback:* take the service down and close the
-   ingress; no app depends on it yet.
+3. **The Cloud service** (outside this repository). Split into the deliveries below, keeping
+   the existing delivery numbers stable. Invitations come first among Cloud-service work;
+   desktop secure storage remains first for the desktop (Decided 11).
+
+   **3a. Invitations by project, first.** The Cloud invite table, staff-only mint/revoke,
+   redeem and receipts, rate limits and audit records. The website backend and WhatsApp
+   receiver use the public contract above; no cx-side code store. *Check:* mint for two
+   projects; changing the link or message never changes the returned project; the checksum
+   vectors pass; only hashes persist; non-staff mint/revoke is refused. Concurrent redeems
+   have one winner; the same message retries identically, a changed sender or new message
+   cannot reuse it. Prove expiry, revoke, receive-time and processing-window boundaries,
+   before-creation rejection, rate limits, store failure, and no body/code logging. No
+   admission grants workspace access. *Rollback:* disable mint/redeem and revoke unused
+   invites; retain used records and receipts so a restart cannot reuse them. Disable any
+   consumer first. Existing access is reviewed separately, never erased by deleting codes.
+
+   **3b. Web sign-in and identity binding.** After 3a: personal accounts, organisations,
+   roles, sessions and revocation; the identity service and ingress under Decided 13 and 16.
+   The website redeems through its backend. A separate Cloud proof flow attaches a prior
+   WhatsApp admission to the verified principal, without merging identity accounts or
+   changing the invite-message trigger. *Check:* an invitation binds to the accepting
+   `(issuer, sub)`, not email; a typed sender or stolen invite alone cannot claim an existing
+   admission; a conflicting binding is refused; a reused rotated secret revokes the family;
+   a request after removal is refused. *Rollback:* turn off web sign-in and linking, revoke
+   sessions and close the ingress; keep the admission records for safe recovery.
+
+   **3c. cx WhatsApp redeem consumer, later.** Only after 3a's Cloud redeem and Omni's
+   answer-intake denial-cache fix exist. A freshly admitted sender's next message must not
+   hit a cached denial. Try the receiver and automation first on a second test phone.
+   Keep the age guard, default deny, reply only from the automation, idempotent rule writes,
+   and the guard's revoke limited to hand-kept rules. Provision answer routing and file
+   access per person before serving them; an allow rule alone is not working compute.
+   *Check:* one code admits to its recorded project; a retry returns the same reply and
+   creates one allow rule; interrupt between consume and rule write, then recover by retry.
+   No code, old/history/self-sent messages, bad Bearer, refusals, failed writes and timeouts
+   send nothing and create no queue. The first allowed follow-up reaches only that person's
+   compute, once provisioned; answer mode never duplicates the automation's welcome. Prove
+   the guard preserves invite-created rules and existing hand-kept admissions still work.
+   *Rollback:* disable the automation and receiver, rotate their credentials, remove only
+   the test's invite-created access rules, and retain Cloud's spent-code receipts. Do not
+   restore a guard command that could delete other people's invite rules.
 4. **One workspace, made by the operator** (server image Cloud mode; Arca outside), after the
    isolation review gate passes (Decided 12). Owner-only ((f)). Workspace tokens, the VM, volume,
    network, limits, backups and a restore drill. *Check:* workspace A's token is refused by B; a
@@ -896,8 +1152,9 @@ keep their meaning.
 1. **Which identity service.** Answered in Decided 13 and 16.
 2. **Where Cloud roles live.** Answered in Decided 6.
 3. **Isolation unit.** Answered in Decided 15.
-4. **Who may invite.** Recommended: owners and admins, and the individual of a personal account;
-   members and guests cannot ((e)).
+4. **Who may invite.** Project invitations: staff only, answered in Decided 27. Organisation
+   owners and admins still manage membership under (e); that role alone cannot mint a project
+   invitation. Workspace access remains subject to (f).
 5. **Recovery.** Recommended: a second passkey at the claim, plus recovery codes as slow hashes,
    plus the host reset out of the Bots' reach; no email reset ((c)).
 6. **Session lifetimes.** Recommended: self-hosted sessions sliding with a 12-hour idle limit;

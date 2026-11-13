@@ -21,6 +21,9 @@ if (!home) {
 mkdirSync(resolve(home), { recursive: true })
 const store = new AdapterStore({ home: resolve(home), log: message => console.error(`install-adapters: ${message}`) })
 for (const spec of Object.values(AGENTS)) {
+  // An agent whose CLI is itself the ACP server (Hermes, Antigravity, omp) has no adapter
+  // package: there is nothing to install for it, and no line to print.
+  if (typeof spec.adapter !== 'string') continue
   const found = await store.update(spec.adapter, spec.bin)
   const key = spec.key.toUpperCase()
   console.log(`AUTOMAGIK_TEST_${key}_ACP=${found.path}`)

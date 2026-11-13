@@ -12,9 +12,10 @@ import { fileURLToPath } from 'node:url'
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 export const ART = join(PLUGIN, 'src', 'client', 'art')
 const OUTPUT = join(ART, 'inline.js')
-const TYPES = { '.webp': 'image/webp', '.woff2': 'font/woff2' }
+const TYPES = { '.svg': 'image/svg+xml', '.webp': 'image/webp', '.woff2': 'font/woff2' }
 
-// genie-expressions.webp -> genieExpressions; fonts/dm-sans-latin.woff2 -> dmSansLatin.
+// genie-expressions.webp -> genieExpressions; fonts/dm-sans-latin.woff2 -> dmSansLatin;
+// brand/triskle-three-colours-16.svg -> triskleThreeColours16.
 const nameOf = file => file.replace(/^.*\//, '').replace(/\.[^.]+$/, '').replace(/-(\w)/g, (_, c) => c.toUpperCase())
 
 export function inlineArt(dir = ART) {

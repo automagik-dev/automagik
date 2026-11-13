@@ -56,8 +56,8 @@ export const agentRowSessions = (agent, roster, now) => {
 
 // Whether a task's Session waits for the user: DSH's approval or question card is up there,
 // or the team's host noted an approval the task waits on (approvals.js `taskId`).
-export const waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== undefined
-export const approvalFor = (work, sessionId) => (work?.approvals ?? []).some(entry => entry.taskId === sessionId)
+export const waitsForUser = (status, sessionId) => sessionId != null && status?.get(sessionId)?.pendingInteraction !== undefined
+export const approvalFor = (work, sessionId) => sessionId != null && (work?.approvals ?? []).some(entry => entry.taskId === sessionId)
 
 // A task's state for its card and its thread in the sidebar: working, waiting (for the
 // user), done or failed.
@@ -76,15 +76,19 @@ export const endLabel = (task) => {
 }
 
 export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
-  const asked = useSessionStatus && sessionId ? useSessionStatus(map => waitsForUser(map, sessionId)) : false
+  // The start_task call has no Session id until its result names one, and the card is drawn
+  // again when it arrives. The hooks are read every render, with a null id before then, so
+  // that second render keeps the hook order the first one set.
+  const taskId = sessionId ?? null
+  const asked = useSessionStatus ? useSessionStatus(map => waitsForUser(map, taskId)) : false
   // The approval itself, not just whether one waits: its `answer` settles the one request
   // DSH holds for the task, so this card and the task's own prompt are two views of one
   // decision, never two decisions.
-  const pending = useSessionStatus && sessionId ? useSessionStatus(map => map.get(sessionId)?.pendingInteraction) : undefined
+  const pending = useSessionStatus ? useSessionStatus(map => map.get(taskId)?.pendingInteraction) : undefined
   const ask = pending?.kind === 'approval' && typeof pending.answer === 'function' ? pending : undefined
-  const approval = useWork && sessionId ? useWork(work => approvalFor(work, sessionId)) : false
-  const stop = useWork && sessionId ? useWork(work => {
-    const entry = openStops(work).filter(item => item.taskId === sessionId).sort((a, b) => b.at - a.at)[0]
+  const approval = useWork ? useWork(work => approvalFor(work, taskId)) : false
+  const stop = useWork ? useWork(work => {
+    const entry = taskId === null ? undefined : openStops(work).filter(item => item.taskId === taskId).sort((a, b) => b.at - a.at)[0]
     return entry ? stopLine(entry) : ''
   }) : ''
   const waiting = asked || approval

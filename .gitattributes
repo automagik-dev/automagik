@@ -3,3 +3,10 @@
 # A unified diff's context lines begin with a space before the source indentation;
 # that is not a whitespace error in a patch file.
 apps/desktop/runtime/patches/*.patch -text whitespace=-space-before-tab
+# The approved logo files are byte copies of the final set, pinned by sha256
+# (apps/bots-dsh/test/logo.test.js, apps/desktop/test/logo.test.js): a checkout never
+# converts their line endings.
+apps/bots-dsh/src/client/art/brand/*.svg -text
+apps/desktop/src/art/*.svg -text
+apps/desktop/assets/triskle-three-colours.svg -text
+apps/welcome-dsh/src/client/vendor/art/brand/*.svg -text

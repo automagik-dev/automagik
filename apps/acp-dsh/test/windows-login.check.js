@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, watch, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +15,95 @@ function scratch(t) {
   const root = mkdtempSync(join(tmpdir(), 'windows-login-test-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   return root
+}
+
+// PowerShell compiles the Job-object C# on first use, so a slow Windows runner can take tens
+// of seconds to even start the wrapper. The delayed credential write is 1500 ms after the
+// wrapper starts; both waits stay generous enough for a slow runner.
+const READY_BOUND_MS = 60_000
+const STOP_BOUND_MS = 10_000
+const LATE_WRITER_BOUND_MS = 5_000
+
+// Await the supervisor's file event instead of polling it into existence. The wrapper renames
+// its ready signal into place, so any observed ready file already carries the full content.
+function waitForContent(directory, name, expected, { timeoutMs, child, diagnostic }) {
+  const target = join(directory, name)
+  return new Promise((resolve, reject) => {
+    let watcher
+    let timer
+    let settled = false
+    let observed = 'missing'
+    const finish = error => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      watcher?.close()
+      child?.removeListener('close', exited)
+      if (error) reject(error)
+      else resolve(observed)
+    }
+    const check = () => {
+      try {
+        observed = readFileSync(target, 'utf8')
+        if (observed === expected) finish()
+      } catch (error) {
+        observed = error.code === 'ENOENT' ? 'missing' : `${error.code}: ${error.message}`
+      }
+    }
+    const exited = () => {
+      check()
+      if (!settled) finish(new Error(diagnostic(
+        `the supervisor exited before ${name} was ready (last content: ${JSON.stringify(observed)})`)))
+    }
+    timer = setTimeout(() => finish(new Error(diagnostic(
+      `${name} was not ready within ${timeoutMs}ms `
+      + `(last content: ${JSON.stringify(observed)})`))), timeoutMs)
+    try {
+      watcher = watch(directory, { persistent: true }, check)
+      watcher.on('error', error => finish(new Error(diagnostic(
+        `watching ${name} failed: ${error.message}`))))
+    } catch (error) {
+      finish(new Error(diagnostic(`watching ${name} failed: ${error.message}`)))
+      return
+    }
+    child?.once('close', exited)
+    check()
+    if (child && (child.pid === undefined || child.exitCode !== null
+      || child.signalCode !== null)) exited()
+  })
+}
+
+// A successful stop empties the Job, so the delayed writer can never produce its file. Watch
+// for the bound instead of sleeping: a defect that leaks the writer fails at its first write.
+function assertStaysAbsent(directory, name, { timeoutMs, diagnostic }) {
+  const target = join(directory, name)
+  return new Promise((resolve, reject) => {
+    let watcher
+    let timer
+    let settled = false
+    const finish = error => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      watcher?.close()
+      if (error) reject(error)
+      else resolve()
+    }
+    const check = () => {
+      if (existsSync(target)) finish(new Error(diagnostic(
+        `${name} appeared after login stop`)))
+    }
+    timer = setTimeout(() => finish(), timeoutMs)
+    try {
+      watcher = watch(directory, { persistent: true }, check)
+      watcher.on('error', error => finish(new Error(diagnostic(
+        `watching ${name} failed: ${error.message}`))))
+    } catch (error) {
+      finish(new Error(diagnostic(`watching ${name} failed: ${error.message}`)))
+      return
+    }
+    check()
+  })
 }
 
 function fake(t, extra = {}, env = {}) {
@@ -140,7 +229,7 @@ test('a known-exited supervisor is never taskkilled while its pipes are still op
 
 test('a .cmd wrapper cannot leave a delayed credential writer after login stop', {
   skip: process.platform !== 'win32' && 'requires Windows Job Objects and PowerShell',
-  timeout: 20_000,
+  timeout: 120_000,
 }, async t => {
   const root = scratch(t)
   const ready = join(root, 'ready')
@@ -154,23 +243,27 @@ test('a .cmd wrapper cannot leave a delayed credential writer after login stop',
       +"'invented-login'),1500)";
     spawn(process.execPath,['-e',code,process.argv[2]],
       {stdio:'ignore',detached:true}).unref();
-    fs.writeFileSync(process.argv[3],'wrapper-exited');`)
+    fs.writeFileSync(process.argv[3]+'.tmp','wrapper-exited');
+    fs.renameSync(process.argv[3]+'.tmp',process.argv[3]);`)
   writeFileSync(batch, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`)
   const owner = launchWindowsLogin(batch, [wrote, ready], {
     cwd: root, env: process.env, stdio: ['pipe', 'pipe', 'pipe'],
-  }, { stopMs: 10_000 })
+  }, { stopMs: STOP_BOUND_MS })
   t.after(() => owner.stop().catch(() => {}))
   const errors = []
   owner.child.stderr.on('data', chunk => errors.push(String(chunk)))
-  const deadline = Date.now() + 10_000
-  while (!existsSync(ready) && Date.now() < deadline) {
-    if (owner.child.exitCode !== null) assert.fail(errors.join(''))
-    await new Promise(resolve => setTimeout(resolve, 20))
-  }
-  assert.equal(readFileSync(ready, 'utf8'), 'wrapper-exited')
+  const diagnostic = reason => (
+    `${reason}; wrapper stderr: ${errors.join('').trim() || '(empty)'}`
+  )
+  assert.equal(await waitForContent(root, 'ready', 'wrapper-exited', {
+    timeoutMs: READY_BOUND_MS, child: owner.child, diagnostic,
+  }), 'wrapper-exited')
   await owner.stop()
-  await new Promise(resolve => setTimeout(resolve, 1700))
-  assert.equal(existsSync(wrote), false)
+  assert.equal(existsSync(wrote), false,
+    diagnostic('a delayed credential writer survived login stop'))
+  await assertStaysAbsent(root, 'invented-credentials', {
+    timeoutMs: LATE_WRITER_BOUND_MS, diagnostic,
+  })
   await owner.done
 })
 

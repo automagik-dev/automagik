@@ -49,11 +49,12 @@ function host({ entries = { 'omni-ai': {} }, team, codex, fetch, env = {}, ...re
 }
 
 // acp-dsh's acpAgents, as far as the drawing uses it: Codex's readiness and one image.
-const codexOf = ({ ready = true, fail } = {}) => {
+const codexOf = ({ ready = true, authScope = 'isolated', accountGeneration, fail } = {}) => {
   const calls = []
   return {
     calls,
-    imageAccess: async () => ({ ready }),
+    authScope,
+    imageAccess: async () => ({ ready, accountGeneration }),
     generateImage: async (request) => {
       calls.push(request)
       if (fail) throw Object.assign(new Error(fail), { code: 'acp/image-signed-out' })
@@ -75,11 +76,11 @@ test('the vendored characters and inks are still the team plugin\'s own', () => 
 test('companion says which image source is ready, and never what it holds', async () => {
   assert.equal((await host().handle('companion')).value.generate, null)
 
-  const chatgpt = await host({ recordValues: grant() }).handle('companion')
+  const chatgpt = await host({ recordValues: grant(), codex: codexOf({ ready: false, authScope: 'shared' }) }).handle('companion')
   assert.deepEqual(chatgpt.value.generate, { kind: 'chatgpt', ready: true })
   assert.doesNotMatch(JSON.stringify(chatgpt), /r-secret|sig/)
 
-  const stale = await host({ recordValues: grant(1_000) }).handle('companion')
+  const stale = await host({ recordValues: grant(1_000), codex: codexOf({ ready: false, authScope: 'shared' }) }).handle('companion')
   assert.deepEqual(stale.value.generate, { kind: 'chatgpt', ready: false })
 
   const keyed = await host({ recordValues: { [OPENAI_RECORD]: { kind: 'api-key', key: KEY } } }).handle('companion')
@@ -89,14 +90,45 @@ test('companion says which image source is ready, and never what it holds', asyn
   const fromEnv = await host({ credentials: { OPENAI_API_KEY: KEY } }).handle('companion')
   assert.deepEqual(fromEnv.value.generate, { kind: 'openai', ready: true })
 
-  // The Bots' order: a key, then a signed-in Codex, then the earlier grant.
+  // The Bots' order: a key, then a signed-in Codex, then a grant on a shared scope.
   const both = await host({ recordValues: { ...grant(), [OPENAI_RECORD]: { kind: 'api-key', key: KEY } }, codex: codexOf() }).handle('companion')
   assert.deepEqual(both.value.generate, { kind: 'openai', ready: true })
   const codex = await host({ recordValues: grant(), codex: codexOf() }).handle('companion')
   assert.deepEqual(codex.value.generate, { kind: 'codex', ready: true })
   const signedOut = await host({ recordValues: grant(), codex: codexOf({ ready: false }) }).handle('companion')
-  assert.deepEqual(signedOut.value.generate, { kind: 'chatgpt', ready: true })
+  assert.equal(signedOut.value.generate, null)
 })
+
+for (const [name, codex] of [
+  ['isolated and signed out', codexOf({ ready: false })],
+  ['absent', undefined],
+  ['reloading', { authScope: 'shared' }],
+  ['throwing', { ...codexOf({ authScope: 'shared' }), imageAccess: async () => { throw new Error('unavailable') } }],
+  ['throwing synchronously', { ...codexOf({ authScope: 'shared' }), imageAccess: () => { throw new Error('unavailable') } }],
+  ['without a scope', { ...codexOf({ ready: false }), authScope: undefined }],
+  ['with scope only in the answer', { ...codexOf(), imageAccess: async () => ({ ready: false, authScope: 'shared' }) }],
+  ...[undefined, null, {}, false, 'unavailable', { ready: 'false' }].map(answer => [
+    `with malformed answer ${JSON.stringify(answer)}`,
+    { ...codexOf({ authScope: 'shared' }), imageAccess: async () => answer },
+  ]),
+]) {
+  test(`ACP ${name} refuses the legacy grant without reading it or making HTTP requests`, async () => {
+    const drawing = host({ recordValues: grant(), codex })
+    const reads = []
+    const readRecord = drawing.ctx.credentials.readRecord
+    drawing.ctx.credentials.readRecord = async key => {
+      reads.push(key)
+      return readRecord(key)
+    }
+    assert.equal((await drawing.handle('companion')).value.generate, null)
+    const reply = await drawing.handle('companion-generate', { description: 'a fox' })
+    assert.equal(reply.error.code, 'omni-ai/refused')
+    assert.match(reply.error.message, /Sign in to Codex or add an OpenAI key/)
+    assert.equal(reads.includes(CODEX_RECORD), false)
+    assert.equal(drawing.requests.length, 0)
+    assert.deepEqual(codex?.calls ?? [], [])
+  })
+}
 
 test('a run-out earlier grant never blocks a key or Codex (it is not refreshed here)', async () => {
   const keyed = host({ recordValues: { ...grant(1_000), [OPENAI_RECORD]: { kind: 'api-key', key: KEY } } })
@@ -110,12 +142,12 @@ test('a run-out earlier grant never blocks a key or Codex (it is not refreshed h
 })
 
 test('with no key, a signed-in Codex draws the companion: no request leaves from here', async () => {
-  const codex = codexOf()
+  const codex = codexOf({ accountGeneration: 7 })
   const drawing = host({ codex })
   const reply = await drawing.handle('companion-generate', { description: 'a sleepy fox' })
   assert.deepEqual(reply.value, { image: `data:image/png;base64,${PNG}`, via: 'codex' })
   assert.equal(drawing.requests.length, 0)
-  assert.deepEqual(codex.calls.map(({ signal, ...rest }) => rest), [{ prompt: companionPrompt('a sleepy fox'), size: '1024x1024' }])
+  assert.deepEqual(codex.calls.map(({ signal, ...rest }) => rest), [{ prompt: companionPrompt('a sleepy fox'), size: '1024x1024', accountGeneration: 7 }])
   // Codex's refusal is the answer, as it is.
   const refusing = host({ codex: codexOf({ fail: 'Codex is not signed in. Sign in to Codex from a Bot\'s chat.' }) })
   const refused = await refusing.handle('companion-generate', { description: 'a fox' })
@@ -123,9 +155,50 @@ test('with no key, a signed-in Codex draws the companion: no request leaves from
   assert.match(refused.error.message, /not signed in/)
 })
 
+for (const accountGeneration of [0, 9, undefined]) {
+  test(`Codex receives accountGeneration ${accountGeneration} without changing it`, async () => {
+    const codex = codexOf({ accountGeneration })
+    const drawing = host({ codex })
+    assert.equal((await drawing.handle('companion-generate', { description: 'a fox' })).value.via, 'codex')
+    assert.equal(codex.calls[0].accountGeneration, accountGeneration)
+    assert.equal(Object.hasOwn(codex.calls[0], 'accountGeneration'), accountGeneration !== undefined)
+    assert.equal(drawing.requests.length, 0)
+  })
+}
+
+test('a changed Codex account refuses the stale ticket as not ready without using a grant', async () => {
+  let accountGeneration = 4
+  const codex = codexOf({ authScope: 'shared' })
+  codex.imageAccess = async () => {
+    const access = { ready: true, accountGeneration }
+    accountGeneration += 1
+    return access
+  }
+  codex.generateImage = async request => {
+    codex.calls.push(request)
+    if (request.accountGeneration !== accountGeneration) {
+      throw Object.assign(new Error('Codex is not ready. The account changed.'), { code: 'acp/image-not-ready' })
+    }
+    return { base64: PNG }
+  }
+  const drawing = host({ codex, recordValues: grant() })
+  const reads = []
+  const readRecord = drawing.ctx.credentials.readRecord
+  drawing.ctx.credentials.readRecord = async key => {
+    reads.push(key)
+    return readRecord(key)
+  }
+  const reply = await drawing.handle('companion-generate', { description: 'a fox' })
+  assert.equal(codex.calls[0].accountGeneration, 4)
+  assert.equal(reply.error.code, 'omni-ai/refused')
+  assert.equal(reply.error.message, 'Codex is not ready. The account changed.')
+  assert.equal(reads.includes(CODEX_RECORD), false)
+  assert.equal(drawing.requests.length, 0)
+})
+
 test('a ChatGPT plan draws through the Codex images endpoint; a key through OpenAI\'s', async () => {
   assert.equal(accountIdOf(ACCESS), 'acct-7')
-  const chatgpt = host({ recordValues: grant() })
+  const chatgpt = host({ recordValues: grant(), codex: codexOf({ ready: false, authScope: 'shared' }) })
   const reply = await chatgpt.handle('companion-generate', { description: 'a sleepy fox' })
   assert.deepEqual(reply.value, { image: `data:image/png;base64,${PNG}`, via: 'chatgpt' })
   const [request] = chatgpt.requests
@@ -145,11 +218,11 @@ test('drawing is refused without a source, with a stale sign-in, or when the ser
   const none = host()
   assert.match((await none.handle('companion-generate', { description: 'a fox' })).error.message, /Sign in to Codex or add an OpenAI key/)
   assert.equal(none.requests.length, 0)
-  const stale = host({ recordValues: grant(1_000) })
+  const stale = host({ recordValues: grant(1_000), codex: codexOf({ ready: false, authScope: 'shared' }) })
   assert.match((await stale.handle('companion-generate', { description: 'a fox' })).error.message, /has run out/)
   assert.equal(stale.requests.length, 0)
   assert.equal((await host({ recordValues: grant() }).handle('companion-generate', { description: 'x' })).error.code, 'omni-ai/invalid')
-  const failing = host({ recordValues: grant(), fetch: async () => new Response(JSON.stringify({ error: { message: 'quota reached' } }), { status: 429 }) })
+  const failing = host({ recordValues: grant(), codex: codexOf({ ready: false, authScope: 'shared' }), fetch: async () => new Response(JSON.stringify({ error: { message: 'quota reached' } }), { status: 429 }) })
   assert.equal((await failing.handle('companion-generate', { description: 'a fox' })).error.message, 'The image was not made: quota reached')
 })
 

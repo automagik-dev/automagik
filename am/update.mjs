@@ -202,7 +202,7 @@ export function managedPack(modsDir) {
   const record = readMarker(modsDir);
   if (!record || record.v1 || !record.version) return { managed: false, why: "this pack was not installed by install.sh (no install record)" };
   if (!Number.isSafeInteger(record.sequence)) {
-    return { managed: false, why: "this pack came from before signed releases: run `automagik-herdr update` once" };
+    return { managed: false, why: "this pack came from before signed releases: run `am update` once" };
   }
   return { managed: true, why: null };
 }

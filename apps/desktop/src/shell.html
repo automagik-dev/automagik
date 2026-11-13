@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'">
 <meta name="color-scheme" content="light dark">
 <title>Automagik</title>
 <link rel="stylesheet" href="shell.css">
 </head>
 <!-- The app window's frame (src/frame.js): the title bar, and the Automagik mark waking up
      while the app starts. dsh's page itself is a view main.js lays over the area below the bar.
-     The mark is the owner's clay triskelion (shell.css --mark, the same picture as apps/bots-dsh
-     src/client/art/mark.webp). -->
+     The bar's lockup and the waking mark are the approved logo (src/art, byte copies of the
+     final set; the same files as apps/bots-dsh src/client/art/brand). -->
 <body>
 <div class="frame">
   <header class="bar">

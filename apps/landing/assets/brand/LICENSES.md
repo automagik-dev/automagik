@@ -1,48 +1,92 @@
 # Brand assets
 
-Automagik's own marks and character art, Arca's icon, we unfold's Open Intelligence tag and
+Automagik's own marks and character art, Arca's logo, we unfold's Open Intelligence tag and
 the official logos of eleven open projects the products are built on (the last section) are
 used. No customer marks or new drawings are included.
 
-- `mark.webp`, `wordmark.webp`, `lockup.webp`, `app-icon.png`: Automagik
+- `app-icon.png`: Automagik
   brand files copied from the owner's Genie landing draft for RFC 0027 D3, 2026-11-11.
   Apache-2.0, Namastex Labs and the Automagik contributors; see `LICENSE-Apache-2.0.txt`.
+- The logo and the browser's icons: Automagik's own logo kit, the approved set of
+  2026-11-12 (the triskle in three colours with its seam line, the lowercase wordmark),
+  copied unchanged under the kit's file names. Apache-2.0 as the files above. The triskle
+  is always shown in colour; only the letters change, ink on the light page and cream on
+  the dark one. The lockups with `-header` are the kit's drawings for small sizes: the
+  header and the footer show them. The large lockups are set inside the official lockup
+  below. Genie's and Omni's lockups are the same kit's: the same triskle, each name in
+  the same lettering, the sparkle on the i in the product's colour (Automagik violet,
+  Genie pink, Omni cyan). Their large drawings are the headings of `/genie/` and `/omni/`;
+  their drawings for small sizes title the two product cards on the home page (Genie's
+  card is dark in both themes, so only its cream one is kept). The triskle alone is the
+  kit's large drawing and its 32 px drawing, each shown near its own size. The icons sit
+  at the site's root (paths below are from `apps/landing`); `site.webmanifest` names the
+  two large ones. Never recolour, stretch or redraw these files; a newer kit replaces them
+  at the same paths, with new digests here.
+
+- The family drawer's files are in `assets/family/`, byte copies from the drawer's package;
+  `assets/family/SOURCE.md` lists each one's source and SHA-256. Automagik's lockup (PNG at
+  three sizes, ink and cream letters) and the Omni and Genie wordmarks are Automagik's own
+  logo kit, Apache-2.0 as the files above. The word "mykes" is we unfold's file for its
+  product; like the Open Intelligence tag it is not under this site's Apache-2.0 grant, and
+  nothing here calls it open-licensed. Arca's logo (`arca-logo-b.svg`, the ark with its
+  word, and `arca-ark-icon.svg`, the ark alone) is from the same package, used unchanged.
+  Arca's logo belongs to Arca, is shown here for Arca, and is not covered by this grant.
+
+| File | In the kit | SHA-256 |
+| --- | --- | --- |
+| `assets/brand/automagik-lockup-three-colours-ink-header.svg` | `lockups/svg/automagik-lockup-three-colours-ink-header.svg` | `4d0f87696e31e5f889e2e60d98c7814d515a85f2f60918f4bd999f298338af2f` |
+| `assets/brand/automagik-lockup-three-colours-cream-header.svg` | `lockups/svg/automagik-lockup-three-colours-cream-header.svg` | `e8dd0d21e42d7b2722386738972d46432f083895fb2bf00a990ee7588d3561f7` |
+| `assets/brand/automagik-lockup-three-colours-ink.svg` | `lockups/svg/automagik-lockup-three-colours-ink.svg` | `86cecf0da06bb2d3dcea22c4fcfbe4cc8a8bef0c9422c6af339be72edb326a14` |
+| `assets/brand/automagik-lockup-three-colours-cream.svg` | `lockups/svg/automagik-lockup-three-colours-cream.svg` | `33288af6de838023da4e9170103b80f247d31dfa8d08241ad425222e23a1db1e` |
+| `assets/brand/genie-lockup-three-colours-ink.svg` | `lockups/svg/genie-lockup-three-colours-ink.svg` | `1ae076c6a649c781d51b3b6cd6de6338441984a61e08ed91c6a05756571d53e4` |
+| `assets/brand/genie-lockup-three-colours-cream.svg` | `lockups/svg/genie-lockup-three-colours-cream.svg` | `a7204ae8d1709fb9f3166c7fdd2cfbc64958cec25678dce74ac38c370955ee69` |
+| `assets/brand/genie-lockup-three-colours-cream-header.svg` | `lockups/svg/genie-lockup-three-colours-cream-header.svg` | `726737ed38d35d5ea2ef9ab87f23527c738fc7b89b4f09ea7db660be9e69189c` |
+| `assets/brand/omni-lockup-three-colours-ink.svg` | `lockups/svg/omni-lockup-three-colours-ink.svg` | `29b13de7467f6cd38e918be22148e6fe48ac5b93b0c8810ef92e5ed866592601` |
+| `assets/brand/omni-lockup-three-colours-cream.svg` | `lockups/svg/omni-lockup-three-colours-cream.svg` | `4bcc10bb523c8014f721cc9caf9676cee45aba4a267d7d96aaa21b2bb760c722` |
+| `assets/brand/omni-lockup-three-colours-ink-header.svg` | `lockups/svg/omni-lockup-three-colours-ink-header.svg` | `04a4b973a92c2f57dd4e0911ae68931e8fc6403b79b28c7d8aca3acccc265c69` |
+| `assets/brand/omni-lockup-three-colours-cream-header.svg` | `lockups/svg/omni-lockup-three-colours-cream-header.svg` | `74cadeae1ba0a439dfb16a9dbeb42f3e36475e120bd5c563a7f25117f060e2b8` |
+| `assets/brand/triskle-three-colours.svg` | `svg/triskle-three-colours.svg` | `bc9fd54124f5d3cfdd0461c5ab6ac6860254c14bfdedf46a11cc5ca433e01a72` |
+| `assets/brand/triskle-three-colours-32.svg` | `svg/triskle-three-colours-32.svg` | `3ce36573385e5c18116e894b77b2aea39594a2763cfd911c553265d7b09abbf9` |
+| `favicon.ico` | `favicon/favicon.ico` | `5a99c83b69d9e3a34483fbc4df15770da82d722e8f2b0ced16cb2cd2a7502a2b` |
+| `favicon.svg` | `favicon/favicon.svg` | `3ce36573385e5c18116e894b77b2aea39594a2763cfd911c553265d7b09abbf9` |
+| `apple-touch-icon.png` | `favicon/apple-touch-icon.png` | `c673e97dd84b5a014bb836c5d384ac8f99a176a2a9731351d8f2a487e2df3492` |
+| `icon-192.png` | `favicon/icon-192.png` | `a312e3087539ef7828577813c531a285565dc5e5ed6c6103586e84e983efd5c7` |
+| `icon-512.png` | `favicon/icon-512.png` | `4b5093fda26231b81851e579600bcf811bb67ea98135aa84b20651c53440b6e1` |
+
 - `lamp.webp`, `omni-pleased.png`: Automagik's own character art, copied unchanged from the
   same draft. The lamp also lives in `apps/bots-dsh/src/client/art/lamp.webp`; the octopus
   in `apps/desktop/assets/dmg-source/omni-pleased.png`. Apache-2.0. The app's art comes
   from DS Bot, Copyright 2026 Fei2411 and the DS Bot contributors, and Automagik,
   Copyright 2026 Namastex Labs and the Omni contributors (the Bots and welcome NOTICEs).
   These are brand accents, never substitutes for product captures.
-- `arca/svg/arca-icon-ink.svg`, `arca/svg/arca-icon-ivory.svg`: Arca's icon, from Arca's logo
-  kit (draft 3), copied unchanged under the kit's file names. Arca's mark belongs to Arca;
-  it is shown here for Arca with Arca's agreement, by its kit's rules, and is not covered by
-  this site's Apache-2.0 grant. A newer kit replaces these files at the same paths.
 - `open-intelligence/open-intelligence-tag.svg`: we unfold's horizontal Open Intelligence
   tag, one colour, copied unchanged from Arca's public repository (`automagik-si/arca`,
   commit `7da787e`, `assets/open-intelligence/`). The tag is we unfold's mark, used as the
   owner directs; it is not covered by this site's Apache-2.0 grant, and we unfold's source
   carries no licence file.
 - `automagik/automagik-lockup-oi-ink.svg`, `-cream.svg`, `-ink.png`, `-cream.png`: the
-  official Automagik lockup, built by `scripts/build-lockup.mjs` from `lockup.webp`
-  (unchanged; enlarged from its 902 px in the PNGs), the tag above (unchanged) and IBM Plex
-  Mono SemiBold for the tag's words. The logo is Apache-2.0 as the other Automagik brand
-  files; the tag inside it stays we unfold's.
+  official Automagik lockup, built by `scripts/build-lockup.mjs` from the kit's large
+  lockup (unchanged, set inside), the tag above (unchanged) and IBM Plex Mono SemiBold for
+  the tag's words. The logo is Apache-2.0 as the other Automagik brand files; the tag
+  inside it stays we unfold's.
 - `ibm-plex-mono-latin-600.woff2`: IBM Plex Mono SemiBold, Latin, Copyright 2017 IBM Corp.,
   from `@fontsource/ibm-plex-mono` 5.3.0, unchanged. SIL Open Font License 1.1, reproduced
   in `OFL-IBMPlexMono.txt`. It sets the tag's words.
-- `manrope-latin.woff2`: Manrope, Copyright 2018 The Manrope Project Authors.
-  SIL Open Font License 1.1, reproduced in `OFL-Manrope.txt`.
+- `fredoka-latin.woff2`: Fredoka, the title face, Copyright 2016 The Fredoka Project Authors.
+  SIL Open Font License 1.1, in `OFL-Fredoka.txt`. Both files are byte copies of
+  `docs/brand/fonts/`, made by `scripts/sync-theme.mjs`; `docs/brand/fonts/README.md` records
+  the font's source, how the web file was made from it and both sha256 sums.
 - `dm-sans-latin.woff2`: DM Sans, Copyright 2014 The DM Sans Project Authors.
   SIL Open Font License 1.1, reproduced in `OFL-DMSans.txt`.
 
-The fonts are copied unchanged from the draft's brand folder; the OFL text is reproduced with
+DM Sans is copied unchanged from the draft's brand folder; its OFL text is reproduced with
 line endings and trailing whitespace normalized. No private
 brief, chat, account information or input directory is part of this site.
 
 ## Derived site art (`assets/art/`)
 
 The site's WebP art is cropped and scaled, never redrawn, from Automagik's own files in this
-repository, all Apache-2.0: the clay mark (`apps/desktop/assets/mark.png`), Genie
+repository, all Apache-2.0: Genie
 (`apps/desktop/assets/dmg-source/genie.png`), the Omni octopus and app icon (above), the lamp
 and the Genie and Omni expression strips (`apps/bots-dsh/src/client/art/`) and the Automagik
 pet's first frame (`apps/bots-dsh/src/host/pets/automagik/`). The Bots' art carries the DS Bot

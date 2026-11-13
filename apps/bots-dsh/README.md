@@ -229,21 +229,26 @@ No credential is read or copied between programs. The background model is not mo
 
 **The model menu** lists only what is set up, as connection, then model, then thinking level: a provider whose key is stored, an agent whose CLI is signed in, and a DSH sign-in other than Claude's or ChatGPT's that is stored. A connection is named by its brand and how it connects: "DeepSeek", "Anthropic · API key", "OpenAI · API key", "Claude Code", "Codex"; two connections that would read the same also show their route id. DSH's own Claude Pro/Max or ChatGPT sign-in route is never offered (the catalog marks it `covered`), nor is a model whose key or sign-in is missing (`needsKey`, `needsSignIn`). The model a Bot is on stays shown even when it cannot run, marked unavailable, and a new Bot never starts on one: the team's default skips them, and DSH's default on a covered plan route is read as the same model on that plan's CLI. The jobs beside the chats keep their own rule (the background model above).
 
-**Images**: `generate_image` draws with an OpenAI API key (the Images API) exactly as before; without one, through the Codex CLI on its own ChatGPT sign-in (acp-dsh's `generateImage`, a one-off read-only Codex session using Codex's image tool), so a ChatGPT plan draws with no DSH sign-in. A ChatGPT grant an earlier version stored through DSH's `openai-codex` sign-in is read last, only so a person who signed in that way keeps drawing; Automagik no longer offers that sign-in. Nothing reads or copies the CLI's sign-in. A Bot on an agent (Codex) can also make an image with the agent's own tool: acp-dsh hands its PNG, from the call's own update, to the Bot team's keeper (`acpAgents.keepImages`), the chat shows it in the same image card, it is saved in the same images folder, and the agent's link to its own local copy leaves the reply. While any image is made (either path), the card is Omni painting: Omni's clay art with no card behind it, swaying, its face changing every 0.9 s, four dabs of the theme's colours around it, and "Painting your image…" with the seconds so far; a partial image, then the finished one, fades in where Omni was. With reduced motion Omni stands still and the dabs are gone. A call that fails or is stopped says the image was not made, and why.
+**Images**: `generate_image` draws with an OpenAI API key (the Images API) exactly as before; without one, through the Codex CLI on its own ChatGPT sign-in (acp-dsh's `generateImage`, a one-off Codex session with a per-draw permission profile using Codex's image tool), so a ChatGPT plan draws with no DSH sign-in. A ChatGPT grant an earlier version stored through DSH's `openai-codex` sign-in is read last, only so a person who signed in that way keeps drawing; Automagik no longer offers that sign-in. Nothing reads or copies the CLI's sign-in. A Bot on an agent (Codex) can also make an image with the agent's own tool: acp-dsh hands its PNG, from the call's own update, to the Bot team's keeper (`acpAgents.keepImages`), the chat shows it in the same image card, it is saved in the same images folder, and the agent's link to its own local copy leaves the reply. While any image is made (either path), the card is Omni painting: Omni's clay art with no card behind it, swaying, its face changing every 0.9 s, four dabs of the theme's colours around it, and "Painting your image…" with the seconds so far; a partial image, then the finished one, fades in where Omni was. With reduced motion Omni stands still and the dabs are gone. A call that fails or is stopped says the image was not made, and why.
 
-**Codex image security (#870): accepted risk.** Codex drawing stays enabled. codex-acp's
-`read-only` mode can read the whole disk wherever the OS user has read access. An injected
-drawing request could read a local file into the returned picture; the image tool can use
-local image files as input. The picture is shown in chat, so other viewers could see that
-content. An empty working folder and the tool checks do not isolate file reads.
+**Codex image security (#870).** Each one-off draw requests scratch-only reads through a fresh
+permission profile. Codex's filesystem helper adds runtime read grants, so this is containment,
+not a scratch-only read boundary: images in permitted runtime directories remain readable.
+Automagik sends prompt text and has no pre-read hook for Codex's image-input paths. The
+[ACP image security notes](../acp-dsh/README.md#images-through-codex) list the platform grants,
+pinned sources and test limits; native macOS/Windows and signed-in per-turn enforcement remain
+untested here. #870 remains open. The scratch folder and config are removed afterwards.
+An adapter that lacks the mode or rejects it falls back to `read-only`, logs one warning and
+marks the result internally as not isolated. The owner keeps this fallback enabled with the
+file disclosure risk accepted: an injected request could use a readable local image as input
+and return its contents in a picture shown in chat. A Codex Bot's own image tool in ordinary
+chat is outside the per-draw profile and retains that risk under its chat permissions.
 
 An OpenAI API key routes `generate_image` through the Images API instead of its one-off
-Codex fallback. The API receives the prompt without starting a local Codex session; keep
-secrets out of the prompt. A Bot running on Codex can still use its own image tool even with
-that key configured. Use a different Bot model or turn Codex off in the agent settings to
-avoid that route. Avoid sending outside messages or other untrusted text to Codex drawing,
-but do not treat prompt review as a file access control. The narrow-sandbox work remains
-open in [#870](https://github.com/automagik-si/automagik/issues/870); see the
+Codex session. Prompt text still reaches the model; keep secrets out of it. A Bot running on
+Codex can still use its own image tool despite that key. Use a different Bot model or turn
+Codex off to avoid that route. Avoid sending untrusted outside text to Codex drawing; prompt
+review is not a file access control. See the
 [ACP image security notes](../acp-dsh/README.md#images-through-codex).
 
 **Fallback**: when a Bot's model fails a request and nothing earlier answers it (DSH's own retries of the same model, or a move to a fresh part for a full or stuck chat), the step runs again on the fallback model: `fallbackModel`, else the team's default model (DeepSeek's, out of the box). The rest of that turn stays there, and a notice in the chat says which model failed and why; the next turn is back on the Bot's own model. A full context, a stop, and a fallback that fails too end the turn as before. It covers every Session of the team: a Bot's chat, a group seat, a task.
@@ -479,6 +484,8 @@ dev/check.sh                             # all checks (see below)
 | `src/host/` | Host: team and storage (`roster`, `store`), tools (`tools`), turns and delivery (`turns`, `delivery`), group chats (`groups`), chat parts, the context steward and the index (`parts`, `steward`, `chat-index`), image text (`images`), secrets (`secrets`), Bot browser (`browser`), the hooks other Omni plugins add through (`extend`), the `POST api/omni-ui` route (`channel`), the web app's name and icon (`app-manifest`, `app-icon.png`) |
 | `src/client/` | Browser source: sidebar, chat header, transcript cells, panels and dialogs, themes, Bot browser panel, the registries other Omni plugins add to (`extend`) and the canvas slot they draw into (`canvas-slot`, `canvas-text`) |
 | `client.js` | Built from `src/client/` by `scripts/build-client.mjs` (esbuild); committed |
+| `src/script-child/` | Source of the process a `browser_exec` script runs in: a QuickJS interpreter (WebAssembly) and the two functions it is given; `pins.json` holds the interpreter's version and the sha256 of each of its files |
+| `src/host/browser/script-child.js` | Built from `src/script-child/` and the pinned interpreter by `scripts/build-script-child.mjs` (esbuild) as one file; committed |
 | `web-search.js` | The `auto` search provider; independent of the team code |
 | `test/` | Unit tests and fixtures |
 | `dev/characters.mjs` | Builds the characters (small 3D models traced to outlines) into the `CHARACTERS` table in `src/client/characters.js` |
@@ -492,40 +499,56 @@ dev/check.sh                             # all checks (see below)
 
 **Remote Hermes** is its own route after Native, ACP and Herdr, identified by the original
 Hermes girl mark (upstream MIT notice in `NOTICE`). Local Hermes continues to use ACP.
-The route is off by default. Clicking it without a saved connection opens the setup wizard;
-a saved working connection opens its remembered profile in one click. Crossing harnesses still
-uses the conversation/handoff confirmation. **Bot settings → Remote Hermes** can reopen setup.
+The route is off by default. Clicking it without a saved connection opens setup; a saved
+working connection opens its remembered profile in one click. Crossing harnesses still uses the
+conversation/handoff confirmation.
 
-The wizard follows **Connection → Details → Test → Profile → Ready**:
+Setup is three things: **choose a computer, Connect, chat.**
 
-- **Remote address** connects to an existing `hermes serve` over HTTPS, including a reverse-proxy
-  path prefix. Use its session token, or sign in through the instance's dashboard with a user
-  and password when that sign-in is available. The password is used for that sign-in only and
-  is never saved. Authentication failures show fixed guidance, never a response body.
-- **Through SSH** uses the system SSH client and the user's SSH config/agent. Enter a host or
-  config alias; user, port, identity-file path and Hermes executable path are optional overrides.
-  A blank Hermes path enables remote auto-detection. Key authentication must already work;
-  SSH passwords and interactive key passphrases are not accepted. A host this computer has
-  never seen stops setup and shows its key type and SHA256 fingerprint; **Trust this host**
-  saves exactly that key to the user's known hosts (as `accept-new` would) and tests again. A
-  changed host key is always refused: the user checks it in a terminal. Host-key checks are
-  never weakened, and private keys are never uploaded, copied or stored by the plugin.
-- **Test** checks the connection with visible progress. Each SSH failure has its own screen,
-  naming the host and the step that stopped: sign-in, host key, the start script, Hermes
-  exiting early (its exit code and last lines), Hermes not ready in time, no port, the one-time
-  token, the tunnel, a busy forward from the SSH config, an old Hermes, or unconfirmed cleanup.
-  Before it starts anything, the start script reads `hermes --version`. A release older than
-  the minimum (below) gets **Update Hermes on `<host>` to v… or newer**, with the release found
-  there and the update command for that install kind (`hermes update`, the Docker image, the
-  Termux package, or Nix). A build that names no release is reported as that, never guessed.
-  A failed test also leaves one line in the diagnostics log (Settings → Feedback): the step,
-  the kind, the time it took and the last SSH and Hermes lines. The line names no one: the
-  host as typed, the remote user, the host name and every IP address are replaced by
-  `<alias>`, `<user>`, `<host>` and `<ip>`, and tokens, key material, fingerprints and home
-  folders are removed. Only the wizard's own screen shows the host and what SSH said.
-  **Profile** lists profiles available from that instance; choose one before saving.
-  **Ready** remembers that connection and profile for later clicks. Cancel closes pending test
-  resources. Editing a draft does not silently disconnect an unrelated active chat.
+- **Choose a computer** lists the `Host` entries of the user's SSH config (an `Include` is
+  followed when there is one; wildcard and negated patterns are never offered), with the hosts
+  in `known_hosts` collapsed under them. Typing a host or config name stays possible. Picking or
+  typing another computer starts from that computer's own SSH defaults.
+- **Connect** signs in with the system SSH client and the user's SSH config/agent, finds the
+  Hermes already installed there, starts its own `hermes serve` and opens the chat. Progress is
+  shown as it happens. There is no route choice, address step or test step.
+- **A profile is asked for only when Hermes has more than one.** The picker opens on the one
+  Hermes runs as (then its active one, then the first). With one profile the chat opens at once.
+- Everything optional is behind **More** (Bot settings → Remote Hermes → More, or **More
+  options** on a failure): another user, port, identity-file path, Hermes executable path or
+  Hermes home (its data folder), and a Hermes reached by its **Remote address** over HTTPS (reverse-proxy path prefix
+  included) with its session token, or the dashboard's user and password. That password is
+  used for the sign-in only and is never saved.
+- **Pair Hermes Bot** (Bot settings → Remote Hermes) binds one Bot's own chat to that
+  profile's existing Bot Chat: see [`docs/hermes-bot-pairing.md`](../../docs/hermes-bot-pairing.md).
+  A paired chat opens the same way: no approval setting is read or waited for.
+
+Remote Hermes connects to whatever profile and approval setting that Hermes has, and never
+changes a Hermes setting. The only refusals are real failures, each with what went wrong and
+its one fix in one line; the step that stopped, the exit code and the last lines are behind
+**Details**:
+
+- the computer cannot be reached, or SSH could not sign in. Key authentication must already
+  work; SSH passwords and interactive key passphrases are not accepted.
+- a host this computer has never seen: its key type and SHA256 fingerprint are shown, and
+  **Trust this host** saves exactly that key to the user's known hosts (as `accept-new` would)
+  and connects. A changed host key is always refused: the user checks it in a terminal.
+  Host-key checks are never weakened, and private keys are never uploaded, copied or stored.
+- Hermes is missing, stopped while starting, was not ready in time, reported no port, or did
+  not accept the one-time token; the tunnel did not open; a forward from the SSH config is busy.
+- Hermes is too old. Before it starts anything, the start script reads `hermes --version`. A
+  release older than the minimum (below) gets **Update Hermes on `<host>` to v… or newer**,
+  with the release found there and the update command for that install kind (`hermes update`,
+  the Docker image, the Termux package, or Nix). A build that names no release is reported as
+  that, never guessed.
+- the Hermes sign-in (token, or user and password) was not accepted.
+
+A failed connection also leaves one line in the diagnostics log (Settings → Feedback): the
+step, the kind, the time it took and the last SSH and Hermes lines. The line names no one: the
+host as typed, the remote user, the host name and every IP address are replaced by `<alias>`,
+`<user>`, `<host>` and `<ip>`, and tokens, key material, fingerprints and home folders are
+removed. Only the person's own screen shows the host and what SSH said. Cancel closes pending
+connection resources. Editing a draft does not silently disconnect an unrelated active chat.
 
 SSH requires an existing supported Hermes installation, its working runtime and provider setup,
 an SSH server, a POSIX shell and Python 3 on the remote computer, and a usable local SSH client.
@@ -557,18 +580,22 @@ the remote computer it is written once, mode 0600, to the folder `hermes serve` 
 
 The oldest Hermes release that works is **v0.21.5** (`minimumRelease` in
 `src/host/hermes-contract.json`, the one place that names it): the first release with Desktop
-contract 8. v0.21.4 speaks contract 7 and is refused.
+contract 8. v0.21.4 speaks contract 7 and gets the update screen. A newer contract that still
+answers is not an error. A Hermes whose sessions are owned by a gateway (canonical authority)
+cannot be used by this route and says so, with its one fix: connect to a Hermes started with
+`hermes serve`.
 
-Only **standalone Desktop contract 8 with server-request approvals** is accepted. Canonical
-authority is refused. The remote profile must already use manual approvals: DSH never changes
-its global setting. Full access answers each approval `once`; a restrictive no-ask level refuses;
-Read only and Workspace both ask the person before answering each Hermes approval question.
-Their file-permission difference applies only to this computer, which a Remote Hermes chat does
-not use for its tools. Auto review also asks the person: its model reviewer does not cover Hermes
-approval questions. Automagik's local sandbox does not constrain the remote computer. Distinct
-remote approval boundaries are follow-up [#1084](https://github.com/automagik-si/automagik/issues/1084).
+**Approvals are Hermes's own.** No approval setting is required, read or waited for. A Hermes
+that approves on its own (yolo, or its allow rules) simply runs its tools. When Hermes asks,
+its question is shown in the chat and the person's answer is sent back: nothing answers yes or
+no for them, at any chat level, and no deadline answers either. A level that asks (Read only,
+Workspace, Auto review) shows the chat's approval card. A level that never asks (Full access
+included) has no such card, so the question appears as a chat question with **Allow once** and
+**Deny**. The question closes when Hermes withdraws it, the chat stops or the connection is
+lost. Automagik's local sandbox does not constrain the remote computer. Distinct remote
+approval boundaries are follow-up [#1084](https://github.com/automagik-si/automagik/issues/1084).
 Other server requests (including secret/sudo/clarification) receive an unsupported-method error
-in this delivery. Hermes's own allow rules can still run actions without asking DSH.
+in this delivery.
 
 Text, remote tool cards, Stop and resume share the DSH chat. Stored/runtime session IDs and any
 returned admission ID are saved. An ambiguous submit is never sent again automatically, and
@@ -596,9 +623,9 @@ node scripts/hermes-contract.mjs <downloaded-generated-contract>
 ```
 
 Any change exits nonzero and names the changed surfaces. Do not update the pin solely to make
-the check pass: rerun the disposable fixtures against the reviewed shapes and keep the runtime
-version/dialect gate closed to every untested contract. The checker is offline and never
-contacts a Hermes instance.
+the check pass: rerun the disposable fixtures against the reviewed shapes. At run time only a
+contract older than 8 is refused; the checker is what reviews a newer one before this adapter
+names it. The checker is offline and never contacts a Hermes instance.
 
 The minimum release and the socket rule above were proven against real Hermes installs in
 throwaway homes (v0.21.4, v0.21.5, v0.22.7, v0.23.0, v0.23.1 and the pinned commit), with the

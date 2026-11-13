@@ -426,9 +426,13 @@ restarts it (Restart runs `automagik-herdr restart`; Restart on… restarts it o
 agent, a new conversation, the bot's definition keeping its agent), attaches it to the focused
 pane or detaches it; What happened shows `automagik-herdr history` for it (its panes, starts,
 sessions, the newest transcript, which a click copies, its workers) and the helpers its pane runs
-now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A refusal offers
-"Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
-knows and refresh behind.
+now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A busy-pane
+refusal offers "Restart anyway". With helpers, choose "Restart with its helpers" to restart immediately and resume
+those conversations, or "End helpers and restart" to end them. On a linked machine, the first choice
+runs the installed CLI's local `--tree --force` restart on the machine holding the panes, then updates
+this sidebar's attachment. Saved configuration changes use these same choices when you restart to apply
+them. Pack updates reload mods and do not restart bot panes. The Bots list and the Attach picker open
+on the bots the sidebar already knows and refresh behind.
 
 A project on a linked machine (`hc machine ls`) is managed from here too. Its bots' menu has
 Configure, Prompt and Run (Start, Focus, Restart, Attach to a focused pane of that machine,
@@ -652,6 +656,11 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   lists the queue; `restart --cancel <bot>` (or `restart <bot> --cancel`) cancels one. Both
   accept `--project DIR` and `--json`. A second request replaces that bot's queued options.
   `--force` restarts immediately; helpers still require `--tree` or `--force`.
+- A paired Hermes bot keeps its `programs.json` command, including wrapper scripts and
+  `--tui`, and adds its profile and Bot Chat options once; a different `--profile` must be
+  corrected to match the pairing. Start and Restart errors show a short explanation in the
+  menu. The CLI records the diagnostic and trace in `automagik-herdr/actions.log` under the
+  app home; failures in the sidebar itself go to Herdr's app log.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
@@ -1272,11 +1281,12 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
 - `code` is an optional boolean, defaulting to `true`. Set `code: false` for a bot whose
   work is not code with the **Code bot** toggle in the bot editor or
   `automagik-herdr edit <bot> --code false`; `--code true` restores it.
-  Create accepts the same option, and `show` and `ls` print it. Both launch and full briefings
+  Create accepts the same option; `show` prints it and `ls` marks code opt-outs. Both launch and full briefings
   include the instruction to start a worker only for code bots in a Git working tree,
   including linked projects; if the per-turn hook's Git check times out, it reuses the
-  recorded Git answer from the session's start or prior turn so the briefing does not
-  reprint. Otherwise that instruction is omitted, leaving the bot's own instructions to lead.
+  Git answer recorded by an earlier hook call. On the first hook call there is no recorded
+  answer; a matching launch briefing hash can establish that the project was in Git.
+  Without either, the worker instruction is omitted, leaving the bot's own instructions to lead.
   Other edits, installs and updates keep the setting in the project's roster.
 - `model` is an optional pin, picked from the agent's known models (never typed freely).
   Start passes it with the agent's own model flag; a pin the agent doesn't list (an old
@@ -1300,7 +1310,8 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   folder in `trustedWorkspaces` (see below) -- the project folder for a seat, the worker's
   worktree for a worker, the helper's folder for a helper, a review worker and a reviewer seat
   included -- so the rest of the person's trust list and saved settings stay theirs.
-  `create|edit --agy-mode` sets it (`--agy-mode auto` clears it back to the default); the form
+  `create|edit --agy-mode` sets it (`--agy-mode auto` or an empty value clears it back to the
+  default); setting it on another agent warns that it only applies to Antigravity. The form
   offers it for an Antigravity bot. Other edits, installs and updates keep it in the roster.
   `show`, `ls` and `dsh-tui doctor` print it.
 - `agyPermissions` is optional: rules an Antigravity bot and its workers add to the permission
@@ -1323,7 +1334,9 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   `{ "template": "dev-sol" }`, each key optional, the defaults of the bot's
   [workers](#workers). Without `agent`, workers run the bot's own agent; a `template` (an hc
   template name: letters, digits, `.`, `_`, `-`, no dash first) wins over `agent`, `model`
-  and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent).
+  and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent or empty).
+  A template owns its command line: add `--mode` to the template's command if needed;
+  `worker.agyMode` adds no mode flag to a template worker.
   `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template/--worker-agy-mode` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
   with a warning. A Codex worker runs [Codex's launch mode](#codexs-launch-mode) like its bot's

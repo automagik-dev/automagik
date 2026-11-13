@@ -367,36 +367,58 @@ identity is shown as unknown.
 <a id="images-through-codex"></a>
 
 **Images through Codex.** `generateImage` is a one-off codex-acp session that asks Codex's
-built-in image tool for one picture (owner decision D-g): an empty scratch folder as its working
-directory (removed afterwards), the `read-only` mode, no MCP servers and no bridge.
-The terminal's `config.toml` is never written. `CODEX_HOME` is the Bot's isolated config;
-everything below is set for that process only, through codex-acp's `CODEX_CONFIG` override.
+built-in image tool for one picture (owner decision D-g). Each draw gets an empty scratch
+folder, no MCP servers and no bridge. Before the checks, it writes an owner-only
+`.codex/config.toml` there with a fresh, unpredictable permission profile and that profile as
+`default_permissions`. Its filesystem rules deny `:root` and allow only `:workspace_roots`
+to be read. It has no network table, `extends` or `:minimal` roots. After `session/new`, the
+run selects `permission-profile:<id>` and waits for the adapter to acknowledge it before
+sending the prompt. This is containment, **not a scratch-only read boundary**: Codex's
+filesystem helper adds runtime read grants even though our config omits them. Images in
+those runtime directories remain readable by design; see the platform list and pinned sources
+below. The folder and its config are removed afterwards.
+`CODEX_HOME` is the Bot's isolated Codex home, supplied by `cli-homes.js`; the terminal's config
+is never written. The tool overrides still go through codex-acp's `CODEX_CONFIG`.
 
-**Security warning (#870): Codex drawing remains enabled with an accepted file disclosure
-risk.** codex-acp's `read-only` mode can read the whole disk wherever the OS user has read
-access. An injected drawing request could read a local file into the returned picture;
-Codex's image tool can use local image files as input. Anyone who sees the picture could see
-that content. An empty working folder, tool checks and permission refusals do not prevent
-this. A passing `imageAccess()` check means drawing is available, not that local reads are
-isolated.
+If the adapter does not offer the profile mode or rejects its selection, drawing continues
+in `read-only` mode under the owner's current policy (`ALLOW_IMAGE_READ_ONLY_FALLBACK`). One
+`warn` line names the reason without private details, and the result is marked internally as
+not isolated. There is no UI change. A passing `imageAccess()` check means drawing is available;
+it does not establish that this draw can select a profile. The internal `isolated=true` flag
+means the adapter acknowledged the profile, not that image reads are scratch-only.
 
-To avoid `generate_image`'s one-off Codex fallback, configure an OpenAI API key for the Images
-API, or turn Codex off in the agent settings. The API receives the prompt without starting a
-local Codex session; keep secrets out of that prompt. A Bot running on Codex can still invoke
-its own image tool even with an API key configured. Use a different Bot model or turn Codex
-off to avoid that route. Avoid forwarding untrusted channel messages or other outside text
-into Codex drawing requests. Reviewing a prompt can reduce exposure, but it cannot enforce a
-file boundary. Narrow sandbox reads remain open in
-[#870](https://github.com/automagik-si/automagik/issues/870); see the security notes below.
+**Input ownership.** `drawImage` sends only prompt text. It accepts no local image-input path,
+registers no ACP filesystem-read callback, and receives no pre-read image-tool arguments.
+Codex selects and reads `referenced_image_paths` inside its own helper. There is therefore no
+adapter-controlled input path on which to enforce realpath containment or reject symlink
+components. `imageOf` consumes inline output bytes only; it never opens `savedPath` or resource
+links. Checking reported output paths after a tool runs would not prevent its input reads.
+A future path-input API must check realpath containment within the per-draw scratch and reject
+symlink components before reading. That API does not exist here. **#870 remains open.**
+
+**Security warning (#870): the fallback and ordinary chat image tool retain the accepted
+file disclosure risk.** In the fallback, codex-acp's `read-only` mode can read the whole disk
+wherever the OS user has read access. An injected drawing request could use a local image as
+input and return its contents in a picture. Anyone who sees the picture could see that content.
+The per-draw profile does not cover a Codex Bot's own image tool in ordinary chat
+(`src/host/agent-image.js`), which runs under that chat's permissions. Tool checks and permission
+refusals alone do not prevent these reads. Prompt text itself is outside the file boundary and
+still reaches the model.
+
+To avoid `generate_image`'s one-off Codex session, configure an OpenAI API key for the Images
+API, or turn Codex off in the agent settings. Keep secrets out of the prompt. A Bot running
+on Codex can still invoke its own image tool even with an API key configured. Use a different
+Bot model or turn Codex off to avoid that route. Avoid forwarding untrusted channel messages
+or other outside text into Codex drawing requests. Prompt review cannot enforce a file boundary.
 
 Codex has no allow-list of tools. The following checks limit its other tools and refuse a run
-when a check does not hold; they do not close the image tool's local-file input:
+when a check does not hold; Codex's profile plus runtime grants supply filesystem containment:
 
 - **The checks, before anything starts.** The Codex the run would start is asked, through
   codex-acp's `cli` passthrough and with the run's own overrides: its MCP servers
   (`mcp list --json`, names only), its features (`features list`) and the tools it would offer
   the model (`debug prompt-input`). Nothing is sent to a model, and nothing of the answers is
-  kept or logged but names. The checks read the person's own Codex home, signed in or not, as
+  kept or logged but names. The checks read the Bot's isolated Codex home, signed in or not, as
   the session will, and run in the session's own scratch folder with the trust codex-acp gives
   it. Together they have 40 seconds; a stop from the caller ends them, and a command that
   hangs is killed with the Codex it started.
@@ -405,6 +427,8 @@ when a check does not hold; they do not close the image tool's local-file input:
   - Every tool offered must be on a fixed list (`IMAGE_TOOLS_ALLOWED`, `IMAGE_NESTED_ALLOWED`)
     or be the image tool. A command tool, image viewing, an MCP tool, a tool this version does
     not know, an item of an unknown kind or no tool block at all stops the draw.
+  - An `Invalid configuration` line on check stderr stops the draw, even if Codex exits
+    successfully and uses defaults.
   - The list must be in the form this code knows. A tool of an unknown kind or with a field it
     does not know stops the draw. So does a tool `exec` reaches that is not written as Codex
     0.167 writes it (one `declare const tools: { name(…) }` block per tool, one tool per block,
@@ -439,20 +463,18 @@ it does not hold (`reason`: `unsupported`, with `unsupported: true`; `config`; `
 the Bot team goes on to its next image source, or says which it was. Only a check that ran out
 of time leaves Codex ready. A draw always makes its own check.
 
-**Security notes: accepted residual risk (#870).**
+**Security notes: containment limits and accepted fallback risk (#870).**
 
-- **The image tool's own input (open; risk accepted).** A prompt injection can ask Codex to
-  use a readable local image file as input and return its contents in a picture shown in chat.
-  codex-acp reports the image call without its arguments, so the run cannot tell a fresh
-  drawing from an edit of a local file. No feature switch disables that input. With
-  codex-acp 2.6.0, selecting `read-only` sends a full-disk `readOnly` sandbox policy on every
-  turn. The session's `CODEX_CONFIG` cannot narrow that policy; custom permission profiles
-  are offered as modes only when defined in the person's own Codex config. The image run
-  selects `read-only`, not one of those profiles. Prompt wording and an `onTool` refusal
-  after a call cannot enforce a read boundary. The owner chose to keep Codex drawing enabled
-  with this risk accepted; #870 remains open. Closing the gap requires an enforceable narrow
-  read policy for the image session, including the image tool's own file inputs, verified
-  on the actual per-turn adapter path before returning any image.
+- **The image tool's own input in the fallback (risk accepted).** A prompt injection can
+  ask Codex to use a readable local image file as input and return its contents in chat.
+  codex-acp reports the image call without its arguments. No feature switch disables that
+  input. In `read-only` mode codex-acp sends a full-disk `readOnly` policy on every turn;
+  `CODEX_CONFIG` cannot narrow it. The per-draw profile mode instead sends the profile id
+  on every turn. Codex's image accessor uses a sandboxed helper, whose runtime grants widen
+  the profile's requested read boundary. The owner chose to keep the fallback enabled when
+  that mode is unavailable or rejected; that decision does not establish scratch-only reads.
+  Ordinary chat images (`agent-image.js`) are outside this profile too. Signed-in enforcement
+  on the actual per-turn path still needs verification in the app.
 - **A tool that is offered and not reported.** Codex 0.167 keeps some tools on whatever the
   switches say: its `exec` JavaScript isolate, `wait`, its questions to the person, sub-agents,
   patches (which ask first, and are cancelled) and MCP resource listing (no server is on). Not
@@ -461,13 +483,13 @@ of time leaves Codex ready. A draw always makes its own check.
   reaches reads a file; that is Codex's word, checked here only by the list of tools. A tool
   Codex adds later fails the check by name; a tool it defers and does not describe would not.
 - **What the model already holds.** It is in reach of a drawing either way: the prompt, the
-  person's global Codex instructions and memories, and the run's own context (the date, the
+  Bot's isolated Codex instructions and memories, and the run's own context (the date, the
   scratch path).
 - **Tools that only show when signed in.** The automated tests see a signed-out Codex. The
   image tool, and anything else Codex offers only to a signed-in person, is first seen by the
   checks on the person's machine: an unknown one stops the draw there, by name in the log.
-- **The person's own Codex setup.** Their global instructions, memories and hooks still load, as
-  they do for any Codex run of theirs. The run's environment is the app's own.
+- **The Bot's Codex setup.** Instructions, memories and hooks in the Bot's isolated Codex home
+  still load. Terminal user settings are not imported. The run uses the isolated environment.
 - **After the fact.** A refusal comes when a call is reported, after it ran: it keeps the image
   from coming back, it does not undo a read.
 - **The per-thread path.** The checks read Codex's command line (`-c`); the session gets the
@@ -479,15 +501,74 @@ of time leaves Codex ready. A draw always makes its own check.
 - **The caller.** A prompt built from an outside message is still the way in. The Bot team
   shows the returned image in the chat it was asked from.
 
-Follow-ups: a way to run the session under a minimal-read permission profile (above), and
-asking Codex for a switch for `exec`.
+Follow-ups (#870 remains open): a pre-read image-input boundary inside Codex, signed-in
+per-turn enforcement tests on each backend, and asking Codex for a switch for `exec`.
 
 `test/image-codex.test.js` runs these checks against a real Codex and codex-acp in a throwaway
 home (never signed in, no model request). It is skipped unless `AUTOMAGIK_TEST_CODEX_ACP`
-(codex-acp's `dist/index.js`) and `AUTOMAGIK_TEST_CODEX` (a Codex executable) are set; CI
-installs neither, so run it by hand when the Codex or codex-acp the app installs changes. At
+(codex-acp's `dist/index.js`) and `AUTOMAGIK_TEST_CODEX` (a Codex executable) are set. The ordinary
+plugin CI job installs neither; run it by hand when the installed Codex or codex-acp changes. At
 runtime, an unknown required feature or an unrecognised offered tool refuses the draw.
 Passing those checks does not prove that an image cannot contain locally read content.
+
+**Runtime read grants (pinned source audit).** The source paths and line numbers below are
+relative to `codex-rs/` at [Codex 0.167.1's commit][image-codex-source]
+(`0a94398fa60c4fac0e7659e4213a0a36e613dd46`). `ext/image-generation/src/tool.rs:639-653`
+reads inputs through the environment filesystem. `exec-server/src/fs_sandbox.rs:101-142,
+235-272` adds `:minimal`, the Codex helper executable, and a distinct Linux sandbox executable
+when present. These grants are allowed, not rejected by our profile.
+
+- **Linux (bubblewrap):** `/bin`, `/sbin`, `/usr`, `/etc`, `/lib`, `/lib64`, `/nix/store`,
+  `/run/current-system/sw` (`linux-sandbox/src/bwrap.rs:48-62`), plus helper executables.
+- **macOS (Seatbelt):** helper executables and the platform runtime allowlist, including
+  `/Library/Apple`, `/Library/Filesystems/NetFSPlugins`, `/Library/Preferences`, `/usr/lib`,
+  `/usr/share`, `/var/db`, `/private/var/db`; system frameworks under `/System/Library`,
+  `/System/iOSSupport/System/Library` and `/Library/Apple/System/Library`; `/Library/Apple/usr/lib`,
+  `/etc`, `/private/etc`, `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/usr/libexec`,
+  `/opt/homebrew/lib`, `/usr/local/lib`, and listed system files/device handles. The complete
+  rules (including metadata-only allowances) are in
+  `sandboxing/src/seatbelt_read_only_platform_defaults.sbpl:1-188`; these are broader than
+  just executable loading; the policy also honours granted app-sandbox read extensions.
+  No native macOS enforcement run is recorded here.
+- **Windows:** helper executables; elevated setup's platform roots are `C:\Windows`,
+  `C:\Program Files`, `C:\Program Files (x86)`, `C:\ProgramData`, plus its legacy helper-bin
+  directory when applicable (`windows-sandbox-rs/src/setup.rs:73-78,582-589,623-651`).
+  The unelevated restricted-token backend refuses split/deny-read restrictions
+  (`sandboxing/src/windows.rs:110-132`). Helpers refuse an unavailable sandbox
+  (`exec-server/src/fs_sandbox.rs:160-170`). No native Windows enforcement run is recorded;
+  neither a mode acknowledgement nor a backend refusal proves cross-platform isolation.
+
+The adapter forwards the profile id and runtime workspace roots per turn in
+`src/CodexAcpClient.ts:1386-1424` at [codex-acp 2.6.0's commit][image-adapter-source]
+(`f3208913693bd4d5171d6c6b9be5ec1ff96c6431`). That forwarding is source evidence, not an
+end-to-end read test. These pins describe the audited versions, not an installation pin.
+
+**Image read evidence.** `test/image-read.test.js` invokes the native Codex filesystem helper
+(`--codex-run-as-fs-helper`, `fs/readFile`) under `codex sandbox`. It uses the production
+`imageProfile` and explicitly appends the helper runtime grants above, because the sandbox CLI
+alone does not add them. The test reads real PNG bytes: inside allowed; outside, symlink leaf,
+symlink directory and parent traversal denied; runtime-directory PNG allowed byte for byte.
+An unsandboxed helper control first proves the outside canary is readable. A startup failure
+cannot count as a denied read. No account, credentials or model request is used.
+
+Set `AUTOMAGIK_TEST_CODEX` to the native executable and `AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE`
+to a public PNG under a runtime read root, then run `node --test test/image-read.test.js` from
+this plugin. Use a scratch `TMPDIR` outside the runtime roots. The ordinary plugin suite skips
+this test without those variables. CI's `acp-dsh (real Codex image reads)` job downloads the
+checksum-verified native Codex 0.167.1 and its bubblewrap runtime. It runs
+`node scripts/image-read-gate.mjs`, which requires a complete TAP plan, exactly seven passing
+tests, and zero failures, cancellations, skips or todos. Missing configuration also fails.
+`test/image-read-gate.test.js` proves skipped, todo and missing coverage fail despite Node's
+zero exit code. The helper tests use public PNG canaries and no sign-in.
+The test supports Linux/macOS invocation; Windows is explicitly skipped outside that job.
+The recorded local run used Linux Codex 0.167.0, not the audited 0.167.1 binary. It proves helper
+reads under a reconstructed policy, not automatic grant injection, ACP per-turn propagation,
+or the authenticated image-tool path. Those integration checks still need a real signed-in
+Codex on each supported backend; green CI does not establish them.
+
+[image-codex-source]: https://github.com/openai/codex/tree/0a94398fa60c4fac0e7659e4213a0a36e613dd46
+[image-adapter-source]:
+  https://github.com/agentclientprotocol/codex-acp/tree/f3208913693bd4d5171d6c6b9be5ec1ff96c6431
 
 **Images an agent makes in a chat.** A chat on an agent can ask it for a picture, and Codex then
 uses its own image tool (an `other` call titled "Image generation"). The mirror call carries

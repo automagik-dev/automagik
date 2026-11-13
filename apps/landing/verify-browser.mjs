@@ -13,7 +13,7 @@ import { onRequest as emailLink } from './functions/api/waitlist/email-confirm.j
 
 const root = dirname(fileURLToPath(import.meta.url))
 const evidence = resolve(process.env.LANDING_EVIDENCE ?? join(root, '../../.cache/landing-evidence'))
-const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' }
+const types = { '.js': 'text/javascript', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' }
 const isolated = fixture()
 let bindingMode = 'missing', origin
 const server = createServer(async (req, res) => {
@@ -38,7 +38,7 @@ const rowDark = used.flatMap(({ mark: [, dark] }) => dark ? [`/assets/brand/used
 let browser
 const reports = []
 // Layout shift, as the browser itself scores it (shifts right after a click or key do not
-// count). The observer is the test's; the pages carry no script.
+// count). The observer is the test's; the pages' one script is the family drawer's.
 const watchShift = context => context.addInitScript(() => {
   window.__shift = 0
   new PerformanceObserver(list => { for (const entry of list.getEntries()) if (!entry.hadRecentInput) window.__shift += entry.value }).observe({ type: 'layout-shift', buffered: true })
@@ -69,12 +69,12 @@ try {
       page.on('response', response => responses.push({ url: response.url().replace(origin, ''), status: response.status(), type: response.request().resourceType(), contentType: response.headers()['content-type'] }))
       page.on('pageerror', error => errors.push(error.message))
       await page.goto(origin + route, { waitUntil: 'load' })
-      await page.evaluate(() => Promise.all([...document.images].map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
+      await page.evaluate(() => Promise.all([...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
       await page.waitForLoadState('networkidle')
       const report = await page.evaluate(() => ({
         scroll: document.documentElement.scrollWidth, viewport: innerWidth,
-        images: [...document.images].map(image => ({ src: image.currentSrc.replace(location.origin, ''), ok: image.complete && image.naturalWidth > 0, shown: image.getBoundingClientRect().width })),
-        fonts: ['Manrope', 'DM Sans'].every(family => [...document.fonts].some(font => font.family.replaceAll('"', '') === family && font.status === 'loaded')),
+        images: [...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => ({ src: image.currentSrc.replace(location.origin, ''), ok: image.complete && image.naturalWidth > 0, shown: image.getBoundingClientRect().width })),
+        fonts: ['Fredoka', 'DM Sans'].every(family => [...document.fonts].some(font => font.family.replaceAll('"', '') === family && font.status === 'loaded')),
         robots: document.querySelector('meta[name="robots"]')?.content,
         h1: document.querySelectorAll('h1').length,
         reducedMotion: [...document.getAnimations()].every(animation => animation.playState !== 'running'),
@@ -110,9 +110,10 @@ try {
           }
         }
         const area = image => { const box = image.getBoundingClientRect(); return box.width * box.height }
-        const shown = [...document.images].filter(image => image.getClientRects().length && getComputedStyle(image).visibility !== 'hidden')
+        const shown = [...document.images].filter(image => !image.closest('.fam, .fam-world')).filter(image => image.getClientRects().length && getComputedStyle(image).visibility !== 'hidden')
         const film = document.querySelector('[data-film] img')
-        const unsized = [...document.images].filter(image => !image.getAttribute('width') || !image.getAttribute('height')).map(image => image.src)
+        // The drawer's pictures are the family piece's own markup: its stylesheet sets their height, and the drawer is out of the page's flow.
+        const unsized = [...document.querySelectorAll('img')].filter(image => !image.getAttribute('width') || !image.getAttribute('height')).map(image => image.src || image.dataset.src)
         const themed = [...document.querySelectorAll('picture')].filter(picture => picture.querySelector('source[media*="prefers-color-scheme: dark"]')).map(picture => picture.querySelector('img').currentSrc.replace(location.origin, ''))
         const box = selector => { const node = document.querySelector(selector); return node ? node.getBoundingClientRect().toJSON() : null }
         // The Open Intelligence tag in the footer: its size, its colour, where it sits in the
@@ -138,8 +139,8 @@ try {
       assert.ok(layout.tag.width === 170 && layout.tag.height === 32 && layout.tag.colour === layout.tag.text && layout.tag.font && layout.tag.words === 'OPEN INTELLIGENCE', `The Open Intelligence tag is 170 by 32 px, in the footer's text colour and its own type: ${label} ${JSON.stringify(layout.tag)}`)
       assert.ok(layout.tag.holds.length === 1 && layout.tag.holds[0] === 'svg' && layout.tag.href === 'https://weunfold.ai/', `The tag's link holds nothing but the tag: ${label} ${JSON.stringify(layout.tag.holds)}`)
       assert.ok(width > 700 ? layout.tag.right === 0 && layout.tag.beside : layout.tag.left === 0 && layout.tag.under, `The tag ends the footer's last row on a wide screen and sits under it, at the left, on a phone: ${label} ${JSON.stringify(layout.tag)}`)
-      assert.ok(layout.tag.logo * 676 / 902 >= layout.tag.width, `The tag is never bigger than the logo's word: ${label} ${layout.tag.logo}`)
-      assert.deepEqual(layout.themed.filter(source => (/(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg|\/automagik-lockup-oi-cream\.svg)$/.test(source) || rowDark.some(file => source.endsWith(file))) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
+      assert.ok(layout.tag.logo * 1325 / 1632.34 >= layout.tag.width, `The tag is never bigger than the logo's word: ${label} ${layout.tag.logo}`)
+      assert.deepEqual(layout.themed.filter(source => (/(?:-dark(?:-2x)?\.webp|\/automagik-lockup-oi-cream\.svg|\/(?:automagik|genie|omni)-lockup-three-colours-cream(?:-header)?\.svg)$/.test(source) || rowDark.some(file => source.endsWith(file))) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
       if (route === '/') {
         assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)
         assert.ok(layout.bubble.bottom <= layout.heroWindow.top && layout.bubble.left >= 0 && layout.bubble.right <= width, `The speech bubble stays off the app window: ${label} ${JSON.stringify([layout.bubble, layout.heroWindow])}`)
@@ -196,8 +197,8 @@ try {
       console.log(`PASS ${label}: no overflow; images and fonts loaded; local requests`)
     } finally { await context.close() }
   }
-  // The menus, with real clicks and keys. No script runs on the page: the browser's popover
-  // opens and closes each panel, keeps the button's expanded state and returns the focus.
+  // The menus, with real clicks and keys. They need no script: the browser's popover opens
+  // and closes each panel, keeps the button's expanded state and returns the focus.
   const panelState = (page, id) => page.evaluate(id => {
     const panel = document.getElementById(id), box = panel.getBoundingClientRect(), active = document.activeElement
     return {
@@ -213,17 +214,20 @@ try {
     return button?.properties?.find(property => property.name === 'expanded')?.value.value
   }
   const linkCheck = async page => {
-    const links = await page.evaluate(() => [...document.querySelectorAll('.menu-panel a, .drawer a, .site-footer a, .crumbs a, .pager a')].map(link => link.getAttribute('href')))
-    assert.ok(links.length >= 40, 'menus, phone menu and footer carry their links')
+    const links = await page.evaluate(() => [...document.querySelectorAll('.menu-panel a, .fam a, .site-footer a, .crumbs a, .pager a')].map(link => link.getAttribute('href')))
+    assert.ok(links.length >= 40, 'menus, drawer and footer carry their links')
     for (const href of new Set(links)) {
       const url = new URL(href, origin)
       if (url.origin !== origin) { assert.equal(url.protocol, 'https:', href); continue }
+      // Arca's page is Arca's own, served by Arca's Worker at this one address. This site
+      // links to it and carries no file there, so nothing of ours is published over it.
+      if (url.pathname.startsWith('/arca')) { assert.equal(href, '/arca/', href); assert.equal((await fetch(url)).status, 404, 'This site carries no page at /arca/'); continue }
       const response = await fetch(url)
       assert.equal(response.status, 200, `menu link answers 200: ${href}`)
       if (url.hash) assert.ok((await response.text()).includes(`id="${url.hash.slice(1)}"`), `menu link target exists: ${href}`)
     }
   }
-  for (const colorScheme of ['light', 'dark']) for (const route of ['/', '/genie/', '/arca/']) {
+  for (const colorScheme of ['light', 'dark']) for (const route of ['/', '/genie/', '/mykes/']) {
     const label = `${route} ${colorScheme}`, slug = route === '/' ? 'home' : route.split('/')[1]
     const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
     try {
@@ -278,60 +282,394 @@ try {
       if (route === '/') assert.deepEqual(here, { button: null, current: null, crumb: null })
       else assert.ok(here.button && here.button === here.crumb && here.current === route, `The header shows the active page: ${label} ${JSON.stringify(here)}`)
       await linkCheck(page)
-      if (route === '/arca/') {
-        // Get Arca is the install command as text: one click selects the whole line, and
-        // nothing on the page links to the installer or to Arca's repository.
-        const get = await page.evaluate(() => { const code = document.querySelector('.install-line code'); return { text: code.textContent, select: getComputedStyle(code).userSelect, links: [...document.links].map(link => link.href).filter(href => /get\.automagik\.si|automagik-si\/arca/.test(href)) } })
-        assert.deepEqual(get, { text: 'curl -fsSL https://get.automagik.si/arca | sh', select: 'all', links: [] }, `The install line is text to copy: ${label}`)
-      }
       await button('products').click(); await page.locator('#menu-products .menu-item[href="/omni/"]').click()
       await page.waitForURL(origin + '/omni/')
       assert.equal(await page.locator('.menu-button[data-here] .menu-here').evaluate(node => node.lastChild.textContent), 'Omni')
       assert.deepEqual(outside, [], `No external request from the menus: ${label}`)
     } finally { await desk.close() }
-    // The phone menu: one sheet under the header with the same groups.
-    for (const width of [390, 320]) {
-      const phone = await browser.newContext({ viewport: { width, height: 844 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    // The family drawer, with real clicks and keys, in a wide window and on a phone. It is
+    // the one script on the page (assets/family/family.js, the piece's own) and the one menu
+    // a phone has: the header keeps no second menu button.
+    for (const width of [1440, 390, 320]) {
+      const height = width > 860 ? 900 : 844, about = `${label} ${width}px`
+      const view = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
       try {
-        const page = await phone.newPage(), cdp = await phone.newCDPSession(page)
+        const outside = await guard(view), page = await view.newPage(), cdp = await view.newCDPSession(page), errors = [], art = []
+        page.on('pageerror', error => errors.push(error.message))
+        page.on('request', request => { if (request.url().includes('/assets/family/') && /\.(?:png|svg)$/.test(request.url())) art.push(request.url().split('/').pop()) })
         await page.goto(origin + route, { waitUntil: 'load' })
-        const menu = page.locator('.menu-open')
-        assert.ok(await menu.isVisible() && !(await page.locator('.main-nav').isVisible()), `The phone header shows one Menu button: ${label} ${width}px`)
-        assert.equal(await expanded(cdp, 'Menu'), false)
-        await menu.click()
-        let state = await panelState(page, 'site-menu')
-        const header = await page.locator('.top').boundingBox()
-        const behind = () => page.evaluate(() => ({ main: getComputedStyle(document.querySelector('main')).visibility, footer: getComputedStyle(document.querySelector('.site-footer')).visibility, scroll: getComputedStyle(document.documentElement).overflowY }))
-        assert.ok(state.open && state.shown && state.overflow === 0, `Menu opens the sheet: ${label} ${width}px`)
-        assert.equal(await expanded(cdp, 'Menu'), true, `Menu is announced expanded: ${label} ${width}px`)
-        assert.ok(state.box.left === 0 && state.box.width === width && Math.abs(state.box.top - (header.y + header.height)) <= 1 && Math.abs(state.box.bottom - 844) <= 1, `The sheet fills the screen under the header: ${label} ${width}px ${JSON.stringify(state.box)}`)
-        assert.deepEqual(await behind(), { main: 'hidden', footer: 'hidden', scroll: 'hidden' }, `The page behind the sheet is out of reach: ${label} ${width}px`)
-        assert.deepEqual(await page.locator('#site-menu .drawer-label').allInnerTexts().then(labels => labels.map(text => text.toLowerCase())), ['products', 'resources', 'company'])
-        assert.equal(await page.locator('#site-menu .menu-item').count(), 13)
-        if (route !== '/') assert.equal(await page.locator('#site-menu [aria-current="page"]').getAttribute('href'), route, `The sheet marks the active page: ${label}`)
-        if (width === 390) await page.screenshot({ path: join(evidence, `menu-phone-${slug}-${colorScheme}.png`) })
-        // The keyboard stays in the header and the sheet, and reaches every link of the sheet.
-        const stops = new Set()
-        for (let press = 0; press < 40; press++) {
-          await page.keyboard.press('Tab')
-          stops.add(await page.evaluate(() => { const active = document.activeElement; return active === document.body ? 'page' : active.closest('#site-menu') ? `sheet:${active.getAttribute('href')}` : active.closest('.top') ? 'header' : `behind:${active.outerHTML.slice(0, 60)}` }))
+        const menu = page.locator('[data-family-open]')
+        const state = () => page.evaluate(() => {
+          const root = document.documentElement, drawer = document.querySelector('[data-family-drawer]'), wrap = document.querySelector('[data-family-page]'), button = document.querySelector('[data-family-open]')
+          const box = drawer.getBoundingClientRect()
+          return {
+            open: root.classList.contains('is-family-open'), hidden: drawer.hidden, drawer: { left: box.left, top: box.top, width: box.width, bottom: box.bottom }, page: wrap.getBoundingClientRect().left,
+            inert: wrap.inert, ariaHidden: wrap.getAttribute('aria-hidden'), expanded: button.getAttribute('aria-expanded'),
+            focus: document.activeElement === button ? 'button' : drawer.contains(document.activeElement) ? 'drawer' : 'page',
+            overflow: root.scrollWidth - innerWidth, scroll: getComputedStyle(root).overflowY,
+          }
+        })
+        const shut = { open: false, page: 0, inert: false, ariaHidden: null, expanded: 'false', focus: 'button', overflow: 0, scroll: 'visible' }
+        const closed = async why => {
+          await page.waitForFunction(() => document.querySelector('[data-family-drawer]').hidden && document.querySelector('[data-family-scrim]').hidden)
+          const { hidden, drawer, ...now } = await state()
+          assert.deepEqual(now, shut, `${why}: ${about}`)
         }
-        assert.deepEqual([...stops].filter(stop => stop.startsWith('behind:')), [], `Tab never lands behind the sheet: ${label} ${width}px`)
-        assert.equal([...stops].filter(stop => stop.startsWith('sheet:')).length, 12, `Tab reaches every link of the sheet: ${label} ${width}px`)
+        // At rest: the button is the header's first thing, at the window's left edge, in the
+        // middle of the header's height; its three lines wear the family's colours for this
+        // ground; the logo stands clear of it and keeps the page column where there is room.
+        const rest = await page.evaluate(() => {
+          const header = document.querySelector('.top'), button = header.querySelector('[data-family-open]'), column = document.querySelector('.site-footer .wrap')
+          const box = node => node.getBoundingClientRect().toJSON()
+          return {
+            first: header.firstElementChild === button, role: button.getAttribute('role'), href: button.getAttribute('href'), name: button.getAttribute('aria-label'),
+            button: box(button), row: box(header.querySelector('.top-inner')), logo: box(header.querySelector('.brand img')),
+            lines: [...button.querySelectorAll('.fam-lines > span')].map(line => getComputedStyle(line).backgroundColor),
+            column: column.getBoundingClientRect().left + parseFloat(getComputedStyle(column).paddingLeft),
+            menus: getComputedStyle(header.querySelector('.main-nav')).display !== 'none', others: header.querySelectorAll('.menu-open, .menu-fallback, [popovertarget="site-menu"]').length,
+            drawer: getComputedStyle(document.querySelector('[data-family-drawer]')).display, outsidePage: !document.querySelector('[data-family-page]').contains(document.querySelector('[data-family-drawer]')),
+          }
+        })
+        assert.ok(rest.first && rest.role === 'button' && rest.href === null && rest.name === 'Menu' && rest.drawer === 'none' && rest.outsidePage, `The menu button is the header's first thing, a button: ${about} ${JSON.stringify(rest)}`)
+        // A closed drawer costs the page nothing (the piece's twelfth issue): none of its twelve
+        // picture addresses is set, so none of its pictures is among the page's requests.
+        const closedArt = await page.evaluate(() => ({ given: document.querySelectorAll('.fam img[src], .fam source[srcset], .fam-world img[src]').length, waiting: document.querySelectorAll('.fam img[data-src], .fam source[data-srcset], .fam-world img[data-src]').length }))
+        assert.deepEqual([closedArt, art], [{ given: 0, waiting: 12 }, []], `A closed drawer fetches nothing: ${about} ${JSON.stringify([closedArt, art])}`)
+        assert.equal(await expanded(cdp, 'Menu'), false, `Menu starts collapsed: ${about}`)
+        assert.ok(rest.button.left === 7 && rest.button.width === 48 && rest.button.height === 48 && Math.abs(rest.button.top + 24 - (rest.row.top + rest.row.height / 2)) <= 0.5, `The button is at the window's edge, in the middle of the header: ${about} ${JSON.stringify(rest.button)}`)
+        assert.deepEqual(rest.lines, colorScheme === 'dark' ? ['rgb(181, 134, 231)', 'rgb(238, 84, 150)', 'rgb(21, 189, 224)'] : ['rgb(144, 98, 190)', 'rgb(208, 63, 124)', 'rgb(7, 129, 164)'], `Three lines: violet, pink, cyan for this ground: ${about}`)
+        const clear = width > 480 ? 68 : width > 360 ? 62 : 56
+        assert.ok(rest.logo.left >= clear - 0.5, `The logo stands clear of the button: ${about} ${rest.logo.left}`)
+        if (width === 1440) assert.ok(Math.abs(rest.logo.left - rest.column) <= 0.5, `The logo keeps the page column: ${about} ${rest.logo.left} ${rest.column}`)
+        assert.equal(rest.menus, width > 860, `The header's menus show only where there is room: ${about}`)
+        assert.equal(rest.others, 0, `The header has one menu button: ${about}`)
+        // A click opens it from the left edge and pushes the page aside; the page is out of reach.
+        await menu.click()
+        let now = await state()
+        const wide = Math.min(420, width - 34)
+        assert.ok(now.open && !now.hidden && now.drawer.left === 0 && now.drawer.top === 0 && now.drawer.width === wide && now.drawer.bottom === height, `A click opens the drawer at the left edge: ${about} ${JSON.stringify(now)}`)
+        assert.equal(now.page, wide, `The drawer pushes the page aside: ${about}`)
+        assert.equal(now.overflow, 0, `The pushed page does not widen the window: ${about}`)
+        assert.ok(now.inert && now.ariaHidden === 'true' && now.expanded === 'true' && now.scroll === 'hidden' && now.focus === 'drawer', `The page behind is out of reach and the focus is in the drawer: ${about} ${JSON.stringify(now)}`)
+        // What assistive technology is offered: the drawer's own things and nothing of the page.
+        const phone = width <= 860
+        const names = ['Automagik', 'Desktop', 'Mobile', ...(phone ? ['Cloud', 'Get the app', 'Privacy'] : []), 'Arca', 'Omni', 'Genie', 'Mykes', 'Support', 'Close']
+        // (The tree lists them in its own order, with a label's capitals as they are drawn.)
+        const offered = (await cdp.send('Accessibility.getFullAXTree')).nodes.filter(node => !node.ignored && ['link', 'button'].includes(node.role?.value)).map(node => (node.name?.value ?? '').toLowerCase())
+        const unmatched = [...offered]
+        for (const name of names) { const at = unmatched.findIndex(given => given.startsWith(name.toLowerCase())); assert.ok(at >= 0, `The drawer offers ${name}: ${about} ${JSON.stringify(offered)}`); unmatched.splice(at, 1) }
+        assert.deepEqual(unmatched, [], `Only the drawer is offered while it is open: ${about}`)
+        // Every link and control of the page is inside the wrapper the drawer puts out of reach.
+        assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('a, button, input, select, textarea, summary')].filter(node => !node.closest('[data-family-page], [data-family-drawer], [popover]')).map(node => node.outerHTML.slice(0, 80))), [], `Nothing of the page stands outside its wrapper: ${about}`)
+        // The art: Automagik's lockup for this ground, then omni, genie and mykes as words,
+        // at one letter size; no pet, no head, no mark beside a product; "Coming soon." under Mykes.
+        await page.waitForFunction(() => [...document.querySelectorAll('[data-family-drawer] img')].filter(image => image.getClientRects().length).every(image => image.complete && image.naturalWidth > 0))
+        const seen = await page.evaluate(() => {
+          const drawer = document.querySelector('[data-family-drawer]'), shown = [...drawer.querySelectorAll('img')].filter(image => image.getClientRects().length)
+          return {
+            lock: parseFloat(getComputedStyle(drawer).getPropertyValue('--lock')), files: shown.map(image => image.currentSrc.split('/').pop()), heights: shown.map(image => image.getBoundingClientRect().height), alts: shown.map(image => image.alt),
+            every: [...document.querySelectorAll('.fam img, .fam source, .fam-world img')].map(node => node.getAttribute('src') ?? node.getAttribute('srcset') ?? node.dataset.src ?? node.dataset.srcset),
+            // Which pictures have their address: only the ones shown on this ground.
+            given: [...document.querySelectorAll('.fam img[src], .fam source[srcset], .fam-world img[src]')].map(node => (node.getAttribute('src') ?? node.getAttribute('srcset')).split('/').pop()),
+            waiting: document.querySelectorAll('.fam img[data-src], .fam source[data-srcset], .fam-world img[data-src]').length,
+            rows: [...drawer.querySelectorAll('.fam-list > li')].map(row => row.innerText.trim()), here: drawer.querySelector('[data-family-here] .fam-item').textContent.trim(), hereCurrent: drawer.querySelector('[data-family-here] .fam-item').getAttribute('aria-current'),
+            links: [...drawer.querySelectorAll('[data-family-links] a')].filter(link => link.getClientRects().length).map(link => link.getAttribute('href')),
+            // The host is Automagik: what stands in the top block, in order; whether the Automagik
+            // row is there; where Desktop and Mobile stand against the block's link; and where
+            // the label, Arca's line and Omni's line begin.
+            block: [...drawer.querySelector('[data-family-here]').children].map(node => node.className), row: drawer.querySelectorAll('.fam-top, .fam-home').length,
+            chips: (() => { const link = drawer.querySelector('[data-family-here] .fam-item').getBoundingClientRect(), first = drawer.querySelector('[data-family-here] .fam-apps .fam-chip').getBoundingClientRect(), mark = shown[0].getBoundingClientRect(); return { side: first.left - mark.left, under: first.top - link.bottom, hrefs: [...drawer.querySelectorAll('[data-family-here] .fam-apps .fam-chip')].map(chip => chip.getAttribute('href')) } })(),
+            starts: ['.fam > .eyebrow', '.fam-item.is-logo .fam-words > span:last-child', '.fam-item[href="/omni/"] .fam-words > span:last-child'].map(selector => { const node = drawer.querySelector(selector); return node.getBoundingClientRect().left + parseFloat(getComputedStyle(node).paddingLeft) }),
+            ark: (() => { const ark = drawer.querySelector('.fam-list > li:first-child .fam-item.is-logo .fam-logo svg'); return ark && { height: ark.getBoundingClientRect().height, name: ark.getAttribute('aria-label'), ink: getComputedStyle(ark).fill, text: getComputedStyle(drawer.querySelector('.fam-item.is-logo')).color, href: ark.closest('a').getAttribute('href') } })(),
+            current: [...drawer.querySelectorAll('[aria-current="page"]')].filter(node => !node.matches('.is-here')).map(node => node.getAttribute('href')),
+            inside: drawer.scrollWidth - drawer.clientWidth,
+          }
+        })
+        const tone = colorScheme === 'dark' ? 'cream' : 'ink', lockup = `automagik-lockup-three-colours-${tone}-${width <= 480 ? 48 : 64}.png`
+        assert.equal(seen.lock, width <= 480 ? 24 : 30)
+        // The host is Automagik: its lockup is shown once, in the top block, and it has no row.
+        assert.deepEqual(seen.files, [lockup, `omni-wordmark-${tone}.svg`, `genie-wordmark-${tone}.svg`, `mykes-wordmark-${tone}.svg`], `The drawer shows the lockup once and the three words for this ground: ${about}`)
+        assert.deepEqual(seen.alts, ['Automagik', 'Omni', 'Genie', 'Mykes'], `Each picture has its name: ${about}`)
+        assert.equal(seen.row, 0, `Automagik has no row under its own block: ${about}`)
+        assert.ok(Math.abs(seen.heights[0] - seen.lock) <= 0.5, `The lockup is drawn at its row's height: ${about} ${seen.heights}`)
+        assert.ok(Math.abs(seen.heights[1] - seen.lock) <= 0.5 && Math.abs(seen.heights[2] - seen.lock) <= 0.5 && Math.abs(seen.heights[3] - seen.lock * 257 / 264) <= 0.5, `The three words are one letter size: ${about} ${seen.heights}`)
+        // Desktop and Mobile stand in the top block, right under the link, in the block's side room.
+        assert.deepEqual(seen.block, ['fam-item is-here', 'fam-apps', 'fam-links'], `The top block holds the link, the two app buttons, then the pages: ${about}`)
+        assert.deepEqual(seen.chips.hrefs, ['/desktop/', '/mobile/'], about)
+        assert.ok(Math.abs(seen.chips.side) <= 0.5 && Math.abs(seen.chips.under - 8) <= 0.5, `Desktop and Mobile stand in the block's side room, under the link: ${about} ${JSON.stringify(seen.chips)}`)
+        // Arca is the first product, by its own logo in the text colour, and its line stands in
+        // the names' column with the label and the other lines.
+        assert.deepEqual(seen.ark && [seen.ark.name, seen.ark.href, seen.ark.ink === seen.ark.text], ['arca', '/arca/', true], `Arca is the first of the products, by its logo: ${about} ${JSON.stringify(seen.ark)}`)
+        assert.ok(Math.abs(seen.ark.height - seen.lock * 0.7) <= 0.5, `Arca's logo at the piece's height: ${about} ${seen.ark.height}`)
+        assert.ok(Math.abs(seen.starts[1] - seen.starts[0]) <= 0.5 && Math.abs(seen.starts[1] - seen.starts[2]) <= 0.5, `Arca's line stands in the names' column: ${about} ${seen.starts}`)
+        assert.ok(seen.every.every(file => /^\/assets\/family\/(?:automagik-lockup-three-colours-(?:cream|ink)-(?:48|64|128)\.png|(?:omni|genie|mykes)-wordmark-(?:cream|ink)\.svg)$/.test(file)) && seen.every.length === 12, `No pet, no head and no mark beside a product: ${about} ${seen.every}`)
+        assert.deepEqual(seen.rows, ['Be your own cloud. Infrastructure for AI agents.', 'Your chat apps, connected.', 'A wish, a branch, a report.', 'Coming soon.'], `Each product's line, "Coming soon." under Mykes: ${about}`)
+        assert.equal(seen.here, 'Open building blocks of superintelligence.You are here', `The top block is Automagik: ${about}`)
+        assert.equal(seen.hereCurrent, route === '/' ? 'page' : 'true')
+        assert.deepEqual(seen.links, phone ? ['/cloud/', '/desktop/#install', '/cloud/#privacy'] : [], `The site's other pages show in the drawer only where the header has no room: ${about}`)
+        assert.deepEqual(seen.current, route === '/' ? [] : [route], `The drawer marks the page being read: ${about}`)
+        assert.equal(seen.inside, 0, `Nothing in the drawer is wider than it: ${about}`)
+        // Opened, the drawer gives an address only to the pictures shown on this ground: the
+        // lockup (with its small file for a narrow window) and the three words. The other
+        // ground's four and the large lockup wait. Only those four files are fetched.
+        assert.deepEqual([seen.given, seen.waiting], [[`automagik-lockup-three-colours-${tone}-48.png`, `automagik-lockup-three-colours-${tone}-64.png`, `omni-wordmark-${tone}.svg`, `genie-wordmark-${tone}.svg`, `mykes-wordmark-${tone}.svg`], 7], `Only this ground's pictures have their address: ${about} ${JSON.stringify([seen.given, seen.waiting])}`)
+        assert.deepEqual([...new Set(art)].sort(), [lockup, `omni-wordmark-${tone}.svg`, `genie-wordmark-${tone}.svg`, `mykes-wordmark-${tone}.svg`].sort(), `Only the art for this ground is fetched: ${about} ${art}`)
+        if (width !== 320) await page.screenshot({ path: join(evidence, `drawer-${slug}-${width}-${colorScheme}.png`) })
+        // The keyboard stays in the drawer and reaches every one of its things.
+        const stops = new Set()
+        for (let press = 0; press < 30; press++) {
+          await page.keyboard.press('Tab')
+          stops.add(await page.evaluate(() => { const active = document.activeElement; return active.closest('[data-family-drawer]') ? `drawer:${active.getAttribute('href') ?? active.textContent}:${active.className}` : `behind:${active.outerHTML.slice(0, 60)}` }))
+        }
+        assert.deepEqual([...stops].filter(stop => stop.startsWith('behind:')), [], `Tab never lands behind the drawer: ${about}`)
+        assert.equal(stops.size, names.length, `Tab reaches everything in the drawer: ${about} ${[...stops]}`)
+        // Shift+Tab from the first stop goes round to Close, and Tab from Close back to the
+        // first: the piece's focus holds, with this site's own top block as the first stop.
+        await page.locator('[data-family-drawer] .fam-item.is-here').focus()
+        await page.keyboard.press('Shift+Tab')
+        const back = await page.evaluate(() => document.activeElement.hasAttribute('data-family-close'))
+        await page.keyboard.press('Tab')
+        const round = await page.evaluate(() => document.activeElement.matches('[data-family-drawer] .fam-item.is-here'))
+        // The second hold, on its own: the first stop loses the focus to nothing after a key,
+        // and the focus goes on to Close.
+        await page.evaluate(() => document.activeElement.blur())
+        const held = await page.waitForFunction(() => document.activeElement.hasAttribute('data-family-close'), null, { timeout: 2000 }).then(() => true, () => false)
+        assert.deepEqual([back, round, held], [true, true, true], `Shift+Tab from the first stop goes to Close, and Tab from Close to the first: ${about}`)
+        // Escape closes it and the focus is back on the button; Enter and Space open it.
         await page.keyboard.press('Escape')
-        state = await panelState(page, 'site-menu')
-        assert.ok(!state.open && state.focusButton === 'site-menu', `Escape closes the sheet and returns focus to Menu: ${label} ${width}px`)
-        assert.deepEqual(await behind(), { main: 'visible', footer: 'visible', scroll: 'visible' })
-        // Menu toggles the sheet, and a link in it goes to its page.
-        await menu.click(); await menu.click()
-        assert.ok(!(await panelState(page, 'site-menu')).open, `Menu closes the sheet again: ${label} ${width}px`)
-        await menu.click(); await page.locator('#site-menu .menu-item[href="/mobile/"]').click()
-        await page.waitForURL(origin + '/mobile/')
-        assert.ok(!(await panelState(page, 'site-menu')).open)
-        assert.equal(await page.locator('.crumbs [aria-current="page"]').innerText(), 'Mobile')
-      } finally { await phone.close() }
+        await closed('Escape closes the drawer and returns the focus to the button')
+        assert.equal(await expanded(cdp, 'Menu'), false)
+        for (const key of ['Enter', 'Space']) {
+          await page.keyboard.press(key)
+          now = await state()
+          assert.ok(now.open && now.focus === 'drawer' && now.inert && now.page === wide, `${key} opens the drawer: ${about} ${JSON.stringify(now)}`)
+          await page.keyboard.press('Escape')
+          await closed(`Escape closes the drawer opened with ${key}`)
+        }
+        // Close, a press beside the drawer and a second press on the button close it too.
+        await menu.click(); await page.locator('[data-family-close]').click()
+        await closed('Close closes the drawer')
+        await menu.click(); await page.mouse.click(wide + (width - wide) / 2, height - 60)
+        await closed('A press beside the drawer closes it')
+        if (width === 1440) {
+          await menu.click(); await page.mouse.click(rest.button.left + 24 + wide, rest.button.top + 24)
+          await closed('A press on the button beside the open drawer closes it')
+        }
+        // A product in the drawer goes to its page; the drawer is shut there.
+        await menu.click(); await page.locator('[data-family-drawer] .fam-item[href="/omni/"]').click()
+        await page.waitForURL(origin + '/omni/')
+        assert.equal(await page.locator('.crumbs [aria-current="page"]').innerText(), 'Omni')
+        assert.ok(!(await state()).open, `The drawer is shut on the page it led to: ${about}`)
+        if (phone && route === '/') {
+          // One of the site's other pages, from the list under the top block; then a place on
+          // the page being read: the drawer steps aside first, and the page goes there.
+          await page.locator('[data-family-open]').click(); await page.locator('[data-family-links] a[href="/cloud/"]').click()
+          await page.waitForURL(origin + '/cloud/')
+          await page.locator('[data-family-open]').click(); await page.locator('[data-family-links] a[href="#privacy"]').click()
+          await page.waitForFunction(() => location.hash === '#privacy')
+          const landed = await page.evaluate(() => ({ open: document.documentElement.classList.contains('is-family-open'), inert: document.querySelector('[data-family-page]').inert, hidden: document.querySelector('[data-family-drawer]').hidden, focus: document.activeElement.id }))
+          assert.deepEqual(landed, { open: false, inert: false, hidden: true, focus: 'privacy' }, `A place on this page closes the drawer and lands there: ${about}`)
+        }
+        assert.deepEqual(outside, [], `No external request from the drawer: ${about}`); assert.deepEqual(errors, [], about)
+      } finally { await view.close() }
     }
-    console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links, phone sheet`)
+    // With script off the button is a plain link to the page's own sitemap, the footer, and
+    // the drawer stays shut.
+    if (route === '/') {
+      const plain = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce', javaScriptEnabled: false })
+      try {
+        const page = await plain.newPage()
+        await page.goto(origin + route, { waitUntil: 'load' })
+        const link = page.locator('[data-family-open]')
+        assert.equal(await link.getAttribute('href'), '#sitemap'); assert.equal(await link.getAttribute('role'), null)
+        await link.click()
+        assert.ok(page.url().endsWith('/#sitemap') && !(await page.locator('[data-family-drawer]').isVisible()) && await page.locator('#sitemap').isVisible(), `With script off the button leads to the sitemap: ${label}`)
+      } finally { await plain.close() }
+    }
+    console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links; the family drawer by click, Enter, Space and Escape, the page pushed and out of reach, its art, script off`)
+  }
+  // The pager, by real clicks: Next from the first product page walks every product page this
+  // site builds, once each, and comes back; Previous walks the same round the other way. No
+  // step leaves the site's own pages: Arca's page is Arca's own and has no pager that leads
+  // back, so the round passes it by.
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context), page = await context.newPage(), round = routes.filter(route => route !== '/')
+      for (const [rel, order] of [['next', round], ['prev', [...round].reverse()]]) {
+        await page.goto(origin + order[0], { waitUntil: 'load' })
+        const walked = [order[0]]
+        for (let step = 0; step < round.length; step++) {
+          const link = page.locator(`.pager a[rel="${rel}"]`), href = await link.getAttribute('href')
+          await link.click()
+          await page.waitForURL(origin + href, { waitUntil: 'load' })
+          walked.push(new URL(page.url()).pathname)
+          assert.equal(await page.locator('.pager').count(), 1, `The pager's ${rel} leads to a page of this site with a pager of its own: ${href} from ${walked.at(-2)} ${width}px`)
+        }
+        assert.deepEqual(walked, [...order, order[0]], `The pager's ${rel} walks every product page once and comes back: ${width}px`)
+      }
+      assert.deepEqual(outside, [], `No external request from the pager: ${width}px`)
+    } finally { await context.close() }
+    console.log(`PASS pager ${width}px: next and previous walk this site's product pages, once each, and come back`)
+  }
+  // The logo in the header and the footer: the kit's lockup for small sizes, the triskle in
+  // colour with ink letters on the light page and cream ones on the dark page (read from the
+  // name's drawn colour, not only from the file's name), drawn at its own proportions. The triskle (222 of the file's 264 in height) keeps the size and the
+  // centred place it had, nothing in the header is pushed aside, and the browser's icons
+  // load from the site.
+  for (const colorScheme of ['light', 'dark']) for (const [width, header, footer] of [[1440, 32, 40], [1024, 32, 40], [390, 26, 34], [320, 23, 34]]) {
+    const label = `${colorScheme} ${width}px`
+    const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context)
+      const page = await context.newPage()
+      await page.goto(origin + '/', { waitUntil: 'load' })
+      await page.evaluate(() => Promise.all([...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
+      const logo = await page.evaluate(async () => {
+        // The colour the name is drawn in: the commonest solid pixel to the right of the triskle.
+        const word = image => {
+          const canvas = document.createElement('canvas'); canvas.width = 816; canvas.height = 132
+          const pen = canvas.getContext('2d'); pen.drawImage(image, 0, 0, canvas.width, canvas.height)
+          const from = Math.ceil(canvas.width * 300 / 1632.34), pixels = pen.getImageData(from, 0, canvas.width - from, canvas.height).data, seen = new Map()
+          for (let at = 0; at < pixels.length; at += 4) if (pixels[at + 3] === 255) { const colour = `${pixels[at]},${pixels[at + 1]},${pixels[at + 2]}`; seen.set(colour, (seen.get(colour) || 0) + 1) }
+          return [...seen].sort((one, other) => other[1] - one[1])[0]?.[0].split(',').map(Number) ?? null
+        }
+        // The ground the logo stands on: every background from the page down to the logo's own
+        // link, painted one over the other (a see-through one lets the one under it show).
+        const ground = image => {
+          const layers = []; for (let node = image.parentElement; node; node = node.parentElement) layers.unshift(getComputedStyle(node).backgroundColor)
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1
+          const pen = canvas.getContext('2d'); pen.fillStyle = '#fff'; pen.fillRect(0, 0, 1, 1)
+          for (const layer of layers) { pen.fillStyle = layer; pen.fillRect(0, 0, 1, 1) }
+          return [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)]
+        }
+        const place = scope => {
+          const link = document.querySelector(`${scope} .brand`), image = link.querySelector('img'), box = image.getBoundingClientRect(), frame = link.getBoundingClientRect()
+          return {
+            size: [box.width, box.height], top: box.top, hang: box.bottom - frame.bottom, right: box.right, file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, word: word(image), ground: ground(image),
+            effects: [link, image].map(node => { const style = getComputedStyle(node); return [style.filter, style.opacity, style.transform, style.mixBlendMode].join(' ') }),
+          }
+        }
+        const row = document.querySelector('.top-inner').getBoundingClientRect()
+        const shown = [...document.querySelectorAll('.top-inner > *')].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()).sort((one, other) => one.left - other.left)
+        const tabs = [...document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]')].map(link => new URL(link.href).pathname)
+        return {
+          top: place('.top'), foot: place('.footer-brand'), rowMiddle: row.top + row.height / 2, tabs,
+          apart: shown.every((box, index) => index === 0 || box.left >= shown[index - 1].right), inside: shown.at(-1).right <= innerWidth && shown[0].left >= 0,
+          column: document.querySelector('.footer-brand').getBoundingClientRect().right, over: document.documentElement.scrollWidth - innerWidth,
+        }
+      })
+      for (const [name, spot, mark] of [['header', logo.top, header], ['footer', logo.foot, footer]]) {
+        const unit = mark / 222, near = (value, wanted) => Math.abs(value - wanted) <= 0.6
+        assert.equal(spot.file, `automagik-lockup-three-colours-${colorScheme === 'dark' ? 'cream' : 'ink'}-header.svg`, `The logo's file follows the theme: ${name} ${label}`)
+        // The file's name is not enough: the name must be drawn dark on a light ground and light on a
+        // dark one, measured against the ground the logo itself stands on (the header's, the footer's).
+        const light = colour => colour.map(value => value / 255).map(value => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+        const against = spot.word && (Math.max(light(spot.word), light(spot.ground)) + 0.05) / (Math.min(light(spot.word), light(spot.ground)) + 0.05)
+        assert.ok(against >= 7, `The name is drawn in the theme's colour, clear against its own ground: ${name} ${label} ${JSON.stringify([spot.word, spot.ground, against])}`)
+        assert.ok(spot.drawn && near(spot.size[1], 264 * unit) && near(spot.size[0], 1632.34 * unit), `The logo's size, unstretched: ${name} ${label} ${spot.size}`)
+        assert.ok(near(spot.hang, name === 'header' ? 42 * unit : 0), `The g's tail hangs under the header's link and inside the footer's: ${name} ${label} ${spot.hang}`)
+        assert.deepEqual([...new Set(spot.effects)], ['none 1 none normal'], `Nothing is drawn over the logo: ${name} ${label}`)
+      }
+      assert.ok(Math.abs(logo.top.top + header / 2 - logo.rowMiddle) <= 0.6, `The triskle stays centred in the header: ${label} ${[logo.top.top, logo.rowMiddle]}`)
+      assert.ok(logo.apart && logo.inside && logo.over <= 0, `The wider logo pushes nothing aside: ${label} ${JSON.stringify([logo.apart, logo.inside, logo.over])}`)
+      assert.ok(logo.foot.right <= logo.column, `The footer's logo stays in its column: ${label} ${[logo.foot.right, logo.column]}`)
+      // The page's own policy allows no fetch from script, so the icons are asked for from here.
+      const tabs = []
+      for (const path of logo.tabs) { const answer = await context.request.get(origin + path); tabs.push([path, answer.status(), (await answer.body()).length > 0]) }
+      assert.deepEqual(tabs, [['/favicon.ico', 200, true], ['/favicon.svg', 200, true], ['/apple-touch-icon.png', 200, true], ['/site.webmanifest', 200, true]], `The browser's icons load: ${label}`)
+      // The keyboard's order in the header: the skip link, the family's menu button, the logo.
+      await page.keyboard.press('Tab'); await page.keyboard.press('Tab')
+      assert.equal(await page.evaluate(() => document.activeElement.className), 'fam-btn', `The menu button is the header's first stop: ${label}`)
+      await page.keyboard.press('Tab')
+      const ring = await page.evaluate(() => { const link = document.activeElement, style = getComputedStyle(link), box = link.getBoundingClientRect(), word = link.querySelector('img')?.getBoundingClientRect(); return { link: link.className, clears: word && box.bottom + parseFloat(style.outlineOffset) >= word.bottom, style: style.outlineStyle } })
+      assert.deepEqual(ring, { link: 'brand', clears: true, style: 'solid' }, `The focus ring goes round the whole logo: ${label} ${JSON.stringify(ring)}`)
+      assert.deepEqual(outside, [], `No outside request: ${label}`)
+      console.log(`PASS logo ${label}: the kit's file for the theme, its name drawn in the theme's colour, at its own proportions, header and footer in place, icons load`)
+    } finally { await context.close() }
+  }
+  // Genie's and Omni's own lockups: the heading of each one's page (the kit's large drawing)
+  // and the title of each one's card on the home page (the drawing for small sizes). The file
+  // follows the theme, except on Genie's card, which is dark in both themes. As for the logo
+  // above, the file's name is not enough: the name's drawn colour must stand clear of the
+  // ground it sits on. Each is drawn at its file's own proportions inside its column, at
+  // every width, with nothing drawn over it.
+  for (const colorScheme of ['light', 'dark']) for (const width of [1440, 1024, 900, 768, 390, 320]) {
+    const label = `${colorScheme} ${width}px`, tone = colorScheme === 'dark' ? 'cream' : 'ink'
+    const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context)
+      const page = await context.newPage()
+      const heading = Math.min(128, width * (width > 860 ? 0.118 : 0.23))
+      for (const [route, selector, stop, file, units, height] of [
+        ['/genie/', 'h1 .product-logo', null, `genie-lockup-three-colours-${tone}.svg`, 976.34, heading],
+        ['/omni/', 'h1 .product-logo', null, `omni-lockup-three-colours-${tone}.svg`, 916.53, heading],
+        ['/', '[data-block="omni"] h3 .product-logo', null, `omni-lockup-three-colours-${tone}-header.svg`, 916.53, 44],
+        ['/', '[data-block="genie"] h3 .product-logo', '--plum-2', 'genie-lockup-three-colours-cream-header.svg', 976.34, 44],
+      ]) {
+        await page.goto(origin + route, { waitUntil: 'load' })
+        await page.evaluate(() => Promise.all([...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
+        const seen = await page.evaluate(([selector, stop]) => {
+          const image = document.querySelector(selector), box = image.getBoundingClientRect(), holder = image.closest('h1, h3'), column = holder.getBoundingClientRect(), card = image.closest('[data-block]')
+          const canvas = document.createElement('canvas'); canvas.height = 132; canvas.width = Math.round(132 * box.width / box.height)
+          const pen = canvas.getContext('2d', { willReadFrequently: true })
+          // The ground the lockup stands on, as for the logo above: every background from the
+          // page down, painted one over the other. Genie's card is a gradient, which that
+          // cannot read, so its lightest stop is painted last: the hardest ground for cream letters.
+          const layers = []; for (let node = image.parentElement; node; node = node.parentElement) layers.unshift(getComputedStyle(node).backgroundColor)
+          if (stop) layers.push(getComputedStyle(card).getPropertyValue(stop))
+          pen.fillStyle = '#fff'; pen.fillRect(0, 0, 1, 1)
+          for (const layer of layers) { pen.fillStyle = layer; pen.fillRect(0, 0, 1, 1) }
+          const under = [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)]
+          // The colour the name is drawn in: the commonest solid pixel to the right of the triskle.
+          pen.clearRect(0, 0, canvas.width, canvas.height); pen.drawImage(image, 0, 0, canvas.width, canvas.height)
+          const from = Math.ceil(132 * 300 / 264), pixels = pen.getImageData(from, 0, canvas.width - from, canvas.height).data, colours = new Map()
+          for (let at = 0; at < pixels.length; at += 4) if (pixels[at + 3] === 255) { const colour = `${pixels[at]},${pixels[at + 1]},${pixels[at + 2]}`; colours.set(colour, (colours.get(colour) || 0) + 1) }
+          return {
+            file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, size: [box.width, box.height], under, name: image.alt, text: holder.textContent.trim(),
+            word: [...colours].sort((one, other) => other[1] - one[1])[0]?.[0].split(',').map(Number) ?? null,
+            inside: box.left >= column.left - 0.5 && box.right <= column.right + 0.5, over: document.documentElement.scrollWidth - innerWidth,
+            effects: [holder, image].map(node => { const style = getComputedStyle(node); return [style.filter, style.opacity, style.mixBlendMode].join(' ') }),
+          }
+        }, [selector, stop])
+        const spot = `${route} ${selector} ${label}`, near = (value, wanted) => Math.abs(value - wanted) <= 0.6
+        assert.equal(seen.file, file, `The lockup's file: ${spot}`)
+        const light = colour => colour.map(value => value / 255).map(value => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+        const against = seen.word && (Math.max(light(seen.word), light(seen.under)) + 0.05) / (Math.min(light(seen.word), light(seen.under)) + 0.05)
+        assert.ok(against >= 7, `The name is drawn clear against its ground: ${spot} ${JSON.stringify([seen.word, seen.under, against])}`)
+        assert.ok(seen.drawn && near(seen.size[1], height) && near(seen.size[0], height * units / 264), `The lockup's size, unstretched: ${spot} ${seen.size}`)
+        assert.ok(seen.inside && seen.over <= 0, `The lockup stays inside its column: ${spot} ${JSON.stringify([seen.inside, seen.over])}`)
+        assert.deepEqual([...new Set(seen.effects)], ['none 1 normal'], `Nothing is drawn over the lockup: ${spot}`)
+        assert.deepEqual([seen.name, seen.text], [file.startsWith('genie') ? 'Genie' : 'Omni', ''], `The lockup's text is the product's name, and the heading holds nothing else: ${spot}`)
+      }
+      assert.deepEqual(outside, [], `No outside request: ${label}`)
+      console.log(`PASS product lockups ${label}: Genie's and Omni's own files for the theme, the name clear against its ground, unstretched inside the column, page heading and home card`)
+    } finally { await context.close() }
+  }
+  // The triskle alone is the kit's drawing for the size shown, drawn and square: the 32 px
+  // drawing in the Products menu's Mykes entry, the large one in the Cloud and Mykes heroes.
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context)
+      const page = await context.newPage()
+      const seen = async selector => page.evaluate(async selector => {
+        const image = [...document.querySelectorAll(selector)].find(node => node.getClientRects().length)
+        if (!image) return null
+        await image.decode()
+        const box = image.getBoundingClientRect()
+        return [image.currentSrc.split('/').pop(), image.naturalWidth > 0, Math.round(box.width), Math.round(box.height)]
+      }, selector)
+      await page.goto(origin + '/', { waitUntil: 'load' })
+      await page.locator('[popovertarget="menu-products"]').click()
+      assert.deepEqual(await seen('.menu-item[href="/mykes/"] .menu-art'), ['triskle-three-colours-32.svg', true, 32, 32], `The Mykes entry's mark: ${colorScheme}`)
+      for (const [route, selector, size] of [['/cloud/', '.hero-mark', 300], ['/mykes/', '.coming-mark', 120]]) {
+        await page.goto(origin + route, { waitUntil: 'load' })
+        assert.deepEqual(await seen(selector), ['triskle-three-colours.svg', true, size, size], `The hero's mark: ${route} ${colorScheme}`)
+      }
+      assert.deepEqual(outside, [], `No outside request: marks ${colorScheme}`)
+      console.log(`PASS marks ${colorScheme}: the kit's triskle for the size shown, in the menu and the two heroes`)
+    } finally { await context.close() }
   }
   // The download hook, with real clicks and keys. A live platform opens its sheet: in the
   // middle of a wide window, rising from the bottom edge of a phone. A platform that is
@@ -448,13 +786,14 @@ try {
   console.log('PASS download hook motion: the sheet eases in for visitors who allow motion, appears at once otherwise, and ends in place')
   // The projects row. Every mark is the project's own file at its own proportions, the dark
   // file on a dark page. For a visitor who allows motion it is one line that drifts (slower on
-  // a phone, where every name is whole on screen as it passes), stops under the pointer and
-  // turns into the still list for the keyboard; with reduced motion it is the still, wrapped
-  // list. The copy that fills the gap is never reached.
+  // a phone, where every name is whole on screen for at least 7 s as it passes), stops under
+  // the pointer and turns into the still list for the keyboard; a pause switch under it holds
+  // it still for a tap, a click or the Space key. With reduced motion it is the still, wrapped
+  // list and there is no switch. The copy that fills the gap is never reached.
   const drift = {}
   for (const colorScheme of ['light', 'dark']) for (const [width, height] of [[1440, 900], [390, 844]]) for (const reducedMotion of ['no-preference', 'reduce']) {
     const label = `${width}px ${colorScheme} ${reducedMotion}`
-    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion })
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion, hasTouch: width < 700 })
     try {
       const outside = await guard(context), page = await context.newPage()
       await page.goto(origin + '/', { waitUntil: 'load' })
@@ -467,6 +806,8 @@ try {
           items: [...list.children].map(item => { const box = item.getBoundingClientRect(), image = item.querySelector('img'), drawn = image.getBoundingClientRect(); return { left: box.left, right: box.right, middle: Math.round(box.top + box.height / 2), width: box.width, file: new URL(image.currentSrc).pathname, loaded: image.naturalWidth > 0, ratio: image.naturalWidth / image.naturalHeight, drawn: [drawn.width, drawn.height], link: item.querySelector('a').getBoundingClientRect().height } }),
           wraps: style.flexWrap, copy: getComputedStyle(copy).display, running: list.getAnimations().map(animation => [animation.animationName, animation.playState]),
           lap: parseFloat(style.animationDuration), length: list.getBoundingClientRect().width, clear: track.clientWidth * (1 - 2 * edge / 100), overflow: document.documentElement.scrollWidth - innerWidth,
+          tall: document.querySelector('.we-use').getBoundingClientRect().height,
+          pause: (() => { const label = document.querySelector('.we-use-pause'), box = label.getBoundingClientRect(), input = label.querySelector('input'), over = input.getBoundingClientRect(); return { shown: getComputedStyle(label).display, size: [box.width, box.height], covered: over.width >= box.width - 0.5 && over.height >= box.height - 0.5, on: input.checked, says: label.innerText.trim(), inTrack: Boolean(label.closest('.we-use-track')) } })(),
         }
       })
       let state = await row()
@@ -479,6 +820,7 @@ try {
       })
       if (reducedMotion === 'reduce') {
         assert.deepEqual([state.wraps, state.copy, state.running], ['wrap', 'none', []], `Reduced motion: the still, wrapped list: ${label}`)
+        assert.equal(state.pause.shown, 'none', `Reduced motion: nothing moves, so there is no pause switch: ${label}`)
         for (const item of state.items) assert.ok(item.left >= 0 && item.right <= width, `Every item is on screen: ${label}`)
       } else {
         assert.deepEqual([state.wraps, state.copy, state.running], ['nowrap', 'flex', [['we-use-drift', 'running']]], `The row is one drifting line: ${label} ${JSON.stringify(state.running)}`)
@@ -486,16 +828,41 @@ try {
         // Slow enough to read: the widest item fits whole between the faded edges, with time to spare.
         const speed = state.length / state.lap, widest = Math.max(...state.items.map(item => item.width))
         drift[width] = speed
-        assert.ok(widest < state.clear && (state.clear - widest) / speed >= 4, `Each name is whole on screen for seconds as it passes: ${label} ${speed.toFixed(1)}px/s`)
+        const whole = (state.clear - widest) / speed, least = width < 700 ? 7 : 4
+        assert.ok(widest < state.clear && whole >= least, `Each name is whole on screen for at least ${least} s as it passes: ${label} ${speed.toFixed(1)}px/s ${whole.toFixed(1)}s`)
         if (width === 1440) {
           const band = await page.locator('.we-use-track').boundingBox()
           await page.mouse.move(band.x + band.width / 2, band.y + band.height / 2)
           assert.deepEqual((await row()).running, [['we-use-drift', 'paused']], `The row stops under the pointer: ${label}`)
           await page.mouse.move(0, 0)
         }
+        // The pause switch: a real checkbox under the row, a 44px target that the box itself
+        // covers. A tap on a phone (a click elsewhere) holds the row where it is, with nothing
+        // moved on the page; the Space key lets it go again, and the row drifts on.
+        assert.deepEqual([state.pause.shown, state.pause.covered, state.pause.on, state.pause.says, state.pause.inTrack], ['flex', true, false, 'Pause', false], `The pause switch is shown, off, outside the row: ${label} ${JSON.stringify(state.pause)}`)
+        assert.ok(state.pause.size[0] >= 44 && state.pause.size[1] >= 44, `The pause switch is a 44px target: ${label} ${state.pause.size}`)
+        // What assistive technology is told: one checkbox, named by its label, with its state.
+        const told = async () => {
+          const cdp = await context.newCDPSession(page), { nodes } = await cdp.send('Accessibility.getFullAXTree')
+          await cdp.detach()
+          return nodes.filter(node => !node.ignored && node.role?.value === 'checkbox').map(node => [node.name?.value, String(node.properties?.find(property => property.name === 'checked')?.value.value)])
+        }
+        assert.deepEqual(await told(), [['Pause', 'false']], `The switch is read out as a checkbox named Pause, not checked: ${label}`)
+        const box = page.getByRole('checkbox', { name: 'Pause', exact: true })
+        if (width < 700) await box.tap(); else await box.click()
+        await page.mouse.move(0, 0)
+        assert.deepEqual(await told(), [['Paused', 'true']], `Once on, it is read out as Paused, checked: ${label}`)
+        const held = await row()
+        assert.deepEqual([held.running, held.wraps, held.copy, held.pause.on, held.pause.says, held.tall], [[['we-use-drift', 'paused']], 'nowrap', 'flex', true, 'Paused', state.tall], `The switch holds the row still, in place: ${label} ${JSON.stringify([held.running, held.pause, held.tall])}`)
+        await page.getByRole('checkbox', { name: 'Paused', exact: true }).focus()
+        await page.keyboard.press('Space')
+        const freed = await row()
+        assert.deepEqual([freed.running, freed.wraps, freed.pause.on, freed.pause.says], [[['we-use-drift', 'running']], 'nowrap', false, 'Pause'], `Space lets the row go again: ${label} ${JSON.stringify([freed.running, freed.pause])}`)
+        await page.evaluate(() => document.activeElement.blur())
       }
       await page.screenshot({ path: join(evidence, `we-use-${width}-${colorScheme}-${reducedMotion === 'reduce' ? 'still' : 'drifting'}.png`) })
-      // The keyboard reaches the eleven links once, in order, and the row holds still while it is in it.
+      // The keyboard reaches the eleven links once, in order, and the row holds still while it is in it;
+      // then the pause switch, where there is one; then it leaves the row.
       await page.locator('.we-use-title').evaluate(node => { node.tabIndex = -1; node.focus() })
       const reached = []
       for (const { href } of used) {
@@ -505,6 +872,14 @@ try {
       assert.deepEqual(reached, used.map(({ href }) => [href, false, true]), `Tab walks the row once, each link on screen: ${label}`)
       state = await row()
       assert.deepEqual([state.wraps, state.copy, state.running], ['wrap', 'none', []], `With the keyboard in it the row is the still list: ${label}`)
+      if (reducedMotion !== 'reduce') {
+        // The next Tab is the pause switch: the ring goes round its pill, and with the keyboard
+        // out of the row the row drifts again.
+        await page.keyboard.press('Tab')
+        const ring = await page.evaluate(() => { const active = document.activeElement, pill = active.closest('.we-use-pause'), style = pill && getComputedStyle(pill); return { on: active.matches('.we-use-pause input:focus-visible'), ring: style && [style.outlineStyle, style.outlineWidth, style.outlineColor !== 'rgba(0, 0, 0, 0)'] } })
+        assert.deepEqual(ring, { on: true, ring: ['solid', '3px', true] }, `Tab reaches the pause switch and its focus ring shows: ${label} ${JSON.stringify(ring)}`)
+        assert.deepEqual((await row()).running, [['we-use-drift', 'running']], `With the keyboard on the switch the row drifts: ${label}`)
+      }
       await page.keyboard.press('Tab')
       assert.equal(await page.evaluate(() => Boolean(document.activeElement.closest('.we-use'))), false, `The copy is never reached: ${label}`)
       assert.deepEqual(outside, [], `The row asks nothing of another site: ${label}`)
@@ -531,7 +906,7 @@ try {
       for (const route of routes) {
         const label = `${route} ${width}px`
         await page.goto(origin + route, { waitUntil: 'load' })
-        await page.evaluate(() => Promise.all([...document.images].map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
+        await page.evaluate(() => Promise.all([...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
         const seen = { held: 0, driven: 0, timed: 0 }
         for (let top = 0, last = false; !last; top += 160) {
           const step = await page.evaluate(async top => {
@@ -559,7 +934,7 @@ try {
         if (route === '/') assert.ok(seen.timed > 0, `The home's stage moves on its own: ${label}`)
         assert.equal(await page.evaluate(() => window.__shift), 0, `No layout shift with motion: ${label}`)
         // Arca's logo is never animated.
-        assert.deepEqual(await page.evaluate(() => document.getAnimations().map(animation => animation.effect.target).filter(element => element.closest?.('.arca-mark')).length), 0, `Arca's logo stays still: ${label}`)
+        assert.deepEqual(await page.evaluate(() => document.getAnimations().map(animation => animation.effect.target).filter(element => element.closest?.('.arca-ark, .fam-logo')).length), 0, `Arca's logo stays still: ${label}`)
       }
       // Page to page: the browser's cross-document transition runs to its end (a name used
       // twice on a page would skip it), and the character named on both pages is one of a kind.
@@ -569,20 +944,21 @@ try {
       let arrived = ''
       for (let attempt = 0; attempt < 3 && arrived !== 'finished'; attempt++) {
         await page.goto(origin + '/', { waitUntil: 'load' })
-        assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on the home: ${width}px`)
+        assert.deepEqual(await names(), { root: 1, 'site-top': 1, 'fb-bar': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on the home: ${width}px`)
         if (width > 860) { await page.locator('[popovertarget="menu-products"]').click(); await page.locator('#menu-products .menu-item[href="/genie/"]').click() }
-        else { await page.locator('.menu-open').click(); await page.locator('#site-menu .menu-item[href="/genie/"]').click() }
+        else { await page.locator('[data-family-open]').click(); await page.locator('[data-family-drawer] .fam-item[href="/genie/"]').click() }
         await page.waitForURL(origin + '/genie/')
         await page.waitForFunction(() => window.__arrived === 'finished' || window.__arrived === 'skipped' || window.__arrived === 'plain')
         arrived = await page.evaluate(() => window.__arrived)
       }
       assert.equal(arrived, 'finished', `The page-to-page transition runs: ${width}px`)
-      assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on a product page: ${width}px`)
+      assert.deepEqual(await names(), { root: 1, 'site-top': 1, 'fb-bar': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on a product page: ${width}px`)
       // The menu eases in and settles fully shown, in place.
-      const opener = width > 860 ? '[popovertarget="menu-products"]' : '.menu-open', eased = width > 860 ? '#menu-products .menu-card' : '#site-menu'
+      // On a phone the menu is the family drawer: it slides in from the left edge.
+      const opener = width > 860 ? '[popovertarget="menu-products"]' : '[data-family-open]', eased = width > 860 ? '#menu-products .menu-card' : '[data-family-drawer]'
       await page.locator(opener).click()
       assert.notEqual(await page.locator(eased).evaluate(node => getComputedStyle(node).transitionDuration), '0s', `The menu has an entrance: ${width}px`)
-      await page.waitForFunction(selector => { const style = getComputedStyle(document.querySelector(selector)); return style.opacity === '1' && style.translate === 'none' }, eased)
+      await page.waitForFunction(selector => { const style = getComputedStyle(document.querySelector(selector)); return style.opacity === '1' && style.translate === 'none' && style.transform === 'none' }, eased)
       assert.deepEqual(outside, []); assert.deepEqual(errors, [])
       console.log(`PASS motion ${width}px: every page scrolled; scroll-driven and timed motion run; layout shift 0; nothing left dim; page transition and menu entrance`)
     } finally { await context.close() }
@@ -604,7 +980,14 @@ try {
     await page.getByRole('button', { name: /Register my interest/ }).click()
     assert.equal((await failure).status(), 503)
     await page.getByRole('heading', { name: 'Registration is unavailable' }).waitFor()
-    assert.doesNotMatch(await page.locator('main').innerText(), /Your interest is confirmed/)
+    // The answer page carries the site's logo at the header's size, and none of the retired pictures.
+    const answerLogo = await page.evaluate(async () => {
+      await Promise.all([...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => image.decode()))
+      const image = document.querySelector('.top .brand img')
+      return { height: image.getBoundingClientRect().height, file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, pictures: [...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => new URL(image.currentSrc).pathname) }
+    })
+    assert.ok(Math.abs(answerLogo.height - 26 * 264 / 222) <= 0.6 && answerLogo.drawn && answerLogo.file === 'automagik-lockup-three-colours-ink-header.svg', `The answer page's logo is the header's: ${JSON.stringify(answerLogo)}`)
+    assert.deepEqual(answerLogo.pictures.filter(source => /\.webp$/.test(source)), [], 'No answer page shows a retired picture')
     bindingMode = 'ready'
     await fill()
     const success = page.waitForResponse(response => response.url() === origin + '/api/waitlist' && response.request().method() === 'POST')

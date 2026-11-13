@@ -32,9 +32,9 @@ const TEAM = {
 // starts in the team workspace unless it is made with a cwd. `services` are what
 // ctx.get finds, such as the sandbox policy and approvals.
 // `locked`: another dsh holds the team, so this one only shows it.
-async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, locked = false } = {}) {
+async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, locked = false, root: rootDir } = {}) {
   // The native realpath, as fs/promises uses: on Windows the JS one keeps 8.3 short names.
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-work-dir-')))
+  const root = rootDir ?? realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-work-dir-')))
   const dsh = join(root, 'dsh')
   const home = join(dsh, 'bot')
   const team = join(home, 'workspace')
@@ -162,6 +162,120 @@ const approvalServices = (outcome, { policy = 'on-request', mode = 'workspace-wr
   }
 }
 const notAllowed = path => `Working in ${path} was not allowed, so nothing changed. The user can make this change in the settings.`
+
+// Model an already registered workspace that contains or equals a protected root.
+// The desktop case nests a separate protected root inside the default workspace.
+async function dataWorkspace(t, layout, services = {}) {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ds-bot-work-dir-')))
+  const dsh = join(root, 'dsh')
+  const home = join(dsh, 'bot')
+  const workspace = { parent: root, dsh, team: home, desktop: join(home, 'workspace') }[layout]
+  const previous = process.env.DS_BOT_USER_DSH_HOME
+  const desktop = join(workspace, 'user-dsh')
+  if (layout === 'desktop') process.env.DS_BOT_USER_DSH_HOME = desktop
+  t.after(() => {
+    if (previous === undefined) delete process.env.DS_BOT_USER_DSH_HOME
+    else process.env.DS_BOT_USER_DSH_HOME = previous
+  })
+  const env = await start({ root, services, workspaces: [{ id: 'w9', path: workspace }], team: { ...TEAM, workspaceId: 'w9' } })
+  t.after(env.stop)
+  assert.equal(env.ctx.workspaceRegistry.get('w9').path, workspace)
+  const guarded = [dsh, join(dsh, 'profiles'), home, join(home, 'memory')]
+  if (layout === 'desktop') guarded.push(desktop, join(desktop, 'profiles'))
+  for (const path of guarded) mkdirSync(path, { recursive: true })
+  return { ...env, guarded }
+}
+
+test('data-root working folders stay guarded when the workspace contains or equals them', async (t) => {
+  for (const layout of ['parent', 'dsh', 'team', 'desktop']) await t.test(layout, async (t) => {
+    const { service, sets } = folderService()
+    const env = await dataWorkspace(t, layout, { workingDirectory: service })
+    const agent = env.agentOf('b')
+    const cwd = service.get(agent.session)
+    for (const path of env.guarded) {
+      const result = await env.call('update-bot', { id: 'b', workDir: path })
+      assert.equal(result.error?.message, `${path} holds DeepSeek Harness data, so Bots cannot work there`)
+      assert.equal(env.state().bots.b.workDir, undefined)
+      assert.deepEqual(await changeDirectory(env.ctx, service, agent, path), {
+        error: `${path} holds DeepSeek Harness data, so Bots cannot work there`, ran: false,
+      })
+      assert.equal(service.get(agent.session), cwd)
+      assert.equal(env.state().bots.b.workDir, undefined)
+      assert.deepEqual(sets, [])
+    }
+    // Realpath resolution must keep a link to guarded data closed as well.
+    const link = join(env.root, 'data-link')
+    symlinkSync(join(env.home, 'memory'), link, 'junction')
+    assert.match((await env.call('update-bot', { id: 'b', workDir: link })).error?.message, /holds DeepSeek Harness data/)
+    assert.deepEqual(await changeDirectory(env.ctx, service, agent, link), {
+      error: `${join(env.home, 'memory')} holds DeepSeek Harness data, so Bots cannot work there`, ran: false,
+    })
+    // A matching name prefix is not containment in the protected DSH root.
+    const sibling = env.dsh + '2'
+    mkdirSync(sibling)
+    for (const path of [env.project, sibling]) {
+      assert.equal((await env.call('update-bot', { id: 'b', workDir: path })).value?.workDir, path)
+      assert.equal(env.state().bots.b.workDir, path)
+    }
+  })
+})
+
+test('data-root avatar reads stay guarded when the workspace contains or equals them', async (t) => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  for (const layout of ['parent', 'dsh', 'team', 'desktop']) await t.test(layout, async (t) => {
+    const env = await dataWorkspace(t, layout)
+    for (const path of env.guarded) {
+      const pic = join(path, 'pic.png')
+      writeFileSync(pic, png)
+      assert.equal(await env.tool('update_bot', { avatar: pic }, 'b'),
+        `Could not update the Bot: ${pic} is in DeepSeek Harness data, so it cannot be a Bot's photo. Pass an image from another folder.`)
+      assert.equal(env.state().bots.b.avatar, undefined)
+    }
+    const sibling = env.dsh + '2'
+    mkdirSync(sibling)
+    for (const path of [env.project, sibling]) {
+      const pic = join(path, 'pic.png')
+      writeFileSync(pic, png)
+      assert.equal(await env.tool('update_bot', { avatar: pic }, 'b'), 'Updated Writer.')
+      assert.equal(env.state().bots.b.avatar.image, `data:image/png;base64,${png.toString('base64')}`)
+    }
+  })
+  await t.test('default workspace inside data permits photos', async (t) => {
+    const env = await start()
+    t.after(env.stop)
+    const pic = join(env.team, 'pic.png')
+    writeFileSync(pic, png)
+    assert.equal(await env.tool('update_bot', { avatar: pic }, 'b'), 'Updated Writer.')
+  })
+})
+
+test('missing sandbox policy asks before leaving the workspace and refuses without approval', async (t) => {
+  for (const outcome of [undefined, 'allowed-once', 'rejected', 'cancelled', 'unavailable']) await t.test(String(outcome), async (t) => {
+    const { requests, services } = approvalServices(outcome)
+    const env = await start({ services: outcome === undefined ? {} : { approval: services.approval } })
+    t.after(env.stop)
+    const result = await env.tool('update_bot', { work_dir: env.project }, 'b')
+    if (outcome === 'allowed-once') {
+      assert.equal(result, `Updated Writer. From your next step on, you work in ${env.project}.`)
+      assert.equal(env.state().bots.b.workDir, env.project)
+    } else {
+      assert.match(result, /^Could not update the Bot:/)
+      assert.match(result, /nothing changed/)
+      assert.equal(env.state().bots.b.workDir, undefined)
+      assert.deepEqual(env.created, [])
+    }
+    assert.equal(requests.length, outcome === undefined ? 0 : 1)
+    if (requests.length) {
+      assert.equal(requests[0].reason, `Let Writer work in ${env.project}? Files there can then be changed.`)
+      assert.equal(requests[0].toolName, 'update_bot')
+      assert.equal(requests[0].callId, 'c1')
+    }
+    const inside = join(env.team, 'site')
+    mkdirSync(inside)
+    assert.equal(await env.tool('update_bot', { work_dir: inside }, 'b'), `Updated Writer. From your next step on, you work in ${inside}.`)
+    assert.equal(requests.length, outcome === undefined ? 0 : 1)
+  })
+})
 
 test('DSH_HOME is read as DSH reads it', () => {
   const dsh = join(homedir(), '.dsh')

@@ -7,15 +7,32 @@ import { join } from 'node:path'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { HermesTransport, RemoteChat, LOST, HERMES_DEADLINES, INVALID_FRAME } from '../src/host/hermes-transport.js'
 import { remoteApproval, RemoteChatAdapter } from '../src/host/remote-chat-adapter.js'
+import { Context } from '@deepseek-ai/cordis'
+import { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
+import { Session } from '@deepseek-ai/dsh-session'
 import { install } from '../src/host/hermes-remote.js'
 import { fallbackFor } from '../src/host/fallback.js'
 import { routeOf, selectorRouteOf, crossesHarness } from '../src/shared/routes.js'
+import { markOf, judgeOf } from '../src/shared/permission-levels.js'
 import { contractPin, differences, USED_METHODS } from '../scripts/hermes-contract.mjs'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 import { desktop8Session } from './fixtures/hermes-desktop8.mjs'
 
 // All addresses and secrets are generated per test. No network or Hermes process is used.
+// A wait that ends. A frame that never comes fails the test after five seconds, or at once
+// with the error of the work it waited on, instead of polling for ever.
+async function until(predicate, what, work) {
+  let failed
+  work?.then(undefined, error => { failed = error ?? Error(`Failed before ${what}`) })
+  const deadline = Date.now() + 5000
+  while (!predicate()) {
+    if (failed) throw failed
+    assert.ok(Date.now() < deadline, `Timed out waiting for ${what}`)
+    await new Promise(resolve => setImmediate(resolve))
+  }
+}
+
 function fixture(t, overrides = {}) {
   const credential = overrides.credential ?? randomUUID(), ticket = randomUUID()
   const address = `https://${randomUUID()}.invalid`
@@ -105,15 +122,28 @@ test('expired authentication and connection exceptions have distinct safe errors
   }
 })
 
-test('wrong Desktop version and canonical authority are refused before any submit', async t => {
-  for (const snapshot of [{ info: { desktop_contract: 7 } }, { info: { desktop_contract: 9 } }, { info: {} }, { protocol: 'hermes-gateway-v1' }]) {
+test('an older Desktop contract is too old, a newer one still chats, and a gateway that owns sessions is refused', async t => {
+  for (const snapshot of [{ info: { desktop_contract: 7 } }, { info: {} }]) {
     const f = fixture(t, { snapshot }); await f.wire.connect()
-    await assert.rejects(f.run.submit('Never sent'), /contract 8|Canonical/)
+    await assert.rejects(f.run.submit('Never sent'), error => error.code === 'bot/hermes-outdated' && /Update Hermes/.test(error.message))
     assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
   }
+  // A contract difference that still lets chat work is not an error.
+  const newer = fixture(t, { snapshot: { info: { desktop_contract: 9 } } }); await newer.wire.connect()
+  await newer.run.submit('Sent')
+  assert.equal(newer.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
+  const gateway = fixture(t, { snapshot: { protocol: 'hermes-gateway-v1' } }); await gateway.wire.connect()
+  await assert.rejects(gateway.run.submit('Never sent'), error => error.code === 'bot/hermes-unsupported' && /hermes serve/.test(error.message))
+  assert.ok(!gateway.sent.some(frame => frame.method === 'prompt.submit'))
   const f = fixture(t, { ready: { session_authority: true } })
-  await assert.rejects(f.wire.connect(), /Canonical-authority/)
+  await assert.rejects(f.wire.connect(), /gateway that owns its sessions/)
   assert.equal(f.sent.length, 0)
+})
+
+test('a Hermes that names no approval requests still connects: whether it asks is its own setting', async t => {
+  const f = fixture(t, { handle: (frame, socket) => { if (frame.method !== 'client.capabilities') return false; queueMicrotask(() => socket.reply(frame, { server_requests: [] })); return true } })
+  await f.wire.connect(); await f.run.submit('Sent')
+  assert.equal(f.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
 })
 
 test('unanswered startup and control requests are bounded', async t => {
@@ -172,31 +202,158 @@ test('ignored Stop stays unknown; an interrupt acknowledgment does not prove rem
   assert.equal((await f.run.next()).text, LOST)
 })
 
-test('Full access answers once, restrictive no-ask denies, manual uses DSH approval', async () => {
-  let requests = 0
-  const agent = { session: {} }
-  const ask = async (policy, sandbox, preset, result = 'allowed-once') => remoteApproval({ get: name => ({
-    approval: { effectivePolicy: () => policy, request: async () => { requests++; return result } },
-    sandboxPolicy: { resolve: () => ({ mode: sandbox }) }, permissionPresets: { current: () => preset },
-  })[name] }, agent, { request_id: 'question', command: 'sample' })
-  assert.equal(await ask('never', 'danger-full-access', 'full'), 'once')
-  assert.equal(await ask('never', 'read-only', 'read-only'), 'deny')
-  assert.equal(requests, 0)
-  assert.equal(await ask('ask', 'workspace-write', 'manual'), 'once')
-  assert.equal(await ask('ask', 'workspace-write', 'manual', 'rejected'), 'deny')
-  assert.equal(await ask('never', 'danger-full-access', 'auto'), 'deny')
-  assert.equal(requests, 2)
+test('Auto is not a level of a Remote Hermes chat: its route has no Auto mark, so no judge is offered there', () => {
+  // Auto is offered only for a model with a mark (auto.js autoOffer); a judge that answered a
+  // Hermes question would answer for the person.
+  assert.equal(markOf('hermes-remote/sample-model'), undefined)
+  assert.equal(judgeOf(markOf('hermes-remote/sample-model')), undefined)
+  assert.equal(routeOf('hermes-remote').connectedBy, 'hermes-remote')
 })
 
-test('an unanswered server approval is denied within control deadline and duplicates answer once', async t => {
-  const f = fixture(t, { question: () => new Promise(() => {}) })
+test('no chat level answers a Hermes question for the person: an asking level uses the approval card, a never-ask level a chat question', async () => {
+  const agent = { session: {} }
+  const ask = async (policy, sandbox, preset, { card = 'allowed-once', pick = { selected: ['Allow once'] }, questions = true } = {}) => {
+    const cards = [], asked = []
+    const choice = await remoteApproval({ get: name => ({
+      approval: { effectivePolicy: () => policy, request: async request => { cards.push(request); return card } },
+      userQuestions: questions ? { ask: async request => { asked.push(request); if (pick instanceof Error) throw pick; return { answers: [{ id: request.questions[0].id, ...pick }] } } } : undefined,
+      sandboxPolicy: { resolve: () => ({ mode: sandbox }) }, permissionPresets: { current: () => preset },
+    })[name] }, agent, { request_id: 'question', command: 'sample command' })
+    return { choice, cards: cards.length, asked }
+  }
+  // Every level that never asks, Full access included: the person is asked, and their answer is the answer.
+  for (const [sandbox, preset] of [['danger-full-access', 'full'], ['read-only', 'read-only'], ['workspace-write', 'workspace-write'], ['danger-full-access', 'auto']]) {
+    const yes = await ask('never', sandbox, preset)
+    assert.deepEqual([yes.choice, yes.cards, yes.asked.length], ['once', 0, 1], `${preset}: allowed by the person`)
+    const [question] = yes.asked[0].questions
+    assert.equal(yes.asked[0].agent, agent)
+    assert.equal(yes.asked[0].questions.length, 1)
+    assert.equal(question.detail, 'sample command', 'the question says what Hermes asked')
+    assert.deepEqual(question.options, [{ label: 'Allow once' }, { label: 'Deny' }])
+    assert.deepEqual(question.intent, { kind: 'approval', approve: 'Allow once', reject: 'Deny', subject: { name: 'Remote Hermes' } })
+    const no = await ask('never', sandbox, preset, { pick: { selected: ['Deny'] } })
+    assert.deepEqual([no.choice, no.cards, no.asked.length], ['deny', 0, 1], `${preset}: refused by the person`)
+  }
+  // Only the person's own Allow is a yes: typed text, no pick, two picks or a closed question are not.
+  for (const pick of [{ selected: [], custom: 'Allow once' }, { selected: [] }, { selected: ['Allow once', 'Deny'] }, { selected: ['Allow once'], custom: 'but not this' }, Error('Sample closed question')]) {
+    assert.equal((await ask('never', 'danger-full-access', 'full', { pick })).choice, 'deny')
+  }
+  // With nobody to ask, nothing runs.
+  assert.deepEqual(await ask('never', 'danger-full-access', 'full', { questions: false }), { choice: 'deny', cards: 0, asked: [] })
+  assert.equal(await remoteApproval({ get: () => undefined }, undefined, { request_id: 'question' }), 'deny')
+  // A level that asks keeps the chat's approval card.
+  for (const [card, choice] of [['allowed-once', 'once'], ['allowed', 'once'], ['rejected', 'deny']]) {
+    const shown = await ask('ask', 'workspace-write', 'manual', { card })
+    assert.deepEqual([shown.choice, shown.cards, shown.asked.length], [choice, 1, 0], card)
+  }
+})
+
+test('a failed Hermes chat question is denied and diagnosed without logging remote data', async () => {
+  const secret = randomUUID()
+  for (const [error, code] of [
+    [new TypeError(secret), 'TypeError'],
+    [Object.assign(Error(secret), { code: 'NO_PROVIDER' }), 'NO_PROVIDER'],
+    [Object.assign(Error(secret), { name: secret, code: secret }), 'Error'],
+  ]) {
+    const warnings = []
+    const ctx = {
+      get: name => name === 'userQuestions' ? { ask: async () => { throw error } } : undefined,
+      logger: { warn: (...args) => warnings.push(args) },
+    }
+    assert.equal(await remoteApproval(ctx, { session: { header: {} } }, { command: secret }), 'deny')
+    assert.deepEqual(warnings, [['ds-bot: Remote Hermes question failed (%s); the remote tool was denied.', code]])
+    assert.ok(!JSON.stringify(warnings).includes(secret), 'arbitrary error text and codes cannot echo remote data')
+  }
+  const ctx = { get: name => name === 'userQuestions' ? { ask: async () => { throw Error(secret) } } : undefined, logger: { warn() { throw Error('Sample logger failure') } } }
+  assert.equal(await remoteApproval(ctx, { session: { header: {} } }, { command: secret }), 'deny', 'a broken logger cannot turn a denial into an uncaught error')
+})
+
+test('at a never-ask level Hermes’s question passes DSH’s real question service, and the person’s answer goes back', async t => {
+  const ctx = new Context(), agent = { id: 'sample-agent', session: Session.create('sample-agent') }, requests = []
+  let answer
+  await ctx.plugin({ name: 'sample-agents', apply(child) { child.provide('agents'); child.set('agents', { get: id => id === agent.id ? agent : undefined, list: () => [agent], roots: () => [agent] }) } })
+  await ctx.plugin(UserQuestionService)
+  ctx.provide('approval'); ctx.set('approval', { effectivePolicy: () => 'never', request: async () => assert.fail('a never-ask level has no approval card') })
+  ctx.on('user-questions/request', request => { requests.push(request); return answer(request) })
+  const f = fixture(t)
+  const adapter = new RemoteChatAdapter({ ctx }, {
+    enabled: () => true, models: () => [{ id: 'sample:model', model: 'model', provider: 'sample' }],
+    identity: () => f.identity, save: async () => {},
+    open: async options => { await f.wire.connect(); return new RemoteChat(f.wire, options) },
+  })
+  t.after(() => adapter.dispose())
+  const stream = adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, messages: [{ role: 'user', content: 'Sample' }] }))
+  const first = stream.next()
+  await until(() => f.sent.some(frame => frame.method === 'prompt.submit'), 'the adapter to submit', first)
+  const question = id => ({ jsonrpc: '2.0', id, method: 'approval', params: { session_id: f.identity.runtimeSessionId, request_id: `approval-${id}`, command: 'rm sample.txt', description: 'Delete sample.txt' } })
+  const settle = async () => { for (let turn = 0; turn < 6; turn++) await new Promise(resolve => setImmediate(resolve)) }
+  for (const [id, label, choice] of [['srq-yes', 'Allow once', 'once'], ['srq-no', 'Deny', 'deny']]) {
+    answer = request => ({ answers: [{ id: request.questions[0].id, selected: [label] }] })
+    f.socket().frame(question(id)); await settle()
+    assert.deepEqual(f.sent.filter(frame => frame.id === id), [{ jsonrpc: '2.0', id, result: { choice } }], label)
+  }
+  // The real service took the request as an approval question: one question, two fixed answers.
+  assert.equal(requests.length, 2)
+  assert.equal(requests[0].agent, agent, 'the adapter passes the exact live registry agent, including its Session header')
+  assert.equal(requests[0].agent.session.header, agent.session.header)
+  assert.equal(requests[0].questions[0].intent.kind, 'approval')
+  assert.equal(requests[0].questions[0].detail, 'Delete sample.txt')
+  // A question Hermes withdraws closes in the chat, and a late answer is not sent.
+  let late
+  answer = request => new Promise(resolve => { late = { resolve, signal: request.signal } })
+  f.socket().frame(question('srq-late')); await settle()
+  assert.equal(late.signal.aborted, false)
+  f.socket().event('request.cancel', { id: 'srq-late', method: 'approval', reason: 'timeout' })
+  assert.equal(late.signal.aborted, true)
+  late.resolve({ answers: [{ id: 'approval-srq-late', selected: ['Allow once'] }] }); await settle()
+  assert.deepEqual(f.sent.filter(frame => frame.id === 'srq-late'), [])
+  f.socket().event('message.complete', { text: 'Done' })
+  await first
+  const chunks = await Array.fromAsync(stream)
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+})
+
+test('a Hermes approval question waits for the person: no deadline answers for them, and the answer goes back once', async t => {
+  const asked = []
+  const f = fixture(t, { question: (params, withdrawn) => new Promise(resolve => asked.push({ params, withdrawn, resolve })) })
   f.wire.deadlines.control = 5
   await f.wire.connect(); await f.run.prepare()
-  const question = { jsonrpc: '2.0', id: 'srq-sample', method: 'approval', params: { session_id: f.identity.runtimeSessionId, request_id: 'approval-sample', choices: ['once', 'deny'] } }
-  f.socket().frame(question); f.socket().frame(question)
-  await new Promise(resolve => setTimeout(resolve, 20))
-  assert.deepEqual(f.sent.filter(frame => frame.id === question.id), [{ jsonrpc: '2.0', id: question.id, result: { choice: 'deny' } }])
-  assert.ok(!f.sent.some(frame => /approval.*(mode|set)/.test(frame.method ?? '')))
+  const question = id => ({ jsonrpc: '2.0', id, method: 'approval', params: { session_id: f.identity.runtimeSessionId, request_id: `approval-${id}`, command: 'sample command', choices: ['once', 'deny'] } })
+  f.socket().frame(question('srq-a')); f.socket().frame(question('srq-a'))
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal(asked.length, 1, 'a repeated question is asked once')
+  assert.equal(asked[0].params.command, 'sample command')
+  assert.deepEqual(f.sent.filter(frame => frame.id === 'srq-a'), [], 'well past the control deadline, nothing was answered for the person')
+  asked[0].resolve('once'); await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(f.sent.filter(frame => frame.id === 'srq-a'), [{ jsonrpc: '2.0', id: 'srq-a', result: { choice: 'once' } }])
+  f.socket().frame(question('srq-b')); await new Promise(resolve => setImmediate(resolve))
+  asked[1].resolve('deny'); await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(f.sent.filter(frame => frame.id === 'srq-b'), [{ jsonrpc: '2.0', id: 'srq-b', result: { choice: 'deny' } }])
+  // Hermes withdraws a question: the card is told, and a late answer is not sent.
+  f.socket().frame(question('srq-c')); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(asked[2].withdrawn.aborted, false)
+  f.socket().event('request.cancel', { id: 'srq-c', method: 'approval', reason: 'timeout' })
+  assert.equal(asked[2].withdrawn.aborted, true)
+  asked[2].resolve('once'); await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(f.sent.filter(frame => frame.id === 'srq-c'), [])
+  assert.ok(!f.sent.some(frame => /approval.*(mode|set)|config\.set/.test(frame.method ?? '')), 'Hermes’s own settings are never changed')
+})
+
+test('a Hermes approval question reaches the chat’s approval card and the person’s answer goes back', async t => {
+  for (const [outcome, choice] of [['allowed-once', 'once'], ['rejected', 'deny']]) {
+    const requests = [], agent = { session: {} }
+    const ctx = { get: name => ({ approval: { effectivePolicy: () => 'ask', request: async request => { requests.push(request); return outcome } }, sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, permissionPresets: { current: () => 'workspace-write' } })[name] }
+    const f = fixture(t, { question: (params, withdrawn) => remoteApproval(ctx, agent, params, withdrawn) })
+    await f.wire.connect(); await f.run.prepare()
+    f.socket().frame({ jsonrpc: '2.0', id: 'srq-card', method: 'approval', params: { session_id: f.identity.runtimeSessionId, request_id: 'approval-card', command: 'rm sample.txt', description: 'Delete sample.txt' } })
+    await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve))
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].agent, agent)
+    assert.match(requests[0].reason, /Delete sample\.txt/, 'the card says what Hermes asked')
+    assert.equal(requests[0].callId, 'approval-card')
+    assert.ok(requests[0].signal instanceof AbortSignal)
+    assert.deepEqual(f.sent.filter(frame => frame.id === 'srq-card'), [{ jsonrpc: '2.0', id: 'srq-card', result: { choice } }], outcome)
+  }
 })
 
 test('redaction covers ticket/token echoes, nested headers, URL and JSON forms, RPC failures', async t => {
@@ -221,7 +378,7 @@ test('DSH adapter produces a real mirror tool card then continues the same remot
   const options = markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: 'sample-chat', messages: [{ role: 'user', content: 'Sample' }] })
   const stream = adapter.stream(options)
   const first = stream.next()
-  while (!f.sent.some(frame => frame.method === 'prompt.submit')) await new Promise(resolve => setImmediate(resolve))
+  await until(() => f.sent.some(frame => frame.method === 'prompt.submit'), 'the prompt to be submitted', first)
   f.socket().event('tool.start', { tool_id: 'sample-tool', name: 'Sample tool', args: {} })
   const chunks = [(await first).value]
   for await (const chunk of stream) chunks.push(chunk)
@@ -306,7 +463,7 @@ test('real adapter signal Stop keeps socket open for interrupt and honours the c
   const controller = new AbortController()
   const stream = rt.hermesRemote.adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, signal: controller.signal, messages: [{ role: 'user', content: 'Sample' }] }))
   const first = stream.next()
-  while (!f.sent.some(frame => frame.method === 'prompt.submit')) await new Promise(resolve => setImmediate(resolve))
+  await until(() => f.sent.some(frame => frame.method === 'prompt.submit'), 'the prompt to be submitted', first)
   controller.abort()
   await first
   await stream.return()
@@ -316,6 +473,28 @@ test('real adapter signal Stop keeps socket open for interrupt and honours the c
 
 test('an uncertain remote turn never falls back to another model', () => {
   assert.equal(fallbackFor({ failure: { code: 'REMOTE_HERMES', message: LOST }, failed: { provider: 'hermes-remote', model: 'sample' }, fallback: { provider: 'native', model: 'sample' } }), undefined)
+})
+
+test('a paired Bot Chat opens on whatever Hermes runs: no approval setting is read, required or waited for', async t => {
+  for (const info of [{ approval_mode: 'off', yolo: true }, { approval_mode: 'smart', yolo: false }, {}]) {
+    let asked = 0
+    const f = fixture(t, {
+      question: async () => { asked++; return 'deny' },
+      handle: (frame, socket) => {
+        if (frame.method !== 'session.resume') return false
+        const { approval_mode: _mode, yolo: _yolo, ...rest } = f.live.info
+        socket.reply(frame, { ...f.live, info: { ...rest, ...info } })
+        return true
+      },
+    })
+    f.identity.canonicalBot = true
+    await f.wire.connect()
+    await f.run.prepare()
+    const methods = f.sent.map(frame => frame.method)
+    assert.ok(methods.includes('session.list') && methods.includes('session.resume'), JSON.stringify(info))
+    assert.ok(!methods.some(method => ['session.create', 'config.set', 'prompt.submit'].includes(method)), 'the existing Bot Chat is used as it is')
+    assert.equal(asked, 0)
+  }
 })
 
 test('pairing binds one Bot own-chat across segments without remote creation', async t => {
@@ -518,43 +697,34 @@ test('an earlier completion never overrides a fresh snapshot of a newly active r
   await assert.rejects(f.run.submit('Do not submit'), /Reconcile/)
 })
 
-test('fresh lazy create waits for authoritative approval metadata before any submit', async t => {
+test('a Hermes that approves on its own (yolo) connects, and its tool runs with no question from us', async t => {
+  for (const metadata of [{ approval_mode: 'off', yolo: true }, { approval_mode: 'smart', yolo: false }, { approval_mode: 'manual', yolo: false }]) {
+    let asked = 0
+    const f = fixture(t, { metadata, snapshot: { info: { desktop_contract: 8, ...metadata } }, question: async () => { asked++; return 'deny' } })
+    await f.wire.connect(); await f.run.submit('Run it')
+    f.socket().event('tool.start', { tool_id: 'tool-a', name: 'terminal', args: { command: 'ls' } })
+    f.socket().event('tool.complete', { tool_id: 'tool-a', result_text: 'sample.txt' })
+    f.socket().event('message.complete', { text: 'Done.', status: 'complete' })
+    const rows = []
+    for (;;) { const row = await f.run.next(); rows.push(row); if (row.kind === 'done') break }
+    const tool = rows.find(row => row.kind === 'tool').tool
+    assert.deepEqual([tool.title, tool.status, tool.text], ['terminal', 'completed', 'sample.txt'], JSON.stringify(metadata))
+    assert.equal(rows.filter(row => row.kind === 'text').map(row => row.text).join(''), 'Done.')
+    assert.equal(asked, 0, 'Hermes did not ask, so nobody was asked')
+    assert.equal(f.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
+    assert.ok(!f.sent.some(frame => frame.method === 'config.set'), 'Hermes’s own settings are never changed')
+  }
+})
+
+test('no approval setting is read or waited for: a session with no such metadata submits at once', async t => {
   const f = fixture(t, { metadata: false })
   await f.wire.connect()
-  const submitting = f.run.submit('After metadata only')
-  while (!f.sent.some(frame => frame.method === 'session.create')) await new Promise(resolve => setImmediate(resolve))
-  await new Promise(resolve => setTimeout(resolve, 10))
   assert.equal(Object.hasOwn(f.snapshot.info, 'approval_mode'), false)
   assert.equal(Object.hasOwn(f.snapshot.info, 'yolo'), false)
-  assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
-  f.socket().frame({ jsonrpc: '2.0', method: 'event', params: { type: 'session.info', session_id: randomUUID(), payload: f.info } })
-  assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
-  f.socket().event('session.info', f.info)
-  await submitting
+  await f.run.submit('Sent without waiting')
   assert.equal(f.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
   assert.equal(f.identity.storedSessionId, f.snapshot.stored_session_id)
-})
-
-test('approval metadata can precede the create reply without being missed', async t => {
-  const f = fixture(t, { metadata: false, handle: (frame, socket) => {
-    if (frame.method !== 'session.create') return false
-    socket.event('session.info', f.info)
-    queueMicrotask(() => socket.reply(frame, f.snapshot))
-    return true
-  } })
-  await f.wire.connect(); await f.run.submit('Sample')
-  assert.equal(f.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
-})
-
-test('missing or unsafe authoritative approval metadata never submits or changes global approval mode', async t => {
-  for (const metadata of [false, { approval_mode: 'off', yolo: true }, { approval_mode: 'manual', yolo: true }, { approval_mode: 'smart', yolo: false }]) {
-    const f = fixture(t, { metadata })
-    f.wire.startUntil = Date.now() + 35
-    await f.wire.connect()
-    await assert.rejects(f.run.submit('Never sent'), /approval metadata|manual approvals/)
-    assert.ok(!f.sent.some(frame => ['prompt.submit', 'config.set'].includes(frame.method)))
-    assert.equal(f.wire.listeners.size, 1)
-  }
+  assert.equal(f.wire.listeners.size, 1, 'nothing is left waiting for a session.info')
 })
 
 test('resume and activate normalize session_key and nested stored identity before saving', async t => {
@@ -710,7 +880,7 @@ test('reconcile fences old approval before awaiting resume and can answer a reus
   const oldQuestion = f.run.control({ id: currentRequest.id, method: 'approval', epoch: 'epoch-a', params: { session_id: f.snapshot.session_id, request_id: 'old', command: 'Old command' } })
   f.wire.epoch = 'epoch-b'
   const reconciling = f.run.reconcile({ answerQuestions: true })
-  while (!resumeFrame) await new Promise(resolve => setImmediate(resolve))
+  await until(() => resumeFrame, 'the resume frame', reconciling)
   resolveOldQuestion('once')
   await oldQuestion
   assert.ok(!f.sent.some(frame => frame.id === currentRequest.id))

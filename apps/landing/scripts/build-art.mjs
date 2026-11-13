@@ -22,7 +22,6 @@ const twins = (name, screen, rect, width) => [
 ]
 // [name, source (repo-relative), rectangle [x, y, w, h] in source pixels or 'trim', 1x width]
 export const ART = [
-  ['mark', 'apps/desktop/assets/mark.png', 'trim', 300],
   ['genie', 'apps/desktop/assets/dmg-source/genie.png', 'trim', 220],
   ['omni', 'apps/landing/assets/brand/omni-pleased.png', 'trim', 260],
   ['lamp', 'apps/bots-dsh/src/client/art/lamp.webp', 'trim', 128],

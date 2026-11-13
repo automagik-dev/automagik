@@ -585,27 +585,38 @@ model rule (D-g).
 
 **Images through Codex.** `generate_image` and the companion's drawing use an OpenAI API key as
 before; without one, the Codex CLI on its own ChatGPT sign-in (acp-dsh `generateImage`, a one-off
-read-only session using Codex's image tool). A ChatGPT grant stored by an earlier version's DSH
+session with a per-draw permission profile using Codex's image tool). A ChatGPT grant stored by an earlier version's DSH
 sign-in is read last. CLI auto-updates stay on (D-h).
 
-**Accepted image security risk (owner decision, 2026-11-11; #870).** Codex drawing stays
-enabled. codex-acp's `read-only` mode can read the whole disk wherever the OS user has read
-access, so an injected drawing request could read a local file into the returned picture.
-The image tool itself accepts local image files; its ACP report does not expose the input
-arguments. In codex-acp 2.6.0, the image session's selected `read-only` mode sends a full-disk
-`readOnly` policy on every turn; `CODEX_CONFIG` cannot narrow it. Existing feature and offered
-tool checks remain in place, but do not establish read isolation. Post-call refusals cannot
-undo a read, and prompt wording is not a control.
+**Image read boundary (#870).** Each draw writes an owner-only project config in its scratch
+folder with a fresh permission profile and `default_permissions`. It denies `:root`, reads
+only `:workspace_roots`, and has no network table, `extends` or `:minimal`. The adapter must
+offer and acknowledge `permission-profile:<id>` before the prompt. This is containment, not a
+scratch-only read boundary: Codex adds `:minimal` and helper-executable read grants, with
+platform runtime roots. Images there remain readable. Automagik passes only prompt text and
+has no pre-read hook for Codex's image-input paths; output bytes are inline, never opened from
+`savedPath`. No adapter-controlled input path exists to validate. The [security notes and
+pinned source lines][codex-image-security] list Linux, macOS and Windows grants and the real
+helper read tests. Those tests reconstruct the helper policy; they do not prove the signed-in
+ACP image-tool path. **#870 remains open.** Feature and offered-tool checks stay in place.
+An `Invalid configuration` warning fails a pre-session check.
+The run uses the Bot's isolated Codex home and removes the scratch config with the folder.
 
-An OpenAI API key avoids `generate_image`'s one-off Codex fallback by using the Images API;
-the API still receives the prompt. A Bot running on Codex can still invoke its own image
-tool despite that key. Use a different Bot model or turn Codex off to avoid that route.
-Callers should avoid routing untrusted outside text into Codex drawings. This is risk
-acceptance, not a fix: [#870] remains open for an enforceable narrow read policy that also
-covers the image tool's file inputs on the actual per-turn adapter path. See the
-[user warning and security notes][codex-image-security].
+**Accepted image security risk (owner decision, 2026-11-11).** If the profile mode is absent
+or rejected, drawing continues in `read-only` with one warning and an internal not-isolated
+result. That fallback still sends a full-disk `readOnly` policy each turn: an injected request
+could return a readable local image in the picture. The owner keeps this fallback enabled.
+A Codex Bot's ordinary chat image tool (`agent-image.js`) is outside this per-draw profile
+and retains the risk under its chat permissions. Signed-in enforcement on the actual
+per-turn adapter path still needs verification in the app.
 
-[#870]: https://github.com/automagik-si/automagik/issues/870
+An OpenAI API key avoids `generate_image`'s one-off Codex session by using the Images API;
+the API still receives the prompt. Prompt text is outside the file boundary. A Bot running
+on Codex can still invoke its own image tool despite that key. Use a different Bot model or
+turn Codex off to avoid that route. Avoid routing untrusted outside text into Codex drawings;
+post-call refusals cannot undo a read, and prompt review is not a file access control.
+See the [user warning and security notes][codex-image-security].
+
 [codex-image-security]: ../../apps/acp-dsh/README.md#images-through-codex
 
 ## Amendment: required desktop CLIs (2026-11-08)

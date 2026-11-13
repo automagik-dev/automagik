@@ -1,4 +1,4 @@
-import { dmSansLatin, manropeLatin } from './art/inline.js'
+import { dmSansLatin, fredokaLatin } from './art/inline.js'
 
 // -------------------------------------------------------------------------
 // Direction C, "stage and bench": the team's default look (themes.js `deepseek`, the id saved
@@ -13,35 +13,37 @@ export const STAGE_LIGHT = Object.freeze({ bg: '#f6eee2', sidebar: '#fbf6ee', bu
 export const STAGE_DARK = Object.freeze({ bg: '#1e1923', sidebar: '#262029', bubble: '#22414a', card: '#2b2431', text: '#f3e9dd', user: '#5c3556', userText: '#fdf0f8', accent: '#7fd8ea' })
 
 const FONT = '"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif'
-const HEAD = 'Manrope,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif'
+// The brand's title face and its three weights (docs/brand: tokens/tokens.json, fonts/). 536 is the
+// logo letters' weight; Fredoka is never set heavier.
+const HEAD = 'Fredoka,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif'
 const DSH_TEXT = '"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Helvetica,Arial,sans-serif'
 
 const TOKENS = `
 @font-face{font-family:"DM Sans";font-style:normal;font-weight:100 1000;font-display:swap;src:url("${dmSansLatin}") format("woff2")}
-@font-face{font-family:Manrope;font-style:normal;font-weight:200 800;font-display:swap;src:url("${manropeLatin}") format("woff2")}
+@font-face{font-family:"Fredoka";font-style:normal;font-weight:300 700;font-display:swap;size-adjust:105%;src:url("${fredokaLatin}") format("woff2")}
 html body{
-  --bt-font:var(--dsh-font-family-text,${FONT}),${FONT};--bt-head-font:${HEAD};--dsh-font-family-text-default:${DSH_TEXT};
+  --bt-font:var(--dsh-font-family-text,${FONT}),${FONT};--bt-head-font:${HEAD};--bt-weight-title:536;--bt-weight-strong:469;--bt-weight-label:402;--dsh-font-family-text-default:${DSH_TEXT};
   --st-stage:linear-gradient(170deg,#d3eff4 0%,#e4dcf5 55%,#f7d9ea 100%);--st-spot:rgba(255,253,249,.62);--st-tag:rgba(255,253,249,.92);
   --st-raised:#fbf6ee;--st-paper:#fffdf9;--st-sunk:#efe5d6;
   --st-r-stage:26px;--st-r-dialog:24px;--st-r-menu:14px;--st-r-seg:9px;
   --st-line:rgba(60,48,73,.13);--st-line-2:rgba(60,48,73,.24);
-  --st-ok:#10754f;--st-okdot:#16a36d;--st-bad:#a8322b;--st-warn:#8a4b00;--st-warndot:#e39a1f;--st-work:#13a3bf;
+  --st-ok:#047960;--st-okdot:#04ae84;--st-bad:#90040a;--st-warn:#945e06;--st-warndot:#e39a1f;--st-work:#00859d;--st-warn-strong:#7f5105;--st-bad-strong:#90040a;
   --st-cyan:#8fdcec;--st-cyan-ink:#1d4753;--st-lilac:#e6dcf6;--st-lilac-ink:#4b3a73;--st-ring:#a73d83;
   --st-lift:0 1px 0 rgba(91,59,34,.06),0 14px 32px -12px rgba(91,59,34,.32);
   --st-clay:inset 2px 2px 3px rgba(255,255,255,.6),inset -2px -3px 5px rgba(91,59,34,.16),0 2px 0 rgba(91,59,34,.15),0 10px 22px -8px rgba(111,81,53,.36);
   --st-hollow:inset 1px 2px 4px rgba(91,59,34,.12);--st-cast:rgba(91,59,34,.26);
-  --bt-hover:rgba(60,48,73,.06);--bt-active:rgba(60,48,73,.1);--bt-danger:#a8322b;--bt-green:#10754f;
+  --bt-hover:rgba(60,48,73,.06);--bt-active:rgba(60,48,73,.1);--bt-danger:#90040a;--bt-green:#047960;
   --dsw-focus-ring-color:var(--st-ring)}
 html body[data-ds-dark-theme]{
   --st-stage:linear-gradient(170deg,#173840 0%,#2a2440 55%,#3d2234 100%);--st-spot:rgba(255,245,235,.1);--st-tag:rgba(255,245,235,.14);
   --st-raised:#262029;--st-paper:#2b2431;--st-sunk:#18141c;
   --st-line:rgba(243,233,221,.12);--st-line-2:rgba(243,233,221,.22);
-  --st-ok:#7ad9a8;--st-okdot:#3fcf8a;--st-bad:#ff9a8f;--st-warn:#f5c27a;--st-warndot:#f0a93a;--st-work:#5cc8dc;
+  --st-ok:#91f1be;--st-okdot:#71e8a8;--st-bad:#e8695f;--st-warn:#f4cc7e;--st-warndot:#f4bb43;--st-work:#3faec2;--st-warn-strong:#f4cc7e;--st-bad-strong:#ffa89e;
   --st-cyan:#5cbdd1;--st-cyan-ink:#0d262c;--st-lilac:#4a3d61;--st-lilac-ink:#f1e9ff;--st-ring:#f2a6dc;
   --st-lift:0 1px 0 rgba(0,0,0,.3),0 14px 32px -12px rgba(0,0,0,.6);
   --st-clay:inset 2px 2px 3px rgba(255,255,255,.25),inset -2px -3px 5px rgba(0,0,0,.35),0 2px 0 rgba(0,0,0,.35),0 10px 22px -8px rgba(0,0,0,.6);
   --st-hollow:inset 1px 2px 4px rgba(0,0,0,.35);--st-cast:rgba(0,0,0,.45);
-  --bt-hover:rgba(255,240,225,.07);--bt-active:rgba(255,240,225,.12);--bt-danger:#ff9a8f;--bt-green:#7ad9a8}
+  --bt-hover:rgba(255,240,225,.07);--bt-active:rgba(255,240,225,.12);--bt-danger:#e8695f;--bt-green:#91f1be}
 html body ::selection{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body{font-family:var(--bt-font)}
 `
@@ -57,15 +59,14 @@ html body [class*="_rightbarCol"]{background:var(--bt-main)!important;border:0!i
 html body [class*="_rightbarCol"] section[class*="_tabHost"][class*="_pane"]{background:var(--bt-main);border:0;box-shadow:none}
 html body .bt-head{min-height:64px;padding:18px 24px 12px}
 html body header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]{padding-top:18px;padding-bottom:12px}
-html body .bt-head :is(.bt-head-title,.bt-head-name){font:700 20px/26px var(--bt-head-font);letter-spacing:-.01em}
+html body .bt-head :is(.bt-head-title,.bt-head-name){font:var(--bt-weight-title) 20px/26px var(--bt-head-font);letter-spacing:-.01em}
 `
 
 // The stage: the brand, the team as characters standing in a row, the open one in a cream
 // spotlight on a clay pedestal; the round buttons are cream tags.
 const STAGE = `
 html body .bt-side{font-family:var(--bt-font);color:var(--bt-ink)}
-html body .bt-brand-name,html body .bt-brand{font:700 16px/22px var(--bt-head-font)}
-html body .bt-brand :is(.omni-mark,.omni-lockup){filter:drop-shadow(0 2px 3px rgba(91,59,34,.25))}
+html body .bt-brand-name,html body .bt-brand{font:var(--bt-weight-strong) 16px/22px var(--bt-head-font)}
 html body .bt-round{width:30px;height:30px;border:0;border-radius:10px;background:var(--st-tag);color:var(--bt-ink);box-shadow:none}
 html body .bt-round:hover{background:var(--st-paper)}
 html body .bt-side-top{margin-bottom:8px}
@@ -77,6 +78,7 @@ html body .bt-row[aria-current=page],html body .bt-tile[aria-current=page]{backg
 html body .bt-row[aria-current=page] .bt-row-preview{color:var(--bt-ink-2)}
 html body .bt-row-title,html body .bt-tile-name{font-weight:600}
 html body .bt-row-preview{font-size:12px;line-height:16px;color:var(--bt-ink-2)}
+html body .bt-row .bt-row-preview-ask,html body .bt-row[aria-current=page] .bt-row-preview-ask{color:var(--st-warn-strong)}
 html body .bt-row>:is(svg,.bt-mark,.bt-cluster){position:relative;width:44px;height:44px;flex:none;filter:drop-shadow(0 4px 3px var(--st-cast))}
 html body .bt-row{min-height:64px;gap:12px;padding:8px 10px}
 html body .bt-row[aria-current=page]>:is(svg,.bt-mark,.bt-cluster){filter:drop-shadow(0 5px 4px var(--st-cast));transform:scale(1.08)}
@@ -165,13 +167,13 @@ html body :is(.bt-q,.bt-create-inline,.bt-create-looks,.bt-addlist,.bt-mem-reply
 html body .bt-q-raised{box-shadow:var(--st-lift)}
 html body .bt-q-opt[aria-pressed=true],html body button.bt-q-opt:active{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body .bt-key{border:1px solid var(--st-line-2);border-radius:6px;background:var(--st-raised)}
-html body :is(.bt-q-title,.bt-create-name,.bt-drawer-name,.bt-mem-head h2,.bt-mem-summary h3,.bt-mem-empty-title){font-family:var(--bt-head-font);font-weight:700;letter-spacing:-.01em}
+html body :is(.bt-q-title,.bt-create-name,.bt-drawer-name,.bt-mem-head h2,.bt-mem-summary h3,.bt-mem-empty-title){font-family:var(--bt-head-font);font-weight:var(--bt-weight-title);letter-spacing:-.01em}
 html body .op-task{padding:0;background:none;border-radius:16px}
 html body .op-task-in{border:1px solid var(--st-line);border-radius:16px;padding:12px 14px;background:var(--st-raised);box-shadow:none}
 html body .op-task-mark{border-radius:10px;background:var(--st-cyan);color:var(--st-cyan-ink);box-shadow:none}
 html body .op-task[data-state=done] .op-task-mark{background:var(--st-ok);color:var(--st-paper)}
 html body .op-task[data-state=failed] .op-task-mark{background:var(--st-bad);color:var(--st-paper)}
-html body .op-task-title{font-family:var(--bt-head-font);font-weight:700}
+html body .op-task-title{font-family:var(--bt-head-font);font-weight:var(--bt-weight-strong)}
 html body .op-task-bar{height:6px;border-radius:6px;background:var(--st-sunk);box-shadow:none}
 html body .op-task-bar i{border-radius:6px;background:var(--st-work);box-shadow:none}
 html body .op-task-open{color:var(--bt-accent);font-weight:600}

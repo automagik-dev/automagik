@@ -1,7 +1,8 @@
 // The person's own companion: the character they create in onboarding, which becomes their
 // Main Bot (the orchestrator). Two ways to make one: describe it and have an image model draw
 // it, when an OpenAI API key or a signed-in Codex CLI is here (or, last, a ChatGPT grant an
-// earlier version stored through DSH's openai-codex sign-in); or pick one of Omni's characters. The look and name are applied to the Main Bot through
+// earlier version stored through DSH's openai-codex sign-in, only on a shared auth scope);
+// or pick one of Omni's characters. The look and name are applied to the Main Bot through
 // @automagik/bots-dsh's `omniTeam` service when that plugin is present. The team step then
 // adds the Omni Bot, which keeps the person's channels.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -101,8 +102,20 @@ async function imageSource(ctx, now = Date.now()) {
   if (record?.kind === 'api-key' && typeof record.key === 'string' && record.key !== '') return { kind: 'openai', fresh: true, token: record.key }
   const env = await ctx.credentials.resolve?.(OPENAI_ENV).catch(() => undefined)
   if (typeof env?.value === 'string' && env.value !== '') return { kind: 'openai', fresh: true, token: env.value }
-  const codex = codexOf(ctx)
-  if (codex !== undefined && (await codex.imageAccess().catch(() => undefined))?.ready === true) return { kind: 'codex', fresh: true, service: codex }
+  const service = codexOf(ctx)
+  let access
+  try {
+    access = await service?.imageAccess()
+  } catch {
+    access = undefined
+  }
+  if (typeof access?.ready !== 'boolean') access = undefined
+  if (access?.ready === true) return {
+    kind: 'codex', fresh: true, service, accountGeneration: access.accountGeneration,
+  }
+  // Legacy shared hosts must positively declare their scope. Missing/reloading/unreadable
+  // ACP cannot authorize billing an older grant; the shipped ACP only declares isolated.
+  if (service?.authScope !== 'shared' || access === undefined) return undefined
   const grant = await ctx.credentials.readRecord?.(CODEX_RECORD).catch(() => undefined)
   const payload = grant?.kind === 'grant' ? grant.payload : undefined
   if (payload && typeof payload.access === 'string') {
@@ -243,7 +256,10 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
       const prompt = companionPrompt(fields.description)
       if (source.kind === 'codex') {
         // Codex draws in one piece; its refusals (signed out, usage limit, timeout) read as they are.
-        const made = await source.service.generateImage({ prompt, size: '1024x1024', signal })
+        const made = await source.service.generateImage({
+          prompt, size: '1024x1024', signal,
+          ...(source.accountGeneration === undefined ? {} : { accountGeneration: source.accountGeneration }),
+        })
           .catch((error) => { throw refused(String(error?.message ?? error).slice(0, 240)) })
         if (typeof made?.base64 !== 'string' || made.base64 === '') throw refused('The image service answered without an image. Try again.')
         if (Buffer.byteLength(made.base64, 'base64') > MAX_IMAGE_BYTES) throw refused('The image is too large to keep. Try again.')

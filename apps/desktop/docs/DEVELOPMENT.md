@@ -128,7 +128,7 @@ Agent Teams use rc.2's named subagents. A fresh `subagent` accepts `provider`, `
 
 ### The icon
 
-`assets/icon.svg` is the icon's source: the owner's clay triskelion (`assets/mark.png`, the kit-v4 source, kept as delivered) on a cream clay tile. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium (`--no-sandbox` where its sandbox cannot start; the SVG loads `mark.png` beside it):
+`assets/icon.svg` is the icon's source: the approved three-colour triskle (`assets/triskle-three-colours.svg`, a byte copy of the final logo set's large drawing; `src/art/SOURCE.json` records it) on the set's ink ground (`#1e1923`), drawn as the app's rounded clay tile. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium (`--no-sandbox` where its sandbox cannot start; the SVG loads `triskle-three-colours.svg` beside it):
 
 ```sh
 chrome-headless-shell --screenshot=assets/icon.png --window-size=1024,1024 \

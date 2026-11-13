@@ -138,7 +138,11 @@ const record = (over = {}) => ({
 
 test('before the team is loaded the answer is unavailable, and nothing is loaded for it', async (t) => {
   const { rt } = team(t)
+  // Startup loads synchronously; exercise the unavailable state explicitly.
+  t.mock.method(rt, 'teamLoaded', () => false)
+  const load = t.mock.method(rt, 'load')
   assert.deepEqual(rt.permissionDiagnostics(), { version: 2, unavailable: true })
+  assert.equal(load.mock.callCount(), 0)
 })
 
 test('the route answers from memory: no refresh, no load, no lock, no set, no Session opened', async (t) => {

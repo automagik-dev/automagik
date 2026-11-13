@@ -1,6 +1,7 @@
 import { createElement as h, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { CloseIcon, CheckIcon } from './icons.js'
-import { t } from './i18n.js'
+import { CellEmpty } from './cell-empty.js'
+import { hostText, t } from './i18n.js'
 import { useDockHold } from './card-hold.js'
 import { createSource, heldCardKey } from './sources.js'
 
@@ -10,6 +11,13 @@ import { createSource, heldCardKey } from './sources.js'
 // keeps the shell's composer takeover and gains an own-answer field.
 
 export const keyLetter = index => String.fromCharCode(65 + index)
+// A permission question is this app's own wording, not the Bot's: its text and its answers
+// read in the interface language. The answer sent back stays the label the host gave. The
+// detail is what the other side wrote, kept word for word; only the host's stand-in for a
+// step that came with no words of its own is worded here.
+const wordingOf = question => question?.intent?.kind === 'approval'
+  ? { prompt: hostText(question.question ?? ''), label: label => t(label), detail: question.detail === 'Run a remote tool' ? t('Run a remote tool') : question.detail }
+  : { prompt: question?.question ?? '', label: label => label, detail: question?.detail }
 const optionsOf = question => (question?.options ?? []).map(option => (typeof option === 'string' ? { label: option } : option))
 const isTypingTarget = node => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
   || node instanceof HTMLSelectElement || (node instanceof HTMLElement && node.isContentEditable)
@@ -60,6 +68,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
   const ownRef = useRef(null)
   const titleId = useId()
   const options = optionsOf(question)
+  const wording = wordingOf(question)
   const multi = question.multiSelect === true
   const custom = own.trim()
   const canSubmit = multi ? picked.length > 0 || custom !== '' : custom !== ''
@@ -100,7 +109,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
     },
     hints ? h('span', { className: 'bt-key', 'aria-hidden': true }, keyLetter(optionIndex)) : null,
     h('span', { className: 'bt-q-body' },
-      h('span', { className: 'bt-q-label' }, option.label),
+      h('span', { className: 'bt-q-label' }, wording.label(option.label)),
       option.description ? h('span', { className: 'bt-q-desc' }, option.description) : null),
     selected && !raised ? h('span', { className: 'bt-q-check', title: t('Selected') }, h(CheckIcon)) : null)
   })
@@ -126,8 +135,8 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
   },
     h('div', { className: 'bt-q-head' },
       h('div', { className: 'bt-q-text' },
-        h('p', { className: 'bt-q-title', id: titleId }, question.header ? `${question.header} · ` : '', question.question),
-        question.detail ? h('div', { className: 'bt-q-detail' }, question.detail) : null,
+        h('p', { className: 'bt-q-title', id: titleId }, question.header ? `${question.header} · ` : '', wording.prompt),
+        wording.detail ? h('div', { className: 'bt-q-detail' }, wording.detail) : null,
         raised && multi ? h('div', { className: 'bt-q-detail' }, t('Choose all that apply')) : null),
       h('button', { type: 'button', className: 'bt-q-x', 'aria-label': t('Dismiss question'), title: t('Dismiss'), onClick: onDismiss, disabled: busy }, h(CloseIcon))),
     rows.length > 0 ? h('div', { className: 'bt-q-list', role: 'group' }, rows) : null,
@@ -140,7 +149,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
 // The answered card left in the transcript: the chosen rows, muted, with a check.
 export function SettledQuestion({ question, answer }) {
   const options = optionsOf(question)
-  const prompt = question?.question ?? ''
+  const wording = wordingOf(question), prompt = wording.prompt
   const chosen = [...(answer.selected ?? []), ...(answer.custom ? [answer.custom] : [])]
   if (chosen.length === 0) {
     return h('div', { className: 'bt-q bt-q-settled bt-q-dismissed', role: 'group', 'aria-label': prompt },
@@ -154,7 +163,7 @@ export function SettledQuestion({ question, answer }) {
       const optionIndex = options.findIndex(option => option.label === label)
       return h('div', { key: `${label}-${index}`, className: 'bt-q-opt' },
         optionIndex >= 0 ? h('span', { className: 'bt-key', 'aria-hidden': true }, keyLetter(optionIndex)) : null,
-        h('span', { className: 'bt-q-body' }, h('span', { className: 'bt-q-label' }, label)),
+        h('span', { className: 'bt-q-body' }, h('span', { className: 'bt-q-label' }, wording.label(label))),
         h('span', { className: 'bt-q-check', title: t('Selected') }, h(CheckIcon)))
     })))
 }
@@ -175,7 +184,8 @@ export function QuestionCard({ matched }) {
     }
     pending.answer({ answers: next })
   }
-  return h(QuestionView, { key: index, question, onAnswer, onDismiss: () => pending.dismiss(), ownAnswer: true, raised: true })
+  // A permission question has its fixed answers and nothing to type.
+  return h(QuestionView, { key: index, question, onAnswer, onDismiss: () => pending.dismiss(), ownAnswer: question.intent?.kind !== 'approval', raised: true })
 }
 
 export function PendingQuestion({ sessionId, question, actions, inline }) {
@@ -183,7 +193,7 @@ export function PendingQuestion({ sessionId, question, actions, inline }) {
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const hold = useDockHold(sessionId, 'question', question.id, actions, inline)
-  if (answered === question.id) return null
+  if (answered === question.id) return h(CellEmpty)
   const run = (make) => {
     if (busyRef.current) return
     hold()
@@ -219,7 +229,7 @@ export function AnsweredCell({ node }) {
   const data = node.data ?? {}
   const questions = Array.isArray(data.questions) ? data.questions : []
   if (questions.length === 0) {
-    return data.text ? h('div', { className: 'bt-urow' }, h('div', { className: 'bt-ububble' }, data.text)) : null
+    return data.text ? h('div', { className: 'bt-urow' }, h('div', { className: 'bt-ububble' }, data.text)) : h(CellEmpty)
   }
   const answers = Array.isArray(data.answers) ? data.answers : []
   return h('div', { className: 'bt-q-inline' }, questions.map(question => h(SettledQuestion, {

@@ -199,9 +199,8 @@ test('marked Sessions under the cap come first, and the others fill what is left
 
 test('a loaded team with no Bot answers, and one never loaded does not', async (t) => {
   const empty = team(t, { file: { ...TEAM, mainBotIds: [], bots: {} } })
-  assert.deepEqual(empty.rt.permissionDiagnostics(), { version: 2, unavailable: true })
-  assert.equal(empty.rt.teamLoaded(), false)
-  await empty.rt.load()
+  // The saved empty team is available before startup yields.
+  assert.deepEqual(empty.rt.permissionDiagnostics(), { version: 2, sessions: [] })
   assert.equal(empty.rt.teamLoaded(), true)
   assert.deepEqual(await read(empty.call), { version: 2, sessions: [] })
 
@@ -213,8 +212,9 @@ test('a loaded team with no Bot answers, and one never loaded does not', async (
 
   // A read does not load the team to find out.
   const cold = team(t)
+  t.mock.method(cold.rt, 'teamLoaded', () => false)
   const load = t.mock.method(cold.rt, 'load')
-  assert.deepEqual(await read(cold.call), { version: 2, unavailable: true })
+  assert.deepEqual(cold.rt.permissionDiagnostics(), { version: 2, unavailable: true })
   assert.equal(load.mock.callCount(), 0)
 })
 

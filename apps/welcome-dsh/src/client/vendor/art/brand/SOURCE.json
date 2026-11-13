@@ -1,0 +1,26 @@
+{
+  "set": "final-triskle-seam",
+  "what": "The approved Genie and Omni lockups: the three-colour triskle beside the lowercase name, Genie's i dotted with a pink sparkle and Omni's with a cyan one, in the drawing made for headers. Each file is a byte copy of the named file of the final set; never edit one, replace it from a new set and record it here.",
+  "files": {
+    "genie-lockup-three-colours-ink-header.svg": {
+      "from": "lockups/svg/genie-lockup-three-colours-ink-header.svg",
+      "bytes": 43334,
+      "sha256": "6ea4dd15ca55c49c5f509f8b078b32e93029ca990b8114691f7a8fd82e3c55ee"
+    },
+    "genie-lockup-three-colours-cream-header.svg": {
+      "from": "lockups/svg/genie-lockup-three-colours-cream-header.svg",
+      "bytes": 43334,
+      "sha256": "726737ed38d35d5ea2ef9ab87f23527c738fc7b89b4f09ea7db660be9e69189c"
+    },
+    "omni-lockup-three-colours-ink-header.svg": {
+      "from": "lockups/svg/omni-lockup-three-colours-ink-header.svg",
+      "bytes": 42049,
+      "sha256": "04a4b973a92c2f57dd4e0911ae68931e8fc6403b79b28c7d8aca3acccc265c69"
+    },
+    "omni-lockup-three-colours-cream-header.svg": {
+      "from": "lockups/svg/omni-lockup-three-colours-cream-header.svg",
+      "bytes": 42049,
+      "sha256": "74cadeae1ba0a439dfb16a9dbeb42f3e36475e120bd5c563a7f25117f060e2b8"
+    }
+  }
+}

@@ -310,7 +310,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS, where = null) {
   // name, never replaced with the default behind the person's back.
   const agyModeWhy = agent === "antigravity" ? agyModeProblem(defaults.agyMode) : null;
   if (agyModeWhy) {
-    const fix = bot?.id ? ` Fix it with automagik-herdr edit ${bot.id} --worker-agy-mode <accept-edits|auto|plan>.` : "";
+    const fix = bot?.id ? ` Fix it with am edit ${bot.id} --worker-agy-mode <accept-edits|auto|plan>.` : "";
     return { error: `${bot?.name ?? "This bot"}'s workers: ${agyModeWhy}${fix}` };
   }
   const agyMode = agent === "antigravity" ? agyModeOf(defaults.agyMode) : null;

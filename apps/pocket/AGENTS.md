@@ -28,6 +28,9 @@ the same rules apply. The monorepo's own contract is [AGENTS.md](../../AGENTS.md
 5. Never commit or print the signing key or its password. Never change the app ID, the signing key,
    the `latest.json` format or where phones read it (the `pocket-lane` release) without an RFC
    (the monorepo's [RFC 0011](../../docs/rfcs/0011-monorepo-parts-and-releases.md), "Pocket").
+6. Brand: any work on a logo, a colour, type, a UI surface or brand art starts from
+   [docs/brand/README.md](../../docs/brand/README.md) and uses its files and tokens. Never redraw a
+   mark or invent a colour.
 
 ## Docs
 

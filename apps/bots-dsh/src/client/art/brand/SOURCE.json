@@ -1,0 +1,46 @@
+{
+  "set": "final-triskle-seam",
+  "what": "The approved Automagik logo: the three-colour triskle, the lowercase wordmark and the lockup, with Automagik's violet sparkle. Each file is a byte copy of the named file of the final set; never edit one, replace it from a new set and record it here.",
+  "files": {
+    "triskle-three-colours.svg": {
+      "from": "svg/triskle-three-colours.svg",
+      "bytes": 56569,
+      "sha256": "bc9fd54124f5d3cfdd0461c5ab6ac6860254c14bfdedf46a11cc5ca433e01a72"
+    },
+    "triskle-three-colours-64.svg": {
+      "from": "svg/triskle-three-colours-64.svg",
+      "bytes": 39972,
+      "sha256": "160520a72892587e1463d375bfbb7965469139e63c6ead7809db917788920c43"
+    },
+    "triskle-three-colours-32.svg": {
+      "from": "svg/triskle-three-colours-32.svg",
+      "bytes": 40304,
+      "sha256": "3ce36573385e5c18116e894b77b2aea39594a2763cfd911c553265d7b09abbf9"
+    },
+    "triskle-three-colours-16.svg": {
+      "from": "svg/triskle-three-colours-16.svg",
+      "bytes": 40560,
+      "sha256": "db2ac0e038c88e6179656fdda343fa8befdfafb807b9968d5984efc70b251683"
+    },
+    "automagik-lockup-three-colours-ink-header.svg": {
+      "from": "lockups/svg/automagik-lockup-three-colours-ink-header.svg",
+      "bytes": 44634,
+      "sha256": "4d0f87696e31e5f889e2e60d98c7814d515a85f2f60918f4bd999f298338af2f"
+    },
+    "automagik-lockup-three-colours-cream-header.svg": {
+      "from": "lockups/svg/automagik-lockup-three-colours-cream-header.svg",
+      "bytes": 44634,
+      "sha256": "e8dd0d21e42d7b2722386738972d46432f083895fb2bf00a990ee7588d3561f7"
+    },
+    "automagik-wordmark-ink.svg": {
+      "from": "lockups/svg/automagik-wordmark-ink.svg",
+      "bytes": 4313,
+      "sha256": "862047b28e1086337552118196572b8dff69eee255a64b8e12e987c59e1bfa7e"
+    },
+    "automagik-wordmark-cream.svg": {
+      "from": "lockups/svg/automagik-wordmark-cream.svg",
+      "bytes": 4313,
+      "sha256": "a61a32f40807e6a72536de7dc44a88aaa524079499171206388cab04b81a2ea1"
+    }
+  }
+}

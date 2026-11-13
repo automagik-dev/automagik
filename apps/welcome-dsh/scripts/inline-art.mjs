@@ -1,5 +1,6 @@
 // Writes src/client/vendor/art/inline.js: every picture in src/client/vendor/art (copies of
-// apps/bots-dsh/src/client/art) as a data: URL, so the bundle carries them and the tests that
+// apps/bots-dsh/src/client/art; brand/ holds byte copies of the final logo set) as a data:
+// URL, so the bundle carries them and the tests that
 // bundle a client module need no asset loader. The files beside it are the sources; edit
 // those, then run this and commit both.
 //
@@ -12,9 +13,10 @@ import { fileURLToPath } from 'node:url'
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 export const ART = join(PLUGIN, 'src', 'client', 'vendor', 'art')
 const OUTPUT = join(ART, 'inline.js')
-const TYPES = { '.webp': 'image/webp', '.woff2': 'font/woff2' }
+const TYPES = { '.svg': 'image/svg+xml', '.webp': 'image/webp', '.woff2': 'font/woff2' }
 
-// genie-expressions.webp -> genieExpressions; fonts/dm-sans-latin.woff2 -> dmSansLatin.
+// genie-expressions.webp -> genieExpressions; fonts/dm-sans-latin.woff2 -> dmSansLatin;
+// brand/omni-lockup-three-colours-ink-header.svg -> omniLockupThreeColoursInkHeader.
 const nameOf = file => file.replace(/^.*\//, '').replace(/\.[^.]+$/, '').replace(/-(\w)/g, (_, c) => c.toUpperCase())
 
 export function inlineArt(dir = ART) {

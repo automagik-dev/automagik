@@ -795,7 +795,7 @@ test("Antigravity #812: start and restart pass --mode auto by default and the ch
   bad.seed(broken);
   const refused = bad.cli(["start", "Genie"]);
   assert.equal(refused.code, 1);
-  assert.match(refused.err, /Genie: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\. Fix it with automagik-herdr edit /);
+  assert.match(refused.err, /Genie: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\. Fix it with am edit /);
   assert.equal(refused.err.split("\n").filter((line) => line.includes('Antigravity mode "yolo"')).length, 1, "one clear line");
   assert.equal(bad.calls().filter((c) => c[0] === "run").length, 0, "nothing started");
 });
@@ -821,6 +821,35 @@ test("Antigravity #812: create/edit set agyMode (auto clears), show, ls and doct
   assert.match(row.detail, /Ag: agy mode auto; agy trusted .*; agy allow /);
   assert.match(row.detail, new RegExp(`agy trusted ${s.project};`), "the seat's own folder is named (#879)");
   assert.match(row.detail, /agy deny .*command\(git push --force\)/);
+});
+
+test("mode #821: editing another agent warns that agy-mode only applies to Antigravity", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const edited = s.cli(["edit", "Genie", "--agy-mode", "plan"]);
+  assert.equal(edited.code, 0, edited.err);
+  assert.match(edited.err, /--agy-mode only applies to Antigravity/);
+  assert.equal(s.bots().bots[0].agyMode, "plan");
+});
+
+test("mode #821: empty modes read as auto in show, ls and doctor and clear on edit", (t) => {
+  const s = scene(t);
+  const file = team();
+  Object.assign(file.bots[0], { agent: "antigravity", agyMode: "", worker: { agent: "antigravity", agyMode: "" } });
+  s.seed(file);
+  const shown = s.cli(["show", "Genie", "--json"]);
+  assert.equal(shown.code, 0, shown.err);
+  assert.equal(shown.json().agyMode, "auto");
+  assert.equal(shown.json().worker.agyMode, "auto");
+  assert.doesNotMatch(shown.err, /agyMode/);
+  assert.match(s.cli(["ls"]).out, /agy-mode auto/);
+  const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
+  const row = doctor.json().checks.find((c) => c.check === `hc-proxy:${ID.main}`);
+  assert.match(row.detail, /agy mode auto/);
+  const edited = s.cli(["edit", "Genie", "--agy-mode=", "--worker-agy-mode="]);
+  assert.equal(edited.code, 0, edited.err);
+  assert.equal(s.bots().bots[0].agyMode, undefined);
+  assert.deepEqual(s.bots().bots[0].worker, { agent: "antigravity" });
 });
 
 test("Antigravity #823: start and restart write a private permission file and pass --settings; the roster adds rules", (t) => {
@@ -1277,7 +1306,7 @@ test("ls --json: kind, lead, category, planned, agent, model detected → pinned
   for (const key of ["id", "name", "kind", "lead", "category", "code", "planned", "agent", "model", "modelSource", "terminal", "status", "duplicate"]) assert.ok(key in by.Dev, key);
   assert.equal(by.Dev.code, true);
   const text = s.cli(["ls"]);
-  assert.match(text.out, /Captain {2}→ Genie \[eng\] {2}code true {2}claude {2}claude-opus-5-5 \(detected\) {2}working in t5/);
+  assert.match(text.out, /Captain {2}→ Genie \[eng\] {2}claude {2}claude-opus-5-5 \(detected\) {2}working in t5/);
   const show = s.cli(["show", "dev", "--json"]).json();
   assert.equal(show.id, ID.dev);
   assert.equal(show.code, true);
@@ -1436,11 +1465,11 @@ test("forget refuses a project that isn't on the list, the list unchanged; --jso
   const r = s.cli(["forget", s.project]);
   assert.equal(r.code, 1);
   assert.equal(r.out, "");
-  assert.equal(r.err, `automagik-herdr: ${s.project} isn't on the project list (${list}); automagik-herdr ls --all shows the projects there.\n`);
+  assert.equal(r.err, `am: ${s.project} isn't on the project list (${list}); am ls --all shows the projects there.\n`);
   assert.equal(readFileSync(list, "utf8"), listed, "byte for byte");
   const json = s.cli(["forget", s.project, "--json"]);
   assert.equal(json.code, 1);
-  assert.deepEqual(json.json(), { error: r.err.slice("automagik-herdr: ".length, -1), project: s.project, forgotten: false });
+  assert.deepEqual(json.json(), { error: r.err.slice("am: ".length, -1), project: s.project, forgotten: false });
   // One only the sidebar remembers: named as the sidebar's, and shared.json is never written.
   const shared = JSON.stringify({ "am.sidebar.projects": [{ key: s.project, machine: null }] });
   writeFileSync(join(s.app, "shared.json"), shared);
@@ -1468,7 +1497,7 @@ test("forget on both lists: off this CLI's, and it says the sidebar still shows 
   const r = s.cli(["forget", s.project]);
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out, `${s.project} forgotten: off ${list}.\n`);
-  assert.equal(r.err, `automagik-herdr: ${s.project} is off this CLI's project list, but the sidebar remembers it on its own and forgets `
+  assert.equal(r.err, `am: ${s.project} is off this CLI's project list, but the sidebar remembers it on its own and forgets `
     + "it once its .herdr/bots.json is gone, so ls --all and the sidebar still show it until then.\n");
   assert.deepEqual(JSON.parse(readFileSync(list, "utf8")), [other]);
   assert.equal(readFileSync(join(s.app, "shared.json"), "utf8"), shared, "the sidebar's file is never written");
@@ -1490,8 +1519,8 @@ test("forget with the list's lock held: one refusal line, no stack, --json body;
   assert.equal(r.code, 1);
   assert.doesNotMatch(r.err, /^\s+at /m, "no stack trace");
   const last = r.err.trim().split("\n").at(-1);
-  assert.equal(last, `automagik-herdr: ${s.project} wasn't taken off ${list}: ${lock} is held by another automagik-herdr (pid ${process.pid})`);
-  assert.deepEqual(r.json(), { error: last.slice("automagik-herdr: ".length), project: s.project, forgotten: false });
+  assert.equal(last, `am: ${s.project} wasn't taken off ${list}: ${lock} is held by another am (pid ${process.pid})`);
+  assert.deepEqual(r.json(), { error: last.slice("am: ".length), project: s.project, forgotten: false });
   assert.equal(readFileSync(list, "utf8"), listed);
   assert.equal(readFileSync(lock, "utf8"), `${process.pid} someone-else`, "another's lock is left alone");
 });
@@ -1686,7 +1715,7 @@ test("attach of a bot attached elsewhere is refused, naming the holder; --move m
   s.seed(team());
   const bare = s.cli(["attach", "Genie", "t2"]);
   assert.equal(bare.code, 1);
-  assert.match(bare.err, /Genie \(b-aaaaaaaaaa\) is attached to t1 \(since .*\); nothing was attached\. Move it with: automagik-herdr attach b-aaaaaaaaaa t2 --move/);
+  assert.match(bare.err, /Genie \(b-aaaaaaaaaa\) is attached to t1 \(since .*\); nothing was attached\. Move it with: am attach b-aaaaaaaaaa t2 --move/);
   assert.deepEqual(labelCalls(s.calls()), []);
   const r = s.cli(["attach", "Genie", "t2", "--move", "--json"]);
   assert.equal(r.code, 0, r.err);
@@ -1695,7 +1724,7 @@ test("attach of a bot attached elsewhere is refused, naming the holder; --move m
   const labels = Object.fromEntries(s.hcState().terminals.map((x) => [x.address, x.labels]));
   assert.deepEqual(labels, { t1: {}, t2: { bot: ID.main, role: "main" } });
   assert.ok(existsSync(join(sub, ".claude/settings.local.json")));
-  assert.match(r.err, /no briefing, restart the bot: automagik-herdr restart b-[a-z2-7]{10} \(or the bot row's Restart\)/);
+  assert.match(r.err, /no briefing, restart the bot: am restart b-[a-z2-7]{10} \(or the bot row's Restart\)/);
 });
 
 test("attach: a label write that fails only warns: the ledger has the move", (t) => {
@@ -1916,7 +1945,7 @@ test("start refuses an old free-text model pin, naming the fix; a pane started u
   s.seed(f);
   const r = s.cli(["start", "Genie"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /pinned to "Opus 5\.5", which isn't a claude model this computer lists\. Pick one with automagik-herdr edit b-aaaaaaaaaa --model/);
+  assert.match(r.err, /pinned to "Opus 5\.5", which isn't a claude model this computer lists\. Pick one with am edit b-aaaaaaaaaa --model/);
   const young = s.cli(["start", "Captain"]);
   assert.equal(young.code, 0);
   assert.match(young.out, /already running in t30/);
@@ -2020,7 +2049,7 @@ test("detach takes a removed bot's label off by its bare id; an unknown name is 
   s.seed(team());
   const rm = s.cli(["rm", "Dev"]);
   assert.equal(rm.code, 0, rm.err);
-  assert.match(rm.err, new RegExp(`t1 is still attached to it; detach it with: automagik-herdr detach ${ID.dev}`));
+  assert.match(rm.err, new RegExp(`t1 is still attached to it; detach it with: am detach ${ID.dev}`));
   const r = s.cli(["detach", ID.dev, "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.json(), { id: ID.dev, defined: false, detached: ["t1"], labelsCleared: ["t1", "t2"] });
@@ -2743,7 +2772,7 @@ test("restart keeps the old pane when the new one never brings its agent up, exi
   const s2 = restartScene(t, { runAs: "exit" });
   const r2 = s2.cli(["restart", "Genie"]);
   assert.equal(r2.code, 1);
-  assert.match(r2.err, /t100 exited before its agent was up .*t5 still runs Genie, untouched\. Try automagik-herdr restart b-aaaaaaaaaa --fresh\./);
+  assert.match(r2.err, /t100 exited before its agent was up .*t5 still runs Genie, untouched\. Try am restart b-aaaaaaaaaa --fresh\./);
   assert.equal(at(s2.calls(), "kill"), -1);
   // Its agent in front at the first check, then gone (a stale --resume id): the old pane survives.
   delete process.env.AUTOMAGIK_HERDR_RESTART_WAIT_MS;
@@ -3423,8 +3452,8 @@ test("restart --tree: the helpers that end with the bot run again under its new 
   const text = treeScene(t).s.cli(["restart", "Genie", "--tree"]);
   assert.equal(text.code, 0, text.err);
   const lines = text.err.split("\n");
-  assert.ok(lines.includes(`automagik-herdr: Genie's helper fix-213-dev: t101 replaces t7, resuming its last conversation (--continue).`), text.err);
-  assert.ok(lines.includes("automagik-herdr: Genie's helper rev-1: t102 replaces t8, resuming its session by id (--resume=***)."), text.err);
+  assert.ok(lines.includes(`am: Genie's helper fix-213-dev: t101 replaces t7, resuming its last conversation (--continue).`), text.err);
+  assert.ok(lines.includes("am: Genie's helper rev-1: t102 replaces t8, resuming its session by id (--resume=***)."), text.err);
   assert.equal(text.code, 0);
 });
 
@@ -3714,7 +3743,7 @@ test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run agai
   assert.ok(tried.includes(`revive.session=${SID2}`) && tried.includes("/usr/bin/env") && tried.some((w) => w.startsWith("PATH=")), tried.join(" "));
   assert.deepEqual(agentWords(tried).slice(-2), ["sh", `--resume=${SID2}`]);
   assert.ok(r.err.includes(`t8 (rev-1) wasn't run again: hc run failed (hc: can't start rev-1). Its conversation is kept; to run it again by hand:\n`
-    + `automagik-herdr:   ${shown}\n`) || r.err.includes(`  ${shown}\n  # resumes its session by id`), r.err);
+    + `am:   ${shown}\n`) || r.err.includes(`  ${shown}\n  # resumes its session by id`), r.err);
   assert.match(r.err, /# resumes its session by id: put the id where \*\*\* stands; hc get t8 shows it/);
   assert.equal(`${r.out}${r.err}`.includes(SID2), false, "no session id printed");
   assert.deepEqual(codexWords(agentWords(runs(s).at(-1))), ["codex", "-m", "gpt-a", ...CODEX_MODE, "resume", SID3], "helper 3 resumed by its id, in the launch mode");
@@ -3735,8 +3764,9 @@ test("restart --tree failing with a gone folder on the project list: pruned, no 
   assert.equal(r.code, 1, r.err);
   assert.ok(!JSON.parse(readFileSync(list, "utf8")).includes(gone), "the prune still ran");
   assert.doesNotMatch(r.err, /taken off the project list/);
-  assert.equal(restartAnswer({ code: r.code, err: r.err }).refused, r.err.trim().split("\n").at(-1).trim());
-  assert.doesNotMatch(restartAnswer({ code: r.code, err: r.err }).refused, /^automagik-herdr: tidy:/);
+  assert.equal(restartAnswer({ code: r.code, err: r.err }).refused,
+    "Genie's helper probe: t102 replaces t10, resuming its session by id (resume ***); check the log and try again.");
+  assert.doesNotMatch(restartAnswer({ code: r.code, err: r.err }).refused, /^am: tidy:/);
   assert.match(r.err, /t8 \(rev-1\) wasn't run again: hc run failed/);
 });
 
@@ -3838,7 +3868,7 @@ test("restart --tree: a helper bot whose attach row can't be written runs, and i
   assert.equal(s.cli(["whois", "--bot", ID.dev, "--json"]).json().terminal, "t8");
   const r = s.cli(["restart", "Genie", "--tree"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /t8 runs again in t101, but bot b-cccccccccc's attach row wasn't written \(hc get gave no created_ms for t101\): automagik-herdr attach b-cccccccccc t101\./);
+  assert.match(r.err, /t8 runs again in t101, but bot b-cccccccccc's attach row wasn't written \(hc get gave no created_ms for t101\): am attach b-cccccccccc t101\./);
   assert.equal(s.hcState().terminals.find((y) => y.address === "t101").state, "live");
 });
 
@@ -4020,7 +4050,9 @@ test("code setting: create, edit, unrelated edits and invalid input preserve the
   assert.equal(enabled.code, 0, enabled.err);
   assert.equal(writer().code, true);
   assert.equal(s.cli(["ls", "--json"]).json().projects[0].bots.find((b) => b.name === "Writer").code, true);
-  assert.match(s.cli(["ls"]).out, /Writer {2}→ Genie {2}code true {2}claude/);
+  const listed = s.cli(["ls"]).out;
+  assert.match(listed, /Writer {2}→ Genie {2}claude/);
+  assert.doesNotMatch(listed, /code true/);
   assert.equal(s.cli(["show", "Writer", "--json"]).json().code, true);
   assert.match(s.cli(["show", "Writer"]).out, /code {9}true/);
   assert.ok(s.cli(["brief", "Writer", "--json"]).json().briefing.includes(WORKER_LINE));
@@ -4338,7 +4370,7 @@ test("import refuses a defined bot of another agent than its pane, naming both (
   const r = s.cli(["import", "--from-hc", "--apply"]);
   assert.equal(r.code, 1);
   assert.match(r.err, /import refused, nothing was changed: 2 conflict\(s\)/);
-  assert.match(r.out, /conflict: t7 \(runtime-cap\) runs claude, and runtime-cap \(b-bbbbbbbbbb\) is defined with agent codex; the import never attaches a bot to another agent's pane\. Edit it first \(automagik-herdr edit b-bbbbbbbbbb --agent claude\)/);
+  assert.match(r.out, /conflict: t7 \(runtime-cap\) runs claude, and runtime-cap \(b-bbbbbbbbbb\) is defined with agent codex; the import never attaches a bot to another agent's pane\. Edit it first \(am edit b-bbbbbbbbbb --agent claude\)/);
   assert.match(r.out, /conflict: Squad runtime has no captain/, "its seat is out of the plan");
   assert.equal(readFileSync(s.botsPath, "utf8"), before);
   assert.deepEqual(attachOf(s).filter((x) => x.by !== "import"), []);

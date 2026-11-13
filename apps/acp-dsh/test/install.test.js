@@ -82,6 +82,33 @@ test('an adapter installs at its newest release into a folder of its own, and mo
   }
 })
 
+test('an install with no package name is refused in words, before npm is asked or a folder made', async () => {
+  const home = scratch()
+  try {
+    const asked = []
+    const calls = []
+    const store = new AdapterStore({ home, latest: async (pkg) => { asked.push(pkg); return '1.0.0' }, install: fakeInstall(calls) })
+    // What a native agent's spec gives for `adapter` (#1110), and the other ways a name is missing.
+    assert.equal(AGENTS['acp-hermes'].adapter, undefined)
+    for (const missing of [AGENTS['acp-hermes'].adapter, '', null, 7]) {
+      for (const run of [() => store.update(missing, 'dist/index.js'), () => store.updateNow(missing, 'dist/index.js', false)]) {
+        await assert.rejects(run, (error) => {
+          assert.ok(!(error instanceof TypeError), `a TypeError for ${String(missing)}: ${error.message}`)
+          assert.match(error.message, /^an adapter install needs a package name, and got /)
+          return true
+        })
+      }
+      assert.equal(store.busy(missing), false)
+      assert.equal(store.lastFailure(missing), undefined)
+    }
+    assert.deepEqual(asked, [])
+    assert.deepEqual(calls, [])
+    assert.deepEqual(readdirSync(home), [])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('a failed install leaves the working adapter in place and no half-installed folder', async () => {
   const home = scratch()
   try {

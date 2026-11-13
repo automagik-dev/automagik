@@ -36,10 +36,13 @@
 //   the switches say, `ns.name` or a bare name], nested: [names `exec` reaches], hosted: [types
 //   of nameless tools], missing: true (no tool block), item: 'a kind of item', skills: [the
 //   person's skills], sticky: true (a skill turned off by name stays listed) }.
+// FAKE_IMAGE_PROFILE=offer|reject|delay|hang offers the scratch profile; default: old adapter.
+// FAKE_INVALID_CONFIG=mcp|features|debug emits a config warning on that successful check.
 // FAKE_IMAGE_HOLD=1 keeps the turn open after the image, until it is cancelled.
 // FAKE_IMAGE_TRACE names a file the agent appends what it was asked to (cli arguments, cwd,
 // servers, mode, CODEX_CONFIG, CODEX_HOME, permission answers, cancel, close) as JSON lines.
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
 import { serveAgent } from './serve-agent.mjs'
@@ -114,9 +117,18 @@ function promptInput(args) {
     message('user', '<environment_context>\n  <cwd>/fake</cwd>\n</environment_context>'),
   ])
 }
+function profileAt(cwd) {
+  const file = join(cwd, '.codex', 'config.toml')
+  try {
+    const config = readFileSync(file, 'utf8')
+    const id = /default_permissions = ['"]([^'"]+)['"]/.exec(config)?.[1]
+    return { config, profileId: id, configMode: statSync(file).mode & 0o777, directoryMode: statSync(join(cwd, '.codex')).mode & 0o777 }
+  } catch { return {} }
+}
 if (process.argv[2] === 'cli') {
   const args = process.argv.slice(3)
-  trace({ event: 'cli', args, cwd: process.cwd() })
+  trace({ event: 'cli', args, cwd: process.cwd(), ...profileAt(process.cwd()) })
+  if (process.env.FAKE_INVALID_CONFIG === args[0]) process.stderr.write('Invalid configuration; using defaults\n')
   if (args[0] === 'features' && args[1] === 'list') {
     const how = process.env.FAKE_FEATURES
     if (how === 'fail') process.exit(1)
@@ -154,12 +166,21 @@ const implementation = {
   async newSession(params) {
     if (MODE === 'auth') throw RequestError.authRequired(undefined, 'run codex login first')
     const sessionId = `img-${++created}`
-    sessions.set(sessionId, { cancelled: false, wake: undefined })
-    trace({ event: 'new-session', cwd: params.cwd, servers: (params.mcpServers ?? []).length })
-    return { sessionId, modes: MODES }
+    const profile = profileAt(params.cwd)
+    const mode = profile.profileId && process.env.FAKE_IMAGE_PROFILE ? { id: `permission-profile:${profile.profileId}`, name: 'Image scratch' } : undefined
+    sessions.set(sessionId, { cancelled: false, wake: undefined, modeId: MODES.currentModeId })
+    trace({ event: 'new-session', cwd: params.cwd, servers: (params.mcpServers ?? []).length, ...profile })
+    return { sessionId, modes: { ...MODES, availableModes: [...MODES.availableModes, ...(mode ? [mode] : [])] } }
   },
-  async setSessionMode({ modeId }) {
+  async setSessionMode({ sessionId, modeId }) {
     trace({ event: 'mode', modeId })
+    if (modeId.startsWith('permission-profile:')) {
+      if (process.env.FAKE_IMAGE_PROFILE === 'reject') throw RequestError.invalidParams({ reason: '/home/ada/private prompt account' })
+      if (process.env.FAKE_IMAGE_PROFILE === 'delay') await new Promise(resolve => setTimeout(resolve, 150))
+      if (process.env.FAKE_IMAGE_PROFILE === 'hang') await new Promise(() => {})
+    }
+    sessions.get(sessionId).modeId = modeId
+    trace({ event: 'mode-ack', modeId })
     return {}
   },
   async closeSession({ sessionId }) {
@@ -177,7 +198,7 @@ const implementation = {
   async prompt({ sessionId, prompt }) {
     const session = sessions.get(sessionId)
     const text = prompt.map(block => block.text ?? '').join('')
-    trace({ event: 'prompt', mentionsTool: /image generation tool/i.test(text), text })
+    trace({ event: 'prompt', modeId: session.modeId, mentionsTool: /image generation tool/i.test(text), text })
     const update = body => conn.sessionUpdate({ sessionId, update: body })
     if (MODE === 'nothing') {
       await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'I would rather not.' } })

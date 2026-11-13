@@ -60,6 +60,12 @@ export { homeRelativeText }
 
 export const adaptersHome = (env = process.env) => join(env.AUTOMAGIK_HOME || join(homedir(), '.automagik'), 'acp', 'adapters')
 const folderOf = pkg => pkg.replace(/^@/, '').replace(/\//g, '__')
+// An install is of one named npm package. An agent that runs natively has none (agents.js
+// `isNative`), so a caller that passes its `adapter` on passes nothing: said here in words,
+// before any folder is derived from the name.
+const noPackage = pkg => (typeof pkg === 'string' && pkg !== ''
+  ? undefined
+  : new Error(`an adapter install needs a package name, and got ${typeof pkg === 'string' ? 'an empty one' : pkg === null ? 'null' : typeof pkg}: an agent that runs natively has no adapter to install`))
 const readJson = (file) => {
   try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return undefined }
 }
@@ -338,6 +344,8 @@ export class AdapterStore {
 
   /** Install the newest release unless it is already here and was checked within a day. */
   update(pkg, bin, { force = false } = {}) {
+    const refused = noPackage(pkg)
+    if (refused) return Promise.reject(refused)
     const busy = this.running.get(pkg)
     if (busy) return busy
     if (this.quit.signal.aborted) return Promise.reject(new Error('install stopped: DSH is quitting'))
@@ -367,6 +375,8 @@ export class AdapterStore {
   }
 
   async updateNow(pkg, bin, force) {
+    const refused = noPackage(pkg)
+    if (refused) throw refused
     const folder = join(this.home, folderOf(pkg))
     const current = readJson(join(folder, 'current.json'))
     const have = this.binOf(pkg, bin)

@@ -397,6 +397,9 @@ export function apply(ctx, config = {}, {
       name: spec.name,
       defaultName: spec.defaultName,
       fallback: spec.fallback,
+      onChange: catalog => {
+        if (!disposed && agents.get(id)?.catalog === catalog) publish()
+      },
       home: homes && !isNative(spec) ? join(cliHome, 'catalog') : catalogHome,
       log,
       key: () => launch(spec, cli, id).key,
@@ -847,6 +850,7 @@ export function apply(ctx, config = {}, {
         homes.resume(AGENTS[id].key)
         homes.end(AGENTS[id].key)
       }
+      agents.get(id)?.catalog.refresh()
       publish()
       if (consentStates.get(id) === 'needed') return
       try {
@@ -910,6 +914,7 @@ export function apply(ctx, config = {}, {
     nextEpoch(id)
     consents.confirm(id, who)
     noteAccount(id, true, who)
+    agents.get(id)?.catalog.refresh()
     publish()
     try {
       ctx.emit?.('acp-dsh/login-ready', { id })

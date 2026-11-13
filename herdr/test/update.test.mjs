@@ -1580,7 +1580,7 @@ test("#671: the CLI's restore line names the failed version and the previous one
     process.env.PATH = `${dirname(bad.bin)}:${path}`;
     const line = await cmdUpdate({}, [], { modsDir: h.mods, env: {}, keys, fetch: fakeFetch(h.table) });
     assert.match(line, /^Automagik Herdr 0\.2\.0 failed to load \(am-tabs failed herdr-app check\): the previous version 0\.1\.0 is back\./);
-    assert.match(line, /The failed pack was removed, so `automagik-herdr update --rollback` has nothing to go back to\./);
+    assert.match(line, /The failed pack was removed, so `am update --rollback` has nothing to go back to\./);
     assert.match(line, /The bad version is held back; a newer release installs on its own\./);
     await assert.rejects(cmdUpdate({ rollback: true }, [], { modsDir: h.mods, env: {} }),
       (e) => /^Nothing rolled back: no earlier pack kept: 0\.2\.0 was removed after it failed to load, so 0\.1\.0 is the installed pack$/.test(e.message));
@@ -1659,7 +1659,7 @@ test("managedPack: only a pack install.sh put in place from a signed release; ne
   try {
     assert.deepEqual(managedPack(h.mods), { managed: true, why: null });
     writeFileSync(markerOf(h.mods), "version=0.1.0\nmods=am-sidebar,am-tabs\nbefore=none\n");
-    assert.match(managedPack(h.mods).why, /before signed releases: run `automagik-herdr update` once/);
+    assert.match(managedPack(h.mods).why, /before signed releases: run `am update` once/);
     rmSync(markerOf(h.mods));
     assert.match(managedPack(h.mods).why, /not installed by install.sh/);
     // A dev checkout: mods/am-sidebar is a link.

@@ -72,6 +72,47 @@ jobs:
           path: .cache/landing-evidence/
           if-no-files-found: warn
 
+  brand-font:
+    # The title font in docs/brand/fonts is a subset of an upstream file. This job makes the
+    # subset again from that file, at its pinned commit, and fails unless the result is the
+    # committed font, byte for byte (docs/brand/fonts/README.md has the call). The tooling is in
+    # scripts/brand-font, outside docs/brand, because that folder is copied into other repositories.
+    name: Brand font rebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Rebuild fredoka-latin.woff2 from its pinned source and compare
+        shell: bash
+        working-directory: scripts/brand-font
+        env:
+          SOURCE_URL: https://raw.githubusercontent.com/google/fonts/2e5fa2e951237b6ae65f705693d12ca76a7f78c8/ofl/fredoka/Fredoka%5Bwdth%2Cwght%5D.ttf
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts
+          mkdir -p "$RUNNER_TEMP/font-rebuild"
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$RUNNER_TEMP/font-rebuild/Fredoka.ttf" "$SOURCE_URL"
+          node rebuild.mjs "$RUNNER_TEMP/font-rebuild/Fredoka.ttf" "$RUNNER_TEMP/font-rebuild/fredoka-latin.woff2"
+
+      - name: The rebuilt font
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: brand-font-rebuild
+          path: ${{ runner.temp }}/font-rebuild/fredoka-latin.woff2
+          if-no-files-found: warn
+
   id:
     name: Automagik ID (local Workers runtime)
     runs-on: ubuntu-24.04
@@ -133,7 +174,8 @@ jobs:
     # Only when herdr/ changed, or the workflows and lane tooling that test and pack it.
     name: herdr pack (Node ${{ matrix.node }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The full CLI/worker suites plus the local/linked start matrix exceed ten minutes.
+    timeout-minutes: 15
     env:
       HERDR_CHANGED_PATHS: '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|\.github/scripts/herdr-app-check\.mjs$|scripts/(lane|version)\.ts$)'
     strategy:
@@ -738,18 +780,60 @@ jobs:
           fi
           echo "ran: ${OUTCOMES}"
 
-  pocket-link:
-    # Pocket Link's bridge (herdr/mods/pocket-link, Pocket's, never in the pack): syntax and its
-    # dependency-free tests (the pre-pairing limits, the pairing code, where its state lives,
-    # public-status.json, how the dialog finds Node), on Linux and macOS. The pack's own gate above
-    # does not run them: they live beside the mod, not in herdr/test/. Also the chat projection in
-    # chat/ (RFC 0015): its decoders, cleaner and transcript folder rule, whose cases it shares with
-    # am-sidebar in herdr/test/fixtures/transcript-folder-rule.json.
-    name: Pocket Link bridge (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+  pocket-link-changes:
+    # Decide on Linux before the matrix can request a scarce macOS runner. The shared
+    # transcript fixture is the tests' only repository input outside Pocket Link itself.
+    name: Pocket Link changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      link: ${{ steps.changed.outputs.link }}
     env:
       POCKET_LINK_CHANGED_PATHS: '^(herdr/mods/pocket-link/|herdr/test/fixtures/transcript-folder-rule\.json$|\.github/workflows/ci\.yml$)'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether Pocket Link changed
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "link=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/link-changed.txt"
+          # PRs compare from the merge base; pushes compare the complete before/after trees.
+          range="${BASE}..${HEAD_SHA}"
+          if [[ "${EVENT}" == pull_request ]]; then range="${BASE}...${HEAD_SHA}"; fi
+          if ! git diff --no-renames --name-only "${range}" > "${diff_file}"; then
+            echo "::error::git diff ${range} failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "link=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "link=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
+
+  pocket-link:
+    # The real socket-boundary test skips on Linux, so relevant changes need both OSes.
+    # Job-level if is evaluated before matrix expansion and runner allocation.
+    name: Pocket Link bridge (${{ matrix.os }})
+    needs: pocket-link-changes
+    if: needs.pocket-link-changes.outputs.link == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -760,92 +844,60 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Whether Pocket Link changed
-        id: changed
-        working-directory: .
-        env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-            echo "link=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
-          # match, and pipefail reads that as "did not change" (#895).
-          diff_file="${RUNNER_TEMP}/link-changed.txt"
-          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
-            echo "::error::git diff ${BASE}...HEAD failed"
-            exit 1
-          fi
-          grep_status=0
-          grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
-          case "${grep_status}" in
-            0) echo "link=true" >> "$GITHUB_OUTPUT" ;;
-            1) echo "herdr/mods/pocket-link/ did not change: nothing to test" ;;
-            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
-          esac
-
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        if: steps.changed.outputs.link == 'true'
         with:
           node-version: '22'
 
       - name: Syntax
         id: syntax
-        if: steps.changed.outputs.link == 'true'
         run: |
           set -euo pipefail
           for f in bridge/*.mjs chat/*.js chat/*.mjs find-node.js main.js; do node --check "$f"; done
 
       - name: Test
         id: test
-        if: steps.changed.outputs.link == 'true'
         run: node --test bridge/*.test.mjs chat/*.test.mjs find-node.test.mjs
 
-      # The change check and this assertion read the same diff in two independent steps: a skip
-      # in the first one cannot hide a change from the second (#895, as usagemeter's).
       - name: Assert the steps ran
         if: always()
-        working-directory: .
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           OUTCOMES: syntax=${{ steps.syntax.outcome }} test=${{ steps.test.outcome }}
         run: |
           set -euo pipefail
-          changed=false
-          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-            changed=true
-          else
-            diff_file="${RUNNER_TEMP}/link-assert.txt"
-            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
-              echo "::error::git diff ${BASE}...HEAD failed"
+          for outcome in ${OUTCOMES}; do
+            if [[ "${outcome#*=}" != success ]]; then
+              echo "::error::Pocket Link ${outcome%%=*} did not succeed"
               exit 1
             fi
-            grep_status=0
-            grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
-            case "${grep_status}" in
-              0) changed=true ;;
-              1) ;;
-              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
-            esac
-          fi
-          if [[ "${changed}" != true ]]; then
-            echo "herdr/mods/pocket-link/ unchanged: no steps expected"
-            exit 0
-          fi
-          missing=''
-          for outcome in ${OUTCOMES}; do
-            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
           done
-          if [[ -n "${missing}" ]]; then
-            echo "::error::herdr/mods/pocket-link/ changed but these steps did not succeed:${missing}"
+          echo "ran: ${OUTCOMES}"
+
+  pocket-link-required:
+    # Branch protection must require this stable aggregate, not either conditional OS job.
+    name: Pocket Link bridge
+    needs: [pocket-link-changes, pocket-link]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful coverage when Pocket Link changed
+        env:
+          DETECTION: ${{ needs.pocket-link-changes.result }}
+          CHANGED: ${{ needs.pocket-link-changes.outputs.link }}
+          TESTS: ${{ needs.pocket-link.result }}
+        run: |
+          set -euo pipefail
+          if [[ "${DETECTION}" != success ]]; then
+            echo "::error::Pocket Link path detection did not succeed (${DETECTION})"
             exit 1
           fi
-          echo "ran: ${OUTCOMES}"
+          case "${CHANGED}:${TESTS}" in
+            true:success) echo "Pocket Link passed on Linux and macOS" ;;
+            false:skipped) echo "Pocket Link unchanged: no macOS runner needed" ;;
+            *) echo "::error::Pocket Link coverage missing (changed=${CHANGED}, tests=${TESTS})"; exit 1 ;;
+          esac
 
   meter:
     # Meter's local tools (meter/statusline: the Claude Code status line and the limits logger that
@@ -1243,6 +1295,22 @@ jobs:
         if: matrix.app == 'bots-dsh'
         run: echo "CHROME_BIN=/usr/bin/google-chrome" >> "$GITHUB_ENV"
 
+      - name: Electron for the Bot team's script wall check
+        # browser_exec's process wall is checked on both runtimes the Bot team ships on. The
+        # desktop app's is Electron as Node: the Electron apps/desktop pins, from its lock.
+        # Under CI that half fails, rather than skips, when it finds no Electron.
+        if: matrix.app == 'bots-dsh'
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          npm ci --no-fund --no-audit
+          # The package fetches its binary on first use, checked against its own checksums,
+          # and says so on stdout: fetch first, then ask for the path alone.
+          node node_modules/electron/install.js
+          bin="$(node -p "require('electron')")"
+          test -x "${bin}"
+          echo "ELECTRON_BIN=${bin}" >> "$GITHUB_ENV"
+
       - name: Generated files are current
         # A package with no browser half has no client to build.
         run: '[ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check'
@@ -1252,6 +1320,76 @@ jobs:
 
       - name: Test
         run: bun run test
+
+  acp-image-read:
+    name: acp-dsh (real Codex image reads)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/acp-dsh
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install plugin dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pinned native Codex and public runtime canary
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/image-read"
+          mkdir -p "${dir}/tmp"
+          release="https://github.com/openai/codex/releases/download/rust-v0.167.1"
+          curl -fsSL "${release}/codex-x86_64-unknown-linux-musl.tar.gz" -o "${dir}/codex.tgz"
+          hash=64bcc99c32e434b4bcb0508a97df9b7aeecdb97e956d976fb13661096ec4e3e2
+          echo "${hash}  ${dir}/codex.tgz" | sha256sum --check --strict
+          tar -xzf "${dir}/codex.tgz" -C "${dir}"
+          curl -fsSL "${release}/bwrap-x86_64-unknown-linux-musl.tar.gz" -o "${dir}/bwrap.tgz"
+          hash=eb799e781a9ffd37b1ee46280fda10212a6efaf3cccfb8bf7603a00520355ac7
+          echo "${hash}  ${dir}/bwrap.tgz" | sha256sum --check --strict
+          mkdir -p "${dir}/codex-resources"
+          tar -xzf "${dir}/bwrap.tgz" -C "${dir}/codex-resources"
+          mv "${dir}/codex-resources/bwrap-x86_64-unknown-linux-musl" \
+            "${dir}/codex-resources/bwrap"
+          # Ubuntu restricts unprofiled user namespaces. Allow this runner's bwrap only;
+          # its mount/network sandbox and the tested Codex read policy still apply.
+          cat > "${dir}/bwrap.apparmor" <<EOF
+          abi <abi/4.0>,
+          profile image-read-bwrap "${dir}/codex-resources/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "${dir}/bwrap.apparmor"
+          # A public 1x1 PNG, installed only in this disposable runner's runtime read root.
+          png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9aw'
+          printf '%s' "${png}AAAABJRU5ErkJggg==" | base64 --decode > "${dir}/runtime.png"
+          sudo install -m 644 "${dir}/runtime.png" /usr/local/share/automagik-image-read.png
+          echo "AUTOMAGIK_TEST_CODEX=${dir}/codex-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
+          echo 'AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE=/usr/local/share/automagik-image-read.png' \
+            >> "$GITHUB_ENV"
+          echo "TMPDIR=${dir}/tmp" >> "$GITHUB_ENV"
+
+      - name: Real helper reads (required, no skips)
+        run: |
+          set -euo pipefail
+          sudo systemd-run --quiet --wait --pipe \
+            -p MemoryMax=4G -p MemorySwapMax=0 -p "User=$(id -un)" \
+            -p "WorkingDirectory=${PWD}" \
+            env "PATH=${PATH}" "TMPDIR=${TMPDIR}" NODE_OPTIONS=--max-old-space-size=2048 \
+            "AUTOMAGIK_TEST_CODEX=${AUTOMAGIK_TEST_CODEX}" \
+            "AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE=${AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE}" \
+            AUTOMAGIK_REQUIRE_IMAGE_READ_TEST=1 \
+            node scripts/image-read-gate.mjs
 
   pets:
     # The headless pet bake (automagik-pets) on Node, as DSH and Automagik Herdr run it: Bun

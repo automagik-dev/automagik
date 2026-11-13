@@ -1,17 +1,18 @@
 // The image run's lockdown against a real Codex and a real codex-acp (image.js, #870). Opt-in:
-// CI installs neither, so every test here is skipped unless both are named:
+// The ordinary plugin CI job installs neither; every test here skips unless both are named:
 //   AUTOMAGIK_TEST_CODEX_ACP  codex-acp's dist/index.js
 //   AUTOMAGIK_TEST_CODEX      a Codex executable (the native one, or its launcher)
 // Codex runs in a throwaway HOME and CODEX_HOME made here: it is never signed in, no model
 // request is sent, and nothing of the person's own Codex home is read or written.
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { createInterface } from 'node:readline'
 import { AgentRun } from '../src/host/acp.js'
-import { checkFeatures, checkOffered, configArgs, IMAGE_FEATURES_ALSO_OFF, IMAGE_FEATURES_OFF, imageSetup, readFeatures, readOffered } from '../src/host/image.js'
+import { checkFeatures, checkOffered, configArgs, IMAGE_FEATURES_ALSO_OFF, IMAGE_FEATURES_OFF, imageOverrides, imageProfile, imageSetup, readFeatures, readOffered } from '../src/host/image.js'
 import { isAuthRequired } from '../src/host/names.js'
 
 const ADAPTER = process.env.AUTOMAGIK_TEST_CODEX_ACP
@@ -97,4 +98,54 @@ test('real codex-acp: starts with the run\'s CODEX_CONFIG and stops at the sign-
   t.after(() => run.dispose())
   await assert.rejects(run.start(), error => isAuthRequired(error))
   assert.equal(typeof run.init?.protocolVersion, 'number', 'initialize answered')
+})
+
+
+test('real Codex: the scratch permission profile is listed and allowed without config warnings', { skip, timeout: 30_000 }, async (t) => {
+  const { root, env } = home(t)
+  const cwd = realpathSync(join(root, 'cwd'))
+  const profile = imageProfile()
+  mkdirSync(join(cwd, '.codex'), { mode: 0o700 })
+  writeFileSync(join(cwd, '.codex', 'config.toml'), profile.config, { mode: 0o600 })
+  const child = spawn(CODEX, ['app-server', ...configArgs({ projects: imageOverrides({ project: cwd }).projects })], {
+    cwd, env: { PATH: process.env.PATH, ...env, NO_COLOR: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const lines = createInterface({ input: child.stdout })
+  const pending = new Map()
+  let stderr = ''
+  let nextId = 0
+  child.stderr.on('data', chunk => { stderr += chunk })
+  const fail = error => { for (const waiter of pending.values()) waiter.reject(error); pending.clear() }
+  child.on('error', fail)
+  child.on('exit', () => fail(new Error('Codex app-server exited before answering')))
+  lines.on('line', line => {
+    const answer = JSON.parse(line)
+    const waiter = pending.get(answer.id)
+    if (!waiter) return
+    pending.delete(answer.id)
+    if (answer.error) waiter.reject(new Error(JSON.stringify(answer.error)))
+    else waiter.resolve(answer.result)
+  })
+  const timer = setTimeout(() => { fail(new Error('Codex app-server did not answer in time')); child.kill('SIGKILL') }, 25_000)
+  t.after(async () => {
+    clearTimeout(timer)
+    lines.close()
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise(resolve => child.once('exit', resolve))
+      child.kill('SIGKILL')
+      await exited
+    }
+  })
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = ++nextId
+    pending.set(id, { resolve, reject })
+    child.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
+  })
+  await request('initialize', { clientInfo: { name: 'automagik-image-test', version: '1' }, capabilities: { experimentalApi: true } })
+  child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`)
+  const listed = await request('permissionProfile/list', { cwd })
+  const found = listed.data.find(entry => entry.id === profile.id)
+  assert.ok(found, 'the project profile is listed')
+  assert.equal(found.allowed, true)
+  assert.doesNotMatch(stderr, /Invalid configuration/i)
 })

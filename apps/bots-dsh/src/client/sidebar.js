@@ -404,7 +404,7 @@ export function TeamSidebar(props) {
   const toolProps = { wide, roster, actions: rowActions, useRoster }
   return h('div', { className: wide ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
     wide ? h('div', { className: 'bt-side-top' },
-      h('span', { className: 'bt-brand' }, h(Lockup, { height: 27 })),
+      h('span', { className: 'bt-brand' }, h(Lockup, { height: 21 })),
       h(WorkCodeSwitch, { roster, useSessions }),
       h(UpdateButton, { useUpdate: props.useUpdate, actions }),
       h(SidebarTools, toolProps),
@@ -789,13 +789,14 @@ export function FooterAccount(props) {
 }
 
 // The only entry registered in every mode: in Agent mode the whole Bot surface is
-// withdrawn, and this button in the shell's own footer is the way back.
+// withdrawn, and this button in the shell's own footer is the way back. It carries the
+// app's mark, so the name beside it is the app's, Automagik (#1160): Omni is one of its Bots.
 export function BotReturn({ wide, useSurface, actions }) {
   const mode = useSurface(value => value.mode)
   if (mode !== 'agent') return null
-  return h('button', { type: 'button', className: 'bt-return', 'aria-label': t('Omni'), title: t('Omni'), onClick: () => actions.setSurface('bot') },
+  return h('button', { type: 'button', className: 'bt-return', 'aria-label': t('Back to Automagik'), title: t('Back to Automagik'), onClick: () => actions.setSurface('bot') },
     h(OmniMark, { size: 20 }),
-    wide ? h('span', { className: 'bt-return-name' }, t('Omni')) : null)
+    wide ? h('span', { className: 'bt-return-name' }, t('Automagik')) : null)
 }
 
 // Agent mode has none of the shell-group styles, so the return button carries its own.
@@ -814,7 +815,7 @@ export function BrandMark({ size = 24 }) {
   return h('span', { className: 'bt-brand-mark' }, h(OmniMark, { size }))
 }
 export function BrandName() {
-  return h('span', { className: 'bt-brand-name' }, h(Wordmark, { height: 16 }))
+  return h('span', { className: 'bt-brand-name' }, h(Wordmark, { height: 25 }))
 }
 
 // With the whale holding the settings seat, the Bot row is just the account menu;
@@ -823,13 +824,13 @@ export function BrandName() {
 export const SIDEBAR_CSS = `
 .bt-confirm{width:260px;max-width:72vw;padding:10px 12px 12px;display:flex;flex-direction:column;gap:10px}
 .bt-confirm-text{margin:0;font-size:13px;line-height:19px;color:var(--bt-ink-2)}
-.bt-confirm-error{margin:0;font-size:12px;line-height:17px;color:var(--bt-danger);overflow-wrap:anywhere}
+.bt-confirm-error{margin:0;font-size:12px;line-height:17px;color:var(--st-bad-strong,var(--bt-danger));overflow-wrap:anywhere}
 .bt-confirm-row{display:flex;justify-content:flex-end;gap:8px}
 .bt-menu .bt-confirm button{width:auto;min-height:0}
 .bt-confirm-go{height:28px;padding:0 14px;border:0;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink);font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:opacity .12s ease}
 .bt-confirm-go:hover:not(:disabled){opacity:.9}
 .bt-confirm-go:disabled{opacity:.6;cursor:default}
-.bt-side-top .bt-brand{cursor:default;padding-left:6px}
+.bt-side-top .bt-brand{cursor:default;padding-left:6px;padding-right:4px}
 .bt-side-top .bt-brand:hover{background:none}
 .bt-brand .bt-mark{flex:none}
 /* In the app the window's title bar carries the brand (or the system's, on macOS): the
@@ -913,7 +914,7 @@ body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 @keyframes bt-update-pop{from{opacity:0;transform:scale(.96);filter:blur(4px)}}
 .bt-update-title{font-size:14px;line-height:20px;font-weight:600}
 .bt-update-text{margin-top:2px;font-size:12.5px;line-height:18px;color:var(--bt-ink-2)}
-.bt-update-error{margin-top:8px;font-size:12px;line-height:17px;color:var(--bt-danger);overflow-wrap:anywhere;max-height:90px;overflow:auto}
+.bt-update-error{margin-top:8px;font-size:12px;line-height:17px;color:var(--st-bad-strong,var(--bt-danger));overflow-wrap:anywhere;max-height:90px;overflow:auto}
 .bt-update-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px}
 .bt-update-notes{margin-right:auto;font-size:12.5px;color:var(--bt-ink-2);text-decoration:none}
 .bt-update-notes:hover{color:var(--bt-ink);text-decoration:underline}

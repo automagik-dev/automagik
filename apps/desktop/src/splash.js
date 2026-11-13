@@ -17,7 +17,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-export const LOCKUP = join(HERE, 'splash', 'lockup.png')
+// The approved lockup (byte copies of the final set, src/art/SOURCE.json): ink letters for the
+// light material, cream letters for the dark one. The panel takes the system's material, so
+// the caller says which the system shows.
+export const LOCKUPS = Object.freeze({
+  ink: join(HERE, 'splash', 'automagik-lockup-three-colours-ink-128.png'),
+  cream: join(HERE, 'splash', 'automagik-lockup-three-colours-cream-128.png'),
+})
+export const lockupFor = dark => (dark === true ? LOCKUPS.cream : LOCKUPS.ink)
 export const OSASCRIPT = '/usr/bin/osascript'
 export const SPLASH_MAX_MS = 120_000
 // The steps after the splash went up, in order: each is a file of that name beside "up".
@@ -49,7 +56,7 @@ function run(argv) {
   card.setWantsLayer(true);
   card.layer.setCornerRadius(22);
   card.layer.setMasksToBounds(true);
-  const art = $.NSImageView.alloc.initWithFrame($.NSMakeRect(46, 124, W - 92, 64));
+  const art = $.NSImageView.alloc.initWithFrame($.NSMakeRect(30, 124, W - 60, 64));
   art.setImage($.NSImage.alloc.initWithContentsOfFile(image));
   art.setImageScaling(3);
   const heading = $.NSTextField.labelWithString(title);
@@ -99,7 +106,7 @@ export const splashText = (product, version) => ({
  * Puts the splash up for an update to `version` and leaves it running after this process quits.
  * Answers whether it went up: only on macOS, and only when its files could be written.
  */
-export function showUpdateSplash({ home, product, version, platform = process.platform, spawn = spawnChild, image = LOCKUP }) {
+export function showUpdateSplash({ home, product, version, dark = false, platform = process.platform, spawn = spawnChild, image = lockupFor(dark) }) {
   if (platform !== 'darwin') return false
   const files = splashFiles(home)
   try {

@@ -58,6 +58,24 @@ test('SSH aliases resolve through argv-only ssh -G and return exactly four field
   assert.ok(!JSON.stringify(result).includes('private'))
 })
 
+test('the computer list is the Host entries of the SSH config: every alias, no wildcard or negated pattern, Include optional', async t => {
+  const config = [
+    'Host sample-box', '  HostName sample-box.example.invalid', '  User sample-user', '',
+    'Host other-box second-name', '  Port 2200', '',
+    'Host *.example.invalid sample-* !sample-negated sample?', '  ForwardAgent no', '',
+    'Host *', '  ServerAliveInterval 30', '',
+  ].join('\n')
+  // No Include at all: the config alone is the list.
+  const plain = await discover(await fixture(t, { config }), resolver().execFile)
+  assert.deepEqual(plain.aliases.map(host => host.alias), ['sample-box', 'other-box', 'second-name'])
+  exactFields(plain)
+  // An Include adds its Host entries where it stands; one that matches no file changes nothing.
+  const included = await discover(await fixture(t, { config: `Include config.d/*.conf\nInclude missing.d/*.conf\n${config}`, 'config.d/team.conf': 'Host sample-team\nHost team-* *\n' }), resolver().execFile)
+  assert.deepEqual(included.aliases.map(host => host.alias), ['sample-team', 'sample-box', 'other-box', 'second-name'])
+  exactFields(included)
+  for (const result of [plain, included]) assert.ok(!result.aliases.some(host => /[*?!]/.test(host.alias)), 'a pattern is never offered as a computer')
+})
+
 test('recursive Include globs use the SSH directory, quotes and equals syntax, skip Match, and stop cycles', async t => {
   const sshDir = await fixture(t, {
     config: 'Host = "sample-root"\nInclude = "config.d/0?.conf" # comment\nMatch user sample-user\n Include excluded.conf\nHost "sample-after"\nInclude nested/first.conf\n',

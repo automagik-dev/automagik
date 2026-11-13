@@ -134,6 +134,12 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // the install/check helper) rides the herdr pack's release, copied byte-equal by the pack at
 // enablement; no release here carries it, so a change to it alone cuts no release, and it must
 // never become a plugin tarball.
+// The repository's Claude Code skills (.claude/skills/: the brand skill, which points agents at
+// docs/brand) are read by an agent working in a checkout. No build, plugin, pack or app carries
+// them, and nothing else under .claude/ is ever tracked (.gitignore).
+// The published skills (skills/: the am skill, which teaches am to an agent) are read from the
+// repository's default branch by `npx skills add`. No release carries them: am's tarball holds
+// am/ alone.
 // The only file under herdr/scripts/ that ships through: release.yml runs the tag's own
 // herdr/scripts/pack.mjs ("Pack the herdr pack") to build the attached tarball, so a change to it
 // alters what a release builds and ships. Every other file under herdr/scripts/ is tooling the pack
@@ -144,7 +150,8 @@ const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^apps\/desktop\/wslc\//,
   /^meter\/(statusline|schema)\//, /^meter\/usagemeter\/[^/]+\.md$/, /^meter\/usagemeter\/tests\//,
-  /^apps\/landing\//, /^apps\/id\//, /^server\//, /^apps\/dsh-sandbox\//, /^\.genie\//];
+  /^apps\/landing\//, /^apps\/id\//, /^server\//, /^apps\/dsh-sandbox\//, /^\.genie\//, /^\.claude\//,
+  /^skills\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).

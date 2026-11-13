@@ -19,5 +19,6 @@ Automagik holds the DeepSeek Harness (DSH) plugins every Automagik product build
 - Generated client bundles (`client.js`) are committed: run `node scripts/build-client.mjs` in the plugin and commit the result.
 - Plugin ids, routes, storage prefixes and the team's home are a public contract: installed teams keep their data there. Do not rename them.
 - Omni-specific code still in the Bot team (the `omni_*` tool names, Omni as the Main Bot) belongs in Omni's plugins; move it there, not further in.
+- Brand (`docs/brand/`): any work on a logo, a colour, type, a UI surface or brand art starts from `docs/brand/README.md` and uses its files and tokens. Never redraw a mark or invent a colour.
 - Commits are conventional (`type(scope): description`); pull requests target `dev`.
 - Do not start services, access production systems or send external messages without explicit approval.

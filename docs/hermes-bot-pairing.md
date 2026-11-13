@@ -37,9 +37,10 @@ unique. Hermes remains responsible for its own concurrent session admission.
 
 ## Automagik DSH
 
-Use Settings → Remote Hermes to connect and select a profile. Through SSH also
-accepts an explicit **Hermes home** (an existing absolute data folder); executable
-path and data home are separate fields. The owned server and its one-shot token
+Use Settings → Remote Hermes to connect: choose the computer, Connect; a profile is
+asked for only when Hermes has several. Under **More**, Through SSH also accepts an
+explicit **Hermes home** (an existing absolute data folder); executable path and data
+home are separate fields. The owned server and its one-shot token
 use that home, never an inherited profile or another user's default home.
 
 First choose the Remote Hermes route in the intended Bot's chat, then select that

@@ -11,6 +11,7 @@ import { apply } from '../index.js'
 import { install, askText, questionText, hardNever, stopNever, stopPerson, KEEP_WORKING } from '../src/host/ladder.js'
 import { refusalCounter } from '../src/host/auto-judge.js'
 import { TEAM_LOOKUPS } from '../src/host/approvals.js'
+import { REMOTE_TOOL, remoteApproval } from '../src/host/remote-chat-adapter.js'
 import { fakeContext } from './fake-ctx.js'
 
 const allow = { kind: 'allow' }
@@ -49,6 +50,21 @@ test('D2 Full access leaves a hard step alone', async () => {
   const w = world({ full: true, policy: 'never' })
   assert.equal(await w.pre(w.exec({ arguments: { command: 'rm -rf x' } })), allow)
   assert.deepEqual([w.requests, w.stops], [[], []])
+})
+test('D2b a Remote Hermes mirror card is left alone at every level, and only what Hermes asks is asked', async () => {
+  // The step runs on the other computer under Hermes's rules: a question here could not stop it.
+  const hard = { id: 'tool-a', title: 'terminal', input: { command: 'rm -rf build' } }
+  for (const [level, options] of [['asking', {}], ['never-ask', { policy: 'never' }], ['Full access', { policy: 'never', full: true }]]) {
+    const w = world(options)
+    assert.equal(await w.pre(w.exec({ name: REMOTE_TOOL, arguments: hard })), allow, level)
+    assert.deepEqual([w.requests, w.stops], [[], []], level)
+  }
+  const w = world()
+  // The same step in a tool of this computer is still asked about.
+  assert.equal((await w.pre(w.exec({ name: 'terminal', arguments: hard.input }))).kind, 'ask')
+  // Hermes's own question reaches the person in its own words, and the answer goes back.
+  assert.equal(await remoteApproval(w.ctx, { session: { id: 'ada' } }, { request_id: 'approval-1', description: 'Delete the folder build' }), 'once')
+  assert.deepEqual(w.requests.map(request => [request.toolName, request.callId, request.reason]), [[REMOTE_TOOL, 'approval-1', 'Remote Hermes: Delete the folder build']])
 })
 test('D3 an inner deny cannot become an overridable ask', async () => {
   const w = world(); const deny = { kind: 'deny', reason: 'x' }

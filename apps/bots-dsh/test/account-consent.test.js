@@ -471,3 +471,17 @@ test('the carried notice is acknowledged from a window that only reads the team'
   // The person's word is given where the Bot's model can be applied.
   assert.equal(reads.includes("'cli-login-confirm'"), false)
 })
+
+test('an adapter event changes modelsKey even when every model id stays the same', async t => {
+  const h = await start(TEAM())
+  t.after(h.stop)
+  const before = (await h.call('state', {})).value
+  const ids = (await h.rt.catalog()).map(entry => entry.ref)
+  h.ctx.emit('llm/adapters-updated')
+  const after = (await h.call('state', {
+    since: before.revision, models: before.modelsKey,
+  })).value
+  assert.notEqual(after.modelsKey, before.modelsKey)
+  assert.notEqual(after.unchanged, true)
+  assert.deepEqual((await h.rt.catalog()).map(entry => entry.ref), ids)
+})

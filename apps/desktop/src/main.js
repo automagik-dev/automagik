@@ -930,7 +930,7 @@ function installUpdate() {
   const out = leave('update restart')
   update = { ...update, state: 'restarting' }
   publishUpdate()
-  const splash = showUpdateSplash({ home, product: PRODUCT, version: update?.version })
+  const splash = showUpdateSplash({ home, product: PRODUCT, version: update?.version, dark: nativeTheme.shouldUseDarkColors })
   if (!splash && process.platform === 'darwin' && Notification.isSupported()) {
     new Notification({ title: `Updating ${PRODUCT}`, body: `${PRODUCT} reopens by itself in about a minute. Leave it closed until then.`, silent: true }).show()
   }

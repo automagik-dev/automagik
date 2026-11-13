@@ -151,7 +151,8 @@ stays, and so does any route that names a key. `signin-start` (and the other `si
 endpoints) refuse `anthropic` and `openai-codex`: nothing here starts DSH's own Claude or
 ChatGPT plan sign-in. Images and the companion's drawing on a ChatGPT plan go through Codex's
 own sign-in (acp-dsh's `generateImage`); an `openai-codex` record an earlier version stored is
-still read as a last resort, and an OpenAI API key draws as before. dsh-subscriptions no
+read as a last resort only when acp-dsh answers normally and declares a shared auth scope.
+An OpenAI API key draws as before. dsh-subscriptions no
 longer ships `claude` or `codex` (0.7.21-omni.1), so nothing stands for them.
 
 The route earlier versions added for DSH's Claude sign-in did not retry a 429 (`retryPolicy`

@@ -82,7 +82,7 @@ export async function prepareHermesConnection(draft, {
   let phase = 'reach'
   const viaSsh = (message, kind) => Object.assign(fail(message, `ssh-${kind}`), { sshError: kind, sshStage: phase })
   const remaining = () => {
-    if (controller.signal.aborted || Date.now() >= until) throw fail('Connection setup was cancelled or timed out. Test the connection again.', 'timeout')
+    if (controller.signal.aborted || Date.now() >= until) throw fail('Connection setup was cancelled or timed out. Connect again.', 'timeout')
     return Math.max(1, Math.min(deadlines.control, until - Date.now()))
   }
   async function request(path, { method = 'GET', body, headers = authHeaders } = {}) {
@@ -99,7 +99,7 @@ export async function prepareHermesConnection(draft, {
           method, headers: { ...headers, ...(body ? { 'Content-Type': 'application/json' } : {}) },
           ...(body ? { body: JSON.stringify(body) } : {}), redirect: 'manual', signal: requestController.signal,
         }).catch(error => { throw owned && !requestController.signal.aborted ? viaSsh('The SSH tunnel is open, but Hermes did not answer through it.', 'tunnel') : error })
-        if (response.status >= 300 && response.status < 400) throw fail('Hermes redirected this request. Enter its final address and test again.')
+        if (response.status >= 300 && response.status < 400) throw fail('Hermes redirected this request. Enter its final address and try again.')
         if (owned && (response.status === 401 || response.status === 403)) throw viaSsh('The remote Hermes did not accept this connection’s private token.', 'handshake')
         if (!response.ok) throw fail(response.status === 401 || response.status === 403
           ? 'Hermes did not accept the sign-in. Check the token, user or password.' : 'Hermes could not complete this request. Try again.', response.status === 401 || response.status === 403 ? 'auth' : 'connection')
@@ -180,7 +180,7 @@ export async function prepareHermesConnection(draft, {
     // Cookie components are independently sensitive when a remote echoes one value.
     if (authHeaders.Cookie) for (const cookie of authHeaders.Cookie.split(';')) addCookieSecret(cookie.slice(cookie.indexOf('=') + 1).trim())
     const redact = connectionRedactor(redactionSecrets)
-    let profiles = []
+    let profiles = [], defaultProfile
     if (discover) {
       const { value: status } = await request('/api/status')
       onProgress('sign-in')
@@ -194,15 +194,23 @@ export async function prepareHermesConnection(draft, {
         const { value: active } = await request('/api/profiles/active')
         if (!profileName(active.current)) throw fail('Hermes did not identify the profile it serves.', 'profiles')
         served = new Set([active.current])
+        defaultProfile = active.current
       }
       profiles = inventory.profiles.filter(profile => object(profile) && profileName(profile.name) && served.has(profile.name) && redact(profile.name) === profile.name)
         .map(profile => ({ id: profile.name, name: redact(typeof profile.display_name === 'string' && profile.display_name.trim() ? profile.display_name : profile.name) }))
       if (!profiles.length) throw fail('This Hermes has no available profiles. Check which profiles its gateway serves.', 'profiles')
+      // Several profiles to choose from: the one Hermes itself calls its default is offered
+      // first. Asking is optional; a Hermes that does not say leaves the first of its list.
+      if (profiles.length > 1 && !defaultProfile) try {
+        const { value: active } = await request('/api/profiles/active')
+        for (const name of [active?.current, active?.active]) if (!defaultProfile && profiles.some(profile => profile.id === name)) defaultProfile = name
+      } catch (error) { if (controller.signal.aborted) throw error }
+      if (!profiles.some(profile => profile.id === defaultProfile)) defaultProfile = profiles[0].id
       onProgress('open')
     }
     let closePromise
     return {
-      mode: draft.mode, authMode, address, credential, authHeaders, redactionSecrets, profiles,
+      mode: draft.mode, authMode, address, credential, authHeaders, redactionSecrets, profiles, defaultProfile,
       ssh: draft.mode === 'ssh' ? Object.fromEntries(['host', 'user', 'port', 'identityFile', 'hermesPath', 'hermesHome'].filter(name => draft.ssh[name] !== undefined).map(name => [name, draft.ssh[name]])) : undefined,
       secret: persisted,
       allowLoopback: draft.mode === 'ssh',

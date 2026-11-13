@@ -2,6 +2,7 @@ import { createElement as h, useEffect, useRef, useState } from 'react'
 import { call, callOmniUi } from './api.js'
 import { OCTOPUS_SVG, omniFace } from './octopus.js'
 import { CLAY_OMNI, LAMP, faceAt } from './vendor/clay-art.js'
+import { ProductLockup } from './product-lockup.js'
 import { Stage, reducedMotion, useFinish, useGate, useGlitch } from './stage.js'
 import { InstallLog } from './terminal.js'
 import { t } from './i18n.js'
@@ -724,7 +725,7 @@ export function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
     h(Machine, { phase, detail, power, live, onPower },
       h('div', { className: 'oai-octo-wrap', dangerouslySetInnerHTML: { __html: portraitOf(phase) } })),
     h('header', null,
-      h('h2', null, 'Omni'),
+      h(ProductLockup, { product: 'omni' }),
       awake && phase !== 'failed'
         ? h('span', { className: 'oai-team-line' }, h('span', { className: 'oai-on-team' }, h(Check), t('On your team')), h('button', { type: 'button', className: 'oai-remove', onClick: onPower, disabled: phase === 'installing' || phase === 'starting' }, t('Remove')))
         : null),
@@ -740,7 +741,7 @@ export function GenieCard({ power, host = null }) {
     h(Machine, { kind: 'genie', phase, detail, onPower: power.toggle },
       h('div', { className: 'oai-genie-wrap' }, h(GeniePet, { expression: genieExpressionOf(phase) }))),
     h('header', null,
-      h('h2', null, 'Genie'),
+      h(ProductLockup, { product: 'genie' }),
       joined ? h('span', { className: 'oai-team-line' }, h('span', { className: 'oai-on-team' }, h(Check), t('On your team'))) : null),
     h('p', { className: 'oai-about oai-wish' },
       h('img', { className: 'oai-wish-lamp', src: LAMP, alt: '', draggable: false }),
