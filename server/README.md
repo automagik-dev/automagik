@@ -4,7 +4,7 @@ The `automagik-web` DeepSeek Harness profile on a host: dsh's base and web app, 
 (`@automagik/bots-dsh`), the welcome (`@automagik/welcome-dsh`) and ACP agents
 (`@automagik/acp-dsh`), from one chosen release. Built by CI only
 (`.github/workflows/server-image.yml`): every change builds, smokes and scans it, and a dispatch
-or a published release pushes it to `ghcr.io/automagik-dev/automagik-server` as
+or a published release pushes it to `ghcr.io/automagik-si/automagik-server` as
 `:<content>-<short sha>` and, when allowed, `:latest`. There is no laptop push. Tracked in #620.
 
 Pins: dsh `0.2.2-rc.2` (the desktop runtime's own lock) and the plugins at one release, the
@@ -31,7 +31,7 @@ a plugin update cannot keep a stale manifest.
 ## Pull
 
 ```sh
-docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
+docker pull ghcr.io/automagik-si/automagik-server@sha256:…
 ```
 
 Every run that pushes writes the manifest digest into the release's own record: the asset
@@ -46,7 +46,7 @@ gh release download v3.93.0 --pattern server-image.json --output - | jq -r .ref
 The record holds `image`, `digest`, `ref` (`image@digest`), `version` (the content release),
 `revision` (the workflow commit) and `tag`. The `record` job builds it only from the digest the
 push printed, refuses anything that is not a `sha256:` manifest digest, reads the asset back from
-the release, and is the only job that may write to a release (it has no registry access). A
+the release, and is the only job that may write to a release or attest the pushed digest. A
 later push for the same content release replaces the record; a desktop rebuild keeps it. The
 publish job also prints the digest in its summary and saves it as `image-digest.txt`. `:<content>-<short sha>` identifies one build of one content release from
 one commit; the version label is the content release and the revision label the commit. `:latest`
@@ -54,11 +54,47 @@ moves only when the content release is not a prerelease and its version is not o
 published `:latest` (compared by that label). GitHub creates a new package private, so the first
 publish needs the one-time visibility flip below before an anonymous pull works.
 
+## Follow
+
+Arca and other consumers discover the newest stable image at one URL:
+
+<https://github.com/automagik-si/automagik/releases/download/server-lane/server-image.json>
+
+After the `record` job attests the pushed digest and records it on its content release, the
+`server-lane` job replaces that same record on `server-lane`. This rolling release is created as a prerelease,
+never marked Latest and never edited by hand. The lane job takes turns in a concurrency group (one waiting, an older waiting run dropped for a
+newer, as `pocket-lane`), compares all three version components numerically, and refuses an older content
+version. A rebuild of the same version may replace its digest. Prereleases never advance the
+lane. An unreadable or malformed existing pointer stops the update; only a confirmed missing
+release creates the lane.
+
+Each pushed image receives a GitHub build-provenance attestation through
+`actions/attest-build-provenance`, published to GHCR with `push-to-registry`. Signing is keyless:
+only the `record` job gets `id-token: write` and `attestations: write`; it uses the workflow token
+for registry access, with no new secret. Verify the digest before pulling or deploying it:
+
+```sh
+curl -fsSL https://github.com/automagik-si/automagik/releases/download/server-lane/server-image.json \
+  -o server-image.json
+ref=$(jq -er 'select(.schema == 1 and .image == "ghcr.io/automagik-si/automagik-server"
+  and (.digest | test("^sha256:[0-9a-f]{64}$")) and .ref == (.image + "@" + .digest)) | .ref' server-image.json)
+gh attestation verify "oci://${ref}" --repo automagik-si/automagik
+docker pull "${ref}"
+```
+
+Consumers must stop on a failed validation or verification, retain their highest accepted
+content version, and refuse a downgrade. Provenance verifies the image digest and repository;
+the JSON record itself is not signed and the attestation does not prove its freshness. Pin
+the verified digest and update on the same volumes as described below. GitHub documents the
+[attestation action](https://github.com/actions/attest-build-provenance) and
+[verification command](https://cli.github.com/manual/gh_attestation_verify).
+
 ## Publish
 
 A published release for a version that carries `plugins.json` publishes the image. A cut's own
-release starts no workflow (GitHub suppresses events made with `GITHUB_TOKEN`), so dispatch it
-after merge:
+release event starts no workflow, so `release.yml` explicitly dispatches every stable plugin
+release on its tag with `content=v<version>`. This independent job only warns on dispatch failure.
+To retry manually after merge:
 
 ```sh
 gh workflow run server-image.yml --ref dev -f content=v3.93.0
@@ -117,7 +153,7 @@ docker volume create automagik-data
 docker run -d --name automagik --network host \
   --volume automagik-data:/data \
   --env DEEPSEEK_API_KEY=sk-… \
-  ghcr.io/automagik-dev/automagik-server@sha256:…
+  ghcr.io/automagik-si/automagik-server@sha256:…
 ```
 
 Use `automagik-server:local` here after `node server/build.mjs --tag automagik-server:local` to
@@ -276,7 +312,7 @@ GitHub creates a new Container package private even when the repository is publi
 API has no endpoint for a Container package's visibility (as of 2026-11). Make it public once, as
 an organization owner:
 
-1. Open <https://github.com/orgs/automagik-dev/packages/container/automagik-server>.
+1. Open <https://github.com/orgs/automagik-si/packages/container/automagik-server>.
 2. **Package settings → Danger Zone → Change visibility → Public**.
 
 The publish job checks the package with `GITHUB_TOKEN` and, when it is not public (or the token
@@ -285,7 +321,7 @@ but anonymous pulls fail until the flip; the login-less pull is the verification
 
 ```sh
 docker logout ghcr.io 2>/dev/null || true
-docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
+docker pull ghcr.io/automagik-si/automagik-server@sha256:…
 ```
 
 ## Measured
