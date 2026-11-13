@@ -14,7 +14,8 @@
 // what a script meets, with no Node in reach, and its memory stops at the runner's cap.
 // At that cap a helper's reply that does not fit is refused: once through the real child,
 // and once in a process that reads the interpreter's memory before and after
-// (fixtures/browser-script-memory-probe.mjs).
+// (fixtures/browser-script-memory-probe.mjs). And a child whose output fails with a
+// stack error leaves at once: the real child again, with that one write made to fail.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -27,6 +28,20 @@ import { GLOBALS } from './fixtures/browser-script-globals.js'
 
 const HOST = fileURLToPath(new URL('./fixtures/browser-script-wall-host.mjs', import.meta.url))
 const MEMORY_PROBE = fileURLToPath(new URL('./fixtures/browser-script-memory-probe.mjs', import.meta.url))
+const CHILD = fileURLToPath(new URL('../src/host/browser/script-child.js', import.meta.url))
+// Placed in front of a copy of the child: its first write to the host throws the error
+// of a stack that ran out, and nothing written after that leaves the process.
+const OUTPUT_FAILS = `{
+  let failed = false
+  process.stdout.write = () => {
+    if (failed) return true
+    failed = true
+    throw new RangeError('Maximum call stack size exceeded')
+  }
+}
+`
+// How src/script-child/main.js leaves when it can no longer speak to its host.
+const SILENT = 70
 // script-runner.js's cap on the interpreter's memory, and what sandbox.js tells a script
 // whose memory has no room for a reply.
 const MEMORY_CAP = '--wasm-max-mem-pages=2048'
@@ -335,6 +350,44 @@ for (const runtime of RUNTIMES) {
     const fits = await probe({ free: 2, reply: 500 })
     assert.deepEqual(fits.after, fits.before)
     assert.equal(JSON.parse(fits.finishes[0][0]).reply, 'got 500')
+  })
+
+  test(`${runtime.name}: a helper reply the interpreter can copy but not hold as its own text is refused, and its memory is as it was`, async (t) => {
+    const probe = request => check(t, runtime, request, [MEMORY_CAP, MEMORY_PROBE, JSON.stringify(request)])
+    // More given back than above, and the same reply: room for the copy this time, and
+    // none for the interpreter's own text of it.
+    const result = await probe({ free: 5, reply: 3_900_000 })
+    if (!result) return
+    assert.deepEqual(result.calls, ['big'])
+    assert.equal(result.before.megabytes > 100 && result.before.megabytes <= 128, true, `${result.before.megabytes} MB`)
+    assert.deepEqual(result.after, result.before)
+    assert.equal(result.finishes.length, 1, JSON.stringify(result.finishes))
+    assert.equal(result.finishes[0][1], null)
+    const { filled, reply, after } = JSON.parse(result.finishes[0][0])
+    assert.ok(filled > 40 && filled < 160, `${filled} arrays`)
+    assert.equal(reply, NO_ROOM)
+    assert.equal(after, `2,4,6 {"a":"b"} function ${filled - 5}`)
+    // This is the case the test is for: the reply was placed and did not come back as
+    // text, and what the script is told in its place did.
+    assert.deepEqual(result.placed, [false, true])
+  })
+
+  test(`${runtime.name}: a child whose output fails with a stack error leaves at once, and the run ends as stopped`, async (t) => {
+    // The real child with that one write made to fail. The process may read its entry
+    // file and nothing else, so the change is written in front of a copy of it.
+    const entry = join(scratch(t), 'script-child.mjs')
+    writeFileSync(entry, OUTPUT_FAILS + readFileSync(CHILD, 'utf8'))
+    // The first thing the child has to say is a helper call, then the answer.
+    for (const script of ['return await goto("https://example.com/")', 'return "said"']) {
+      const result = await check(t, runtime, { script, entry, timeout: 10_000 })
+      if (!result) return
+      assert.equal(result.answer, undefined, script)
+      assert.equal(result.error, `Script stopped before it finished (exit ${SILENT}).`, script)
+      assert.deepEqual(result.exit, { code: SILENT, signal: null }, script)
+      assert.equal(result.helperCalls, 0, script)
+      // Well before the deadline, which a child that stays would wait for.
+      assert.ok(result.ms < 5_000, `${script}: settled after ${result.ms} ms`)
+    }
   })
 
   test(`${runtime.name}: a script that recurses too deep gets a stack error and the run goes on`, async (t) => {

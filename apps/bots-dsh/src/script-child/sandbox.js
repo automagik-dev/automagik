@@ -202,9 +202,10 @@ export async function openSandbox({ call, finish, overdue = () => undefined, pre
     if (message !== undefined) breakWith(message)
   }
   // The interpreter asks this while a script runs, and stops the script where it is when
-  // the answer is yes; no catch or finally of the script runs after it. So a script that
-  // never yields ends at the run's deadline without the host, and a run that ended here
-  // runs no more of its script.
+  // the answer is yes; no catch or finally of the script runs after it. So a script
+  // whose own code never yields ends at the run's deadline without the host, and a run
+  // that ended here runs no more of its script. It is not asked during one long call of
+  // a built-in: such a script is stopped by the host only.
   runtime.setInterruptHandler(() => {
     try {
       const late = broken === undefined ? overdue() : undefined
