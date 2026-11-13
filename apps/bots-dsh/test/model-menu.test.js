@@ -5,7 +5,10 @@ import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 
 const bundle = await build({
-  entryPoints: [fileURLToPath(new URL('../src/client/model-menu.js', import.meta.url))],
+  stdin: {
+    contents: "export * from './src/client/model-menu.js'\nexport { stepMenuFocus } from './src/client/motion.js'",
+    resolveDir: fileURLToPath(new URL('..', import.meta.url)),
+  },
   bundle: true, format: 'cjs', platform: 'node', write: false,
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
@@ -19,7 +22,7 @@ runInNewContext(bundle.outputFiles[0].text, {
   window: { innerWidth: 1280, innerHeight: 800 },
   require: name => {
     const platform = {
-      react: {
+      react: { Fragment: 'fragment', createContext: (initial) => { const ctx = { value: initial }; ctx.Provider = ({ value, children }) => { ctx.value = value; return children }; return ctx }, useContext: ctx => ctx.value, useMemo: make => make(), useCallback: fn => fn, useId: () => 'dv-id', useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot(), 
         createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
         Fragment: 'Fragment',
         useState: initial => [initial === null && menuOpen ? { left: 0, top: 0, width: 240 } : initial, () => {}],
@@ -57,7 +60,7 @@ function dock(models, { model, ready = true, harness = true, routePolicy } = {})
     sessionId: bot.id, useRoster: select => select(roster),
     actions: {
       updateBot: (id, patch) => { picked.push([id, patch.model]); return Promise.resolve() },
-      ...(harness ? { openHarnessSettings: () => {}, openHarnessOnboarding: () => {} } : {}),
+      ...(harness ? { openSettings: () => {}, openHarnessOnboarding: () => {} } : {}),
     },
   })
   return { tree, picked }
@@ -195,6 +198,53 @@ test('the Thinking section always offers Default, so a picked level can be clear
   assert.deepEqual(Array.from(effortRows({ efforts, defaultEffort: 'high' }), row => row.effort), [undefined, 'low', 'high'])
   assert.deepEqual(Array.from(effortRows({ efforts }), row => row.effort), [undefined, 'low', 'high'])
   assert.equal(effortRows({ efforts: [] }).length, 0)
+  // Slider stops use the model's levels when defaultEffort is known (reset clears to Default),
+  // and include a leading Default stop when the provider did not name one.
+  assert.deepEqual(Array.from(effortStops({ efforts, defaultEffort: 'high' }), row => row.effort), ['low', 'high'])
+  assert.deepEqual(Array.from(effortStops({ efforts }), row => row.effort), [undefined, 'low', 'high'])
+  const picked = []
+  const bar = EffortBar({ reasoning: { efforts, defaultEffort: 'high' }, current: 'low', onPick: value => picked.push(value) })
+  const slider = nodes(bar, node => node.props.role === 'slider')[0]
+  assert.equal(slider.props['aria-valuenow'], 0)
+  assert.equal(slider.props['aria-valuetext'], 'Low')
+  slider.props.onKeyDown({ key: 'ArrowRight', preventDefault() {}, stopPropagation() {} })
+  const reset = nodes(bar, node => node.props.className === 'bt-effort-reset')[0]
+  reset.props.onClick()
+  assert.deepEqual(picked, ['high', undefined])
+})
+
+test('menu focus stepping starts from menu items or the trigger, not other controls', () => {
+  const focused = []
+  const item = name => ({ name, focus: () => focused.push(name) })
+  const first = item('first')
+  const second = item('second')
+  const slider = item('slider')
+  const source = item('source')
+  const menu = {
+    querySelectorAll: () => [first, second],
+    contains: target => [first, second, slider].includes(target),
+  }
+  const trigger = source
+  const event = key => {
+    const out = { key, prevented: false, stopped: false }
+    out.preventDefault = () => { out.prevented = true }
+    out.stopPropagation = () => { out.stopped = true }
+    return out
+  }
+
+  sandbox.document.activeElement = slider
+  const arrow = event('ArrowDown')
+  assert.equal(stepMenuFocus(menu, arrow, trigger), false)
+  assert.equal(arrow.prevented, false)
+  assert.equal(arrow.stopped, false)
+
+  sandbox.document.activeElement = source
+  assert.equal(stepMenuFocus(menu, event('ArrowDown'), trigger), true)
+  sandbox.document.activeElement = first
+  assert.equal(stepMenuFocus(menu, event('ArrowDown'), trigger), true)
+  sandbox.document.activeElement = item('unrelated')
+  assert.equal(stepMenuFocus(menu, event('ArrowDown'), trigger), false)
+  assert.deepEqual(focused, ['first', 'second'])
 })
 
 const keyless = [
@@ -212,7 +262,7 @@ test('models that need an API key are no choice', () => {
   assert.deepEqual(buttons(dock(keyless).tree), ['Connect an AI: ChatGPT, Claude, Kimi or an API key', 'Enter a DeepSeek API key', 'Open settings to set up a custom model'])
 })
 
-test('a window without DSH settings asks for the missing API key in the first choice', () => {
+test('the first choice asks for the missing API key through the host', () => {
   const saved = []
   const bot = { id: 'chief', name: 'Omni' }
   const tree = ModelChoiceDock({

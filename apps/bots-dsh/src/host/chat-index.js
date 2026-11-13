@@ -76,7 +76,7 @@ export function install(rt) {
         ({ DatabaseSync } = await import('node:sqlite'))
         await mkdir(home, { recursive: true })
       } catch (error) {
-        rt.warn('ds-bot: no chat index, read_own_chat scans the logs: %s', error)
+        rt.warn('omni-ui: no chat index, read_own_chat scans the logs: %s', error)
         return null
       }
       // A damaged file is rebuilt from the logs once.
@@ -85,7 +85,7 @@ export function install(rt) {
           if (fresh) await unlink(indexPath).catch(() => {})
           return createIndex(new DatabaseSync(indexPath))
         } catch (error) {
-          if (fresh) rt.warn('ds-bot: no chat index, read_own_chat scans the logs: %s', error)
+          if (fresh) rt.warn('omni-ui: no chat index, read_own_chat scans the logs: %s', error)
         }
       }
       return null
@@ -128,7 +128,7 @@ export function install(rt) {
     chatIndex?.db.close()
     chatIndex = undefined
     indexOpening = undefined
-  }, 'ds-bot: chat index')
+  }, 'omni-ui: chat index')
 
   // Adds what a part said since its mark. Reads of one part wait for each other, so no
   // line is added twice.
@@ -196,7 +196,7 @@ export function install(rt) {
     if (index === null) return { index }
     const parts = rt.partsOf(botId)
     // A part that cannot be read now is searched as far as it was indexed.
-    for (const part of parts) await catchUp(index, part).catch(error => rt.warn('ds-bot: indexing %s failed: %s', part.sessionId, error))
+    for (const part of parts) await catchUp(index, part).catch(error => rt.warn('omni-ui: indexing %s failed: %s', part.sessionId, error))
     const turn = askingId !== undefined && askingId === parts.at(-1)?.sessionId ? index.mark.get(askingId)?.turn : undefined
     return { index, parts, hidden: turn === undefined || turn < 0 ? undefined : { session: askingId, from: turn } }
   }
@@ -281,7 +281,7 @@ export function install(rt) {
 
   async function ownChatBrief(member) {
     let lines = []
-    try { lines = await latestOwnChat(member.id, { limit: OWN_CHAT_BRIEF }) } catch (error) { rt.warn('ds-bot: brief for %s failed: %s', member.name, error) }
+    try { lines = await latestOwnChat(member.id, { limit: OWN_CHAT_BRIEF }) } catch (error) { rt.warn('omni-ui: brief for %s failed: %s', member.name, error) }
     return [
       'Your own chat with the user so far (latest messages, oldest first; private, so share only what the group needs):',
       lines.length > 0 ? lines.join('\n') : 'Nothing yet.',

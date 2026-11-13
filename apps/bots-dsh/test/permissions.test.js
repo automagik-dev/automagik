@@ -12,6 +12,9 @@ const PRESETS = { 'workspace-write': {}, 'danger-full-access': {} }
 
 function runtime({ presets = true, fail = false } = {}) {
   const writes = []
+  const releases = []
+  const bots = {}
+  const control = { fail }
   const service = {
     catalog: () => ({ options: Object.keys(PRESETS).map(value => ({ value, name: value })), defaultOptions: [], defaultPreset: 'workspace-write' }),
     resolve: (name) => { if (!(name in PRESETS)) throw new Error(`permission: unknown preset "${name}"`); return PRESETS[name] },
@@ -24,11 +27,24 @@ function runtime({ presets = true, fail = false } = {}) {
     groupSessionsOf: id => [`${id}-group`],
     groupOwners: new Map(),
     roomOf: () => undefined,
-    resolveAgent: async sessionId => ({ session: sessionId }),
+    botOf: id => bots[id],
+    resolveAgent: sessionId => (hold ? new Promise((resolve, reject) => releases.push({ sessionId, resolve, reject })) : Promise.resolve({ session: sessionId })),
     warn() {},
   }
   install(rt)
-  return { rt, writes }
+  // With `hold`, every Session's agent resolves only when its index here is settled,
+  // so an earlier request can be made to apply after a later one.
+  const settle = async (index) => {
+    const [{ sessionId, resolve }] = releases.splice(index, 1)
+    resolve({ session: sessionId })
+    await new Promise(done => setImmediate(done))
+  }
+  const drop = async (index) => {
+    const [{ reject }] = releases.splice(index, 1)
+    reject(new Error('permission: session went away'))
+    await new Promise(done => setImmediate(done))
+  }
+  return { rt, writes, releases, bots, settle, drop, control }
 }
 
 test('a Bot\'s preset is set on its chat and its group Sessions', async () => {

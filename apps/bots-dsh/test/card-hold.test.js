@@ -21,6 +21,7 @@ const { outputFiles } = await build({
       "export { AnsweredCell } from './src/client/questions.js'",
       "export { installLocale } from './src/client/i18n.js'",
       "export { HandoffCall, HandoffDock, PendingHandoff, SettledHandoff } from './src/client/handoff-card.js'",
+      "export { CellEmpty } from './src/client/cell-empty.js'",
     ].join('\n'),
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
   },
@@ -39,6 +40,11 @@ const effect = (make, deps) => {
   }
 }
 const react = {
+  Fragment: 'fragment',
+  createContext: (initial) => { const ctx = { value: initial }; ctx.Provider = ({ value, children }) => { ctx.value = value; return children }; return ctx },
+  useContext: ctx => ctx.value,
+  useMemo: make => make(),
+  useCallback: fn => fn,
   createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
   useState: (initial) => {
     const cell = slot(() => ({ value: typeof initial === 'function' ? initial() : initial }))
@@ -185,7 +191,7 @@ test('a question keeps its custom answer and selection while submitting, after f
   form.props.onSubmit({ preventDefault() {} })
   await tick()
   assert.equal(sent.length, 2)
-  assert.equal(pending.render(), null)
+  assert.equal(pending.render().type, CellEmpty)
   view.unmount()
   pending.unmount()
   assert.equal(count('chief', 'question', question.id), 0)
@@ -516,11 +522,11 @@ test('a handoff call draws its card only while the browser is held for that call
   assert.equal(draw({ hold: handoff() }).props.inline, true)
   // Answered, another call's hold, no hold, a chat without the Bot, or no answer path: nothing, and no gap.
   for (const gone of [draw({ hold: undefined }), draw({ hold: handoff({ callId: 'call-2' }) }), draw({ hold: handoff(), roster: { byId: {} } }), draw({ hold: handoff(), actions: {} })]) {
-    assert.equal(gone.type, 'span')
-    assert.equal(gone.props.hidden, true)
+    assert.equal(gone.type, CellEmpty)
+    assert.equal(gone.props.className, 'bt-q-gone')
   }
   // The dock draws it while the user is working in it.
-  assert.equal(draw({ hold: handoff(), heldCards: { [JSON.stringify(['handoff', 'call-1'])]: 1 } }), null)
+  assert.equal(draw({ hold: handoff(), heldCards: { [JSON.stringify(['handoff', 'call-1'])]: 1 } }).type, CellEmpty)
 })
 
 test('the dock draws a handoff the transcript does not, and keeps one the user started on', () => {
@@ -561,6 +567,16 @@ test('an answered handoff keeps its title and how it ended, and nothing to press
   assert.equal(byClass(returned, 'bt-q-badge').props.children[0], 'Returned')
   assert.equal(byClass(returned, 'bt-q-check'), undefined)
   assert.doesNotMatch(returned.props.children[0].props.className, /bt-q-dismissed/)
+})
+
+// The reply node as DSH 0.2.2-rc.1 builds it from a recorded ask_user answer: its
+// question pairs carry no options, the text still holds ds-bot's payload.
+test('an answered question card reads its options from the reply text when DSH drops them', () => {
+  const text = JSON.stringify({ kind: 'answer_to_pending_question', tool: 'ask_user', callId: 'call-2-1', questions: [{ id: 'q1', question: '接下来先做哪个？', options: [{ label: '写正文' }, { label: '改标题' }, { label: '先停' }], multiSelect: false }], answers: [{ id: 'q1', selected: ['改标题'] }] })
+  const cell = AnsweredCell({ node: { data: { callId: 'call-2-1', outcome: 'answered', text, questions: [{ id: 'q1', question: '接下来先做哪个？' }], answers: [{ id: 'q1', selected: ['改标题'] }] } } })
+  const settled = [cell.props.children].flat(2)[0]
+  assert.deepEqual(plain(settled.props.question.options), [{ label: '写正文' }, { label: '改标题' }, { label: '先停' }])
+  assert.deepEqual(plain(settled.props.answer.selected), ['改标题'])
 })
 
 test('answered handoff replies route to their settled row in history and live transcripts', () => {

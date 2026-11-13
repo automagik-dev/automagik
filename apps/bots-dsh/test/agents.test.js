@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { apply } from '../index.js'
+import { createRuntime } from '../index.js'
 import { TEAM_TOOLS } from '../src/host/constants.js'
 import { fakeContext } from './fake-ctx.js'
 
@@ -19,6 +19,7 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
   const archived = []
   const failArchive = { on: false }
   const restricted = []
+  const scoped = []
   const renamed = []
   let sessions = 0
   ctx.tools.schemas = () => [...TEAM_TOOLS, 'read', 'write'].map(name => ({ name }))
@@ -45,7 +46,10 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
         const agent = {
           session: { id: sessionId },
           ctx: {
-            tools: { restrict: (filter) => { restricted.push({ sessionId, filter }); return () => {} } },
+            tools: {
+              register: (tool) => { scoped.push({ sessionId, name: tool.name }); return () => {} },
+              restrict: (filter) => { restricted.push({ sessionId, filter }); return () => {} },
+            },
             effect: execute => execute(),
           },
           followup() {},
@@ -63,9 +67,9 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
     route = options
     return register(options)
   }
-  apply(ctx, { home, ...config })
+  rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const createdAgents = payload => (ctx.listeners.get('agent/created') ?? []).map(listener => listener(payload))
@@ -1280,7 +1284,7 @@ test('agent-session honors a known workspace and falls back to the team workspac
 })
 
 test('agent-adopt takes an unowned Session and refuses team-owned ones', async (t) => {
-  const { call, stop, restricted } = start(TEAM)
+  const { call, stop, restricted, scoped } = start(TEAM)
   t.after(stop)
   await call('state', {})
   const agent = (await call('add-agent', { name: 'Notes' })).value
@@ -1288,8 +1292,9 @@ test('agent-adopt takes an unowned Session and refuses team-owned ones', async (
   const adopted = (await call('agent-adopt', { agentId: agent.id, sessionId: 'fresh' })).value
   assert.equal(adopted.sessionId, 'fresh')
   assert.deepEqual((await call('state', {})).value.agents[0].sessions, [...agent.sessions, 'fresh'])
-  // It gets the team-tools mask too.
-  assert.equal(restricted.at(-1).sessionId, 'fresh')
+  // The team tools live on Bot scopes only, so the adopted Session needs no mask.
+  assert.equal(restricted.length, 0)
+  assert.equal(scoped.some(entry => entry.sessionId === 'fresh'), false)
   // Adopting again is a no-op.
   assert.equal((await call('agent-adopt', { agentId: agent.id, sessionId: 'fresh' })).ok, true)
   // A Bot's Session and an unknown Agent are refused.
@@ -1301,12 +1306,34 @@ test('team tools are restricted on DSH bot Sessions but not on Bot Sessions', as
   const { call, stop, restricted, createdAgents } = start(TEAM)
   t.after(stop)
   await call('state', {})
-  // A Bot resolving its agent triggers agent/created but owns no team tools mask.
+  // A Bot resolving its agent gets every team tool scoped to it and no mask.
   createdAgents({
     agent: {
       session: { id: 'm1' },
       ctx: {
-        tools: { restrict: filter => { restricted.push({ sessionId: 'm1', filter }) } },
+        tools: {
+          register: tool => { scoped.push({ sessionId: 'm1', name: tool.name }) },
+          restrict: filter => { restricted.push({ sessionId: 'm1', filter }) },
+        },
+        effect: execute => execute(),
+      },
+    },
+  })
+  await flush()
+  assert.deepEqual(scoped.filter(entry => entry.sessionId === 'm1').map(entry => entry.name).sort(),
+    [...TEAM_TOOLS].filter(name => name !== 'read_browser').sort())
+  assert.equal(restricted.length, 0)
+  // An Agent Session is a plain dsh conversation: nothing is scoped onto it and
+  // nothing is masked, because the team tools never reach the global layer.
+  const plainAgent = (await call('add-agent')).value
+  createdAgents({
+    agent: {
+      session: { id: plainAgent.sessions[0] },
+      ctx: {
+        tools: {
+          register: tool => { scoped.push({ sessionId: plainAgent.sessions[0], name: tool.name }) },
+          restrict: filter => { restricted.push({ sessionId: plainAgent.sessions[0], filter }) },
+        },
         effect: execute => execute(),
       },
     },

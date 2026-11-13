@@ -58,7 +58,7 @@ async function saveShot(ctx, value) {
       })
       return { text: value.text, attachment }
     } catch (error) {
-      ctx.logger?.warn?.('ds-bot: screenshot could not be stored: %s', error?.message ?? error)
+      ctx.logger?.warn?.('omni-ui: screenshot could not be stored: %s', error?.message ?? error)
     }
   }
   return { text: `${value.text ?? ''} (The screenshot could not be attached.)` }
@@ -93,7 +93,7 @@ async function saveShot(ctx, value) {
 export function mountBrowserPlugin(ctx, {
   toolDefs, defineTool, keyOf, profileRoot, downloadRoot, downloadRoots, uploadRoots, headless,
   playwrightUrl, executablePath, actionTimeout, authorize, completeFor, connect, getHold, onHold,
-  subscribeHolds, openSession = openBotBrowser, addressPolicy, onAddressRefused, api,
+  subscribeHolds, openSession = openBotBrowser, addressPolicy, onAddressRefused, api, register,
 }) {
   const sessions = new Map()
   // Each Bot's saved tabs (tabs.js), read once and then kept as its sessions save them.
@@ -144,7 +144,7 @@ export function mountBrowserPlugin(ctx, {
     const open = [...sessions.values()]
     sessions.clear()
     await Promise.all(open.map(session => Promise.resolve(session).then(opened => opened.close(), () => {})))
-  }, 'ds-bot: browser plugin')
+  }, 'omni-ui: browser plugin')
 
   // Closes a Bot's browser and removes its profile directory; used when the Bot is deleted.
   async function drop(botId) {
@@ -155,8 +155,9 @@ export function mountBrowserPlugin(ctx, {
     await rm(join(profileRoot, botId), { recursive: true, force: true }).catch(() => {})
   }
 
+  const registerTool = register ?? (tool => ctx.tools.register(tool))
   for (const spec of toolDefs) {
-    ctx.tools.register(defineTool({
+    registerTool(defineTool({
       name: spec.name,
       description: spec.description,
       parameters: spec.parameters ?? {},
@@ -218,5 +219,6 @@ export function mountBrowserPlugin(ctx, {
   if (api) {
     api.drop = drop
     api.savedTabs = savedTabsOf
+    api.frame = async botId => (await sessions.get(botId))?.frame?.()
   }
 }

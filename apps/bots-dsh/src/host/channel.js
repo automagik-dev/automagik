@@ -1,4 +1,4 @@
-// Client channel: the team view the browser renders, and the POST /api/bot endpoints.
+// Client channel: the team view the browser renders, and the POST /api/omni-ui endpoints.
 import { randomUUID } from 'node:crypto'
 import { createSpaceReads } from './agent-space.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -17,17 +17,36 @@ import { validateViewAnswer } from '../shared/views.js'
 import { normalizeAddressList } from './browser/address-policy.js'
 import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
 
-const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
+const STAGED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+const STAGED_MS = 30 * 60_000
+
+const LANGUAGES = {
+  zh: 'Chinese (简体中文)',
+  'zh-tw': 'Traditional Chinese (繁體中文)',
+  'zh-hk': 'Traditional Chinese (繁體中文)',
+  'zh-mo': 'Traditional Chinese (繁體中文)',
+  'zh-hant': 'Traditional Chinese (繁體中文)',
+  en: 'English',
+  ja: 'Japanese (日本語)',
+  ko: 'Korean (한국어)',
+  es: 'Spanish (Español)',
+  fr: 'French (Français)',
+  de: 'German (Deutsch)',
+}
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
 // Where the English interface allows an MCP server: the words the Bot names until a browser
 // reports its own (rt.allowPlace below).
 const DEFAULT_ALLOW_PLACE = 'Settings > Capabilities > Allow'
 
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
-// Programming and file system errors are DS Bot's own faults, logged with their stack;
+// Programming and file system errors are Omni's own faults, logged with their stack;
 // any other error is a refusal whose message is meant for the user.
 const isInternal = error => error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError
   || error instanceof SyntaxError || (typeof error?.code === 'string' && /^E[A-Z_]+$/.test(error.code))
+const MEMORY_LIMIT_SCOPES = new Set(['group', 'bot', 'team'])
+const MEMORY_LIMIT_MIN = 1_000
+const MEMORY_LIMIT_MAX = 200_000
+
 export function errorCode(error) {
   if (typeof error?.code === 'string' && error.code.startsWith('bot/')) return error.code
   return isInternal(error) ? 'bot/internal' : 'bot/refused'
@@ -60,6 +79,8 @@ export function install(rt) {
   let uiAllowPlace
   rt.allowPlace = () => uiAllowPlace ?? DEFAULT_ALLOW_PLACE
 
+  // Photos staged by `stage-image`, kept until the message that names them is sent.
+  const staged = new Map()
   const ok = value => ({ ok: true, value })
   const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
   // Models come from DSH, not state.json, so a provider added in Harness settings
@@ -92,12 +113,26 @@ export function install(rt) {
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
       return { ...room, relayLimitDefault: defaultRelayLimit(room), parts, ...rt.permissionFallbackOf('room', room), ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
     }),
+    // `sessionId` is the group's own Session's current part, `ownParts` its earlier
+    // ones; `parts` the members' hidden group Sessions and their earlier segments,
+    // for usage.
+    rooms: Object.values(state.rooms).map(({ log, seen, paused, sessions, segments, parts: ownParts, ...room }) => {
+      const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId), ...(ownParts ?? []).map(segment => segment.sessionId)]
+      const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
+      return { ...room, sessionId: rt.sessionOfRoom(room), ownParts: (ownParts ?? []).map(segment => segment.sessionId), parts, ...(last ? { lastAt: last.time, preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
+    }),
+    // Deleted private Bots whose folder, memory and chats stay closed to the others.
+    privateArchives: rt.archivesView(),
     exchangeTurns: state.exchangeTurns,
     questions: state.questions,
     views: state.views ?? {},
+    closedCards: state.closedCards ?? {},
     // Aside answers of each Bot's current part, newest first. Not part of the
     // model-visible history; earlier parts send their cards on their own pages.
     btwCards: rt.btwView?.() ?? {},
+    // Browser holds (handoffs and takeovers) per Bot, so the phone can show
+    // the same cards the desktop toolbar shows.
+    browserHolds: rt.browserChannel?.holdSnapshot?.() ?? {},
     // Each Bot's side chats, in creation order. The answers never join the
     // model-visible history; the side panel reads them here.
     sideChats: rt.sideView?.() ?? {},
@@ -108,6 +143,8 @@ export function install(rt) {
     secrets: rt.secretsView(),
     capabilities: rt.capabilityLibraryView(),
     secretRequests: state.secretRequests ?? {},
+    connectorRequests: state.connectorRequests ?? {},
+    mailRequests: state.mailRequests ?? {},
     colors: [...COLORS, ...EXTRA_COLORS],
     models: rt.cachedCatalog(),
     defaultModel: rt.cachedDefault() ?? null,
@@ -128,7 +165,9 @@ export function install(rt) {
     // Which selector routes each bot type may use (shared/routes.js); absent: all three.
     ...(rt.routePolicy === undefined ? {} : { routePolicy: rt.routePolicy }),
   })
-  // What changes without a new revision, sent with every state answer. `memoryNews`:
+  // What changes without a new revision, sent with every state answer. `learning`:
+  // each Bot's pending skill proposals; `learningSettled`: the answered ones of its
+  // current chat part. `memoryNews`:
   // per Bot or group chat, its latest memory change; `memoryReviews`: memory reviews waiting or
   // running; `work`: per Bot, the turn it runs and its tool; per group, the members whose
   // turn there runs; the approvals waiting; permission stops; per Bot, who it waits for to hand back work;
@@ -138,6 +177,8 @@ export function install(rt) {
     work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView(), stops: rt.stopsView?.() ?? [], waiting: rt.waitingView?.() ?? {}, turns: rt.turnsView?.() ?? {}, failed: rt.failedView?.() ?? {}, steered: rt.steeredView?.() ?? {}, models: rt.modelStateView?.() ?? {} },
     memoryNews: rt.memoryNews(),
     memoryReviews: rt.memoryReviews(),
+    learning: rt.learningView(),
+    learningSettled: rt.learningSettledView(),
     connectors: rt.connectorsView(),
     capabilityStatuses: rt.capabilityStatusesView(),
     ...rt.extended.live(),
@@ -228,6 +269,13 @@ export function install(rt) {
       if (body.flatWidth === null || body.flatWidth === 100) delete state.prefs.flatWidth
       else if (Number.isInteger(body.flatWidth) && body.flatWidth >= 50 && body.flatWidth <= 100) state.prefs.flatWidth = body.flatWidth
       else throw invalid('Flat text width must be a whole percent from 50 to 100')
+    }
+    if (body.defaultBotModel !== undefined) {
+      // The model new Bots start on when a create names none. It resolves now, so the
+      // saved ref is one the catalog served at save time; a create still re-checks it.
+      if (body.defaultBotModel === null || body.defaultBotModel === '') delete state.prefs.defaultBotModel
+      else if (rt.isLocalAgentRef?.(body.defaultBotModel) === true) throw invalid('A local agent cannot be the default model: a new Bot chooses to run on one when it is created')
+      else state.prefs.defaultBotModel = await rt.resolveModel(body.defaultBotModel)
     }
     if (body.thinking !== undefined) {
       // A value this version does not know is ignored, not refused: the toggle
@@ -349,7 +397,7 @@ export function install(rt) {
           return ok(Object.values(state.rooms).map(roomConfig))
         case 'get-room':
           return ok(roomConfig(rt.own(state.rooms, body.id)))
-        case 'state':
+        case 'state': {
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (typeof body.allowPlace === 'string') {
             const place = body.allowPlace.replace(/[\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim()
@@ -358,8 +406,15 @@ export function install(rt) {
           if (readOnly === undefined) await rt.bootstrap()
           await rt.catalog()
           await rt.loadSecrets()
-          if (body.since === state.revision && (body.models === undefined || body.models === modelsKey())) return ok({ revision: state.revision, unchanged: true, ...live() })
-          return ok({ ...view(), ...live() })
+          const answer = liveAnswer()
+          if (body.since === state.revision && (body.models === undefined || body.models === modelsKey())) {
+            if (body.live === answer.key) return ok({ revision: state.revision, unchanged: true, liveKey: answer.key })
+            return ok({ revision: state.revision, unchanged: true, liveKey: answer.key, ...answer.value })
+          }
+          // A phone asks for photos by reference and fetches each once (`avatar`).
+          const out = { ...view(), liveKey: answer.key, ...answer.value }
+          return ok(body.avatars === 'ref' ? rt.slimAvatars(out) : out)
+        }
         case 'models':
           await rt.refreshHostModels?.()
           await rt.catalog({ fresh: true })
@@ -405,12 +460,12 @@ export function install(rt) {
           return ok(state.prefs)
         case 'exchange': {
           await rt.load()
-          const pair = new Set([body.a, body.b])
-          return ok(state.exchanges.filter(entry => pair.has(entry.from) && pair.has(entry.to)))
+          return ok(rt.exchangesOf(body.a, body.b))
         }
         case 'exchange-text': {
           await rt.load()
-          const entry = state.exchanges.find(item => item.id === body.id)
+          const entry = (body.a !== undefined && body.b !== undefined ? rt.exchangeOf(body.id, body.a, body.b) : undefined)
+            ?? state.exchanges.find(item => item.id === body.id)
           if (entry === undefined) return fail('This message is no longer kept', 'bot/stale')
           return ok(await rt.exchangeText(entry))
         }
@@ -456,11 +511,27 @@ export function install(rt) {
         case 'usage':
           await rt.load()
           return ok(await rt.usageView({ timeZone: typeof body.timeZone === 'string' ? body.timeZone.slice(0, 64) : undefined }))
-        case 'room-progress':
-          return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === body.roomId).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.speaking ?? null })))
+        case 'room-progress': {
+          // Any part id of the group's own Session means the group itself.
+          const room = rt.roomOf(body.roomId) ?? rt.roomOf(rt.pastOwners.get(body.roomId)?.roomId)
+          return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === (room?.id ?? body.roomId)).map(([callId, entry]) => ({ callId, replies: rt.groupRows(entry.roomId, entry.from), speaking: entry.slots.filter(slot => slot.status === 'speaking').map(slot => slot.id) })))
+        }
+        // The rows a settled round of a group chat shows, from its book.
+        case 'group-rows': {
+          await rt.load()
+          const room = rt.roomOf(body.roomId) ?? rt.roomOf(rt.pastOwners.get(body.roomId)?.roomId)
+          const from = Number(body.from)
+          const to = body.to === undefined ? undefined : Number(body.to)
+          if (room === undefined || !Number.isInteger(from) || (to !== undefined && !Number.isInteger(to))) return ok({ rows: [], open: false, speaking: [] })
+          const view = rt.groupRowsView(room.id, from, to, typeof body.anchor === 'string' ? body.anchor : undefined)
+          // The newest call's rows grow while the group works; who is answering shows under them.
+          const active = view.open && rt.roomActive(room.id)
+          const speaking = active ? [...rt.roomProgress.values()].filter(round => round.roomId === room.id).flatMap(round => round.slots.filter(slot => slot.status === 'speaking').map(slot => slot.id)) : []
+          return ok({ ...view, active, speaking })
+        }
         case 'create-bot': {
           await rt.bootstrap()
-          const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir })
+          const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir, section: body.section, sectionId: body.sectionId })
           return ok(bot)
         }
         case 'set-bot-auto':
@@ -487,6 +558,10 @@ export function install(rt) {
           await rt.load()
           await rt.deleteBot(body.id)
           return ok(view())
+        case 'private-release':
+          await rt.load()
+          await rt.releaseArchive(String(body.id ?? ''))
+          return ok(view())
         case 'set-main':
           await rt.load()
           await rt.setMain(body.id, body.main !== false, {
@@ -496,8 +571,8 @@ export function install(rt) {
           return ok(view())
         case 'create-room': {
           await rt.load()
-          const room = await rt.createRoom({ members: Array.isArray(body.members) ? body.members : [], name: body.name, ...(typeof body.admin === 'string' ? { admin: body.admin } : {}) })
-          if (body.greet === true) await rt.greetRoom(room.id).catch(error => rt.warn('ds-bot: greeting in %s failed: %s', room.name, error))
+          const room = await rt.createRoom({ members: Array.isArray(body.members) ? body.members : [], name: body.name, section: body.section, sectionId: body.sectionId, ...(typeof body.admin === 'string' ? { admin: body.admin } : {}) })
+          if (body.greet === true) await rt.greetRoom(room.id).catch(error => rt.warn('omni-ui: greeting in %s failed: %s', room.name, error))
           return ok(room)
         }
         case 'update-room': {
@@ -512,14 +587,10 @@ export function install(rt) {
             remove: Array.isArray(body.remove) ? body.remove : undefined,
             workDir: body.workDir,
             permission: body.permission,
-            relayLimit: body.relayLimit,
+            section: body.section,
+            sectionId: body.sectionId,
           })
           return ok({ room: view().rooms.find(entry => entry.id === room.id), changes })
-        }
-        case 'room-continue': {
-          await rt.load()
-          await rt.continueRoom(body.roomId)
-          return ok(view())
         }
         case 'folders':
         case 'folder-pick':
@@ -568,6 +639,17 @@ export function install(rt) {
         case 'set-flags':
           await rt.load()
           return ok(await rt.setFlags(body.id, body))
+        case 'section-save':
+          await rt.load()
+          return ok(await rt.saveSection(body))
+        case 'section-order':
+          await rt.load()
+          await rt.reorderSections(body.ids)
+          return ok(view())
+        case 'section-delete':
+          await rt.load()
+          await rt.deleteSection(body.id)
+          return ok(view())
         case 'delete-room':
           await rt.load()
           await rt.deleteRoom(body.id)
@@ -575,11 +657,35 @@ export function install(rt) {
         case 'approval-answer':
           rt.answerApproval(body.id, body.choice)
           return ok(true)
+        // A stop that fails partway still parks the goal, or it wakes the admin again.
         case 'stop-member-work':
-          return ok(await rt.stopMemberWork(String(body.roomId ?? ''), String(body.botId ?? '')))
+          try {
+            return ok(await rt.stopMemberWork(String(body.roomId ?? ''), String(body.botId ?? '')))
+          } finally {
+            rt.goalUserStopped?.(String(body.roomId ?? ''))
+          }
+        case 'stop-room-work':
+          try {
+            return ok(await rt.stopRoomWork(String(body.roomId ?? '')))
+          } finally {
+            rt.goalUserStopped?.(String(body.roomId ?? ''))
+          }
+        case 'goal-draft': {
+          await rt.load()
+          const result = await rt.goalDraft(String(body.roomId ?? ''), body.text)
+          return result.error !== undefined ? fail(result.error, result.code ?? 'bot/refused') : ok(view())
+        }
+        case 'goal-control': {
+          await rt.load()
+          const result = await rt.goalControl(String(body.roomId ?? ''), body)
+          return result.error !== undefined ? fail(result.error, result.code ?? 'bot/refused') : ok(view())
+        }
+        case 'stop-chat':
+          return ok(await rt.stopChat(String(body.botId ?? '')))
         case 'dismiss-question':
           await rt.load()
           if (rt.own(state.questions, body.sessionId) !== undefined) {
+            rt.closeCard(body.sessionId, state.questions[body.sessionId], 'dismissed')
             delete state.questions[body.sessionId]
             await rt.save()
           }
@@ -587,6 +693,7 @@ export function install(rt) {
         case 'dismiss-view':
           await rt.load()
           if (rt.own(state.views, body.sessionId) !== undefined) {
+            rt.closeCard(body.sessionId, state.views[body.sessionId], 'dismissed')
             delete state.views[body.sessionId]
             await rt.save()
           }
@@ -601,6 +708,20 @@ export function install(rt) {
         case 'connector-connect':
         case 'connector-disconnect':
         case 'connector-retry':
+        case 'connector-sign-in-code':
+        case 'connector-cancel':
+        case 'connector-client':
+        case 'connector-set':
+        case 'connector-add':
+        case 'connector-remove':
+        case 'connector-import-scan':
+        case 'connector-import':
+        case 'connector-request-cancel':
+        case 'mail-account-add':
+        case 'mail-account-remove':
+        case 'mail-rule-set':
+        case 'mail-send-answer':
+        case 'mail-sign-in-code':
           await rt.load()
           return ok(await rt.connectorEndpoint(endpoint, body))
         case 'bot-fresh':
@@ -619,31 +740,33 @@ export function install(rt) {
           return ok(await rt.scheduleEndpoint(endpoint, body))
         case 'memory-view':
         case 'memory-ask':
+        case 'memory-pin':
+        case 'memory-tidy-undo':
+        case 'memory-layer':
+        case 'memory-move':
         case 'memory-forget':
+        case 'memory-history':
+        case 'memory-restore':
           await rt.load()
           return ok(await rt.memoryEndpoint(endpoint, body))
+        case 'learning-answer':
+          await rt.load()
+          return ok(await rt.learningEndpoint(endpoint, body))
+        // The mobile API (mobile.js).
+        case 'hello':
+        case 'notices':
+        case 'avatar':
+        case 'room-chat':
+        case 'image':
+        case 'usage-summary':
+        case 'memory-edit':
+        case 'memory-add':
+          await rt.load()
+          return ok(await rt.mobileEndpoint(endpoint, body))
         case 'answer-question': {
           if (typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
           await rt.load()
-          const past = rt.pastOwners.get(body.sessionId)
-          const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
-          const question = rt.own(state.questions, sessionId)
-          if (question === undefined || question.id !== body.questionId) return fail('This question is no longer open', 'bot/stale')
-          const reply = questionReply(question, body.answer)
-          if (reply === undefined) return fail('Nothing to send', 'bot/invalid')
-          // Claim the question before queueing so a second answer is refused.
-          delete state.questions[sessionId]
-          try {
-            await rt.ensureCapabilities(sessionId)
-            const agent = await rt.resolveAgent(sessionId)
-            agent.followup(createUserMessage({ content: [{ type: 'text', text: reply.text }], source: reply.source }))
-            await ctx.sessions.flush(agent.session)
-          } catch (error) {
-            state.questions[sessionId] ??= question
-            throw error
-          }
-          await rt.save()
-          return ok(true)
+          return ok(await rt.answerQuestion(body.sessionId, body.questionId, body.answer))
         }
         case 'view-reply': {
           if (typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
@@ -670,20 +793,33 @@ export function install(rt) {
           await rt.save()
           return ok(true)
         }
+        // A photo for the next `send`, one per call: a phone's link carries a few MB per
+        // message, so photos travel one by one and the message names them.
+        case 'stage-image': {
+          const mediaType = String(body.mediaType ?? '')
+          const data = typeof body.data === 'string' ? body.data : ''
+          if (!STAGED_TYPES.has(mediaType) || data === '' || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return fail('This is not a photo Omni can send', 'bot/invalid')
+          const now = Date.now()
+          for (const [id, entry] of staged) if (entry.at < now - STAGED_MS) staged.delete(id)
+          const id = randomUUID()
+          staged.set(id, { mediaType, data, at: now })
+          return ok({ id })
+        }
         case 'send': {
           const text = String(body.text ?? '').trim()
-          if (text === '' || typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
+          const ids = Array.isArray(body.images) ? body.images.map(String) : []
+          if ((text === '' && ids.length === 0) || typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
+          const images = ids.map(id => staged.get(id))
+          if (images.some(entry => entry === undefined)) return fail('A photo did not arrive. Send it again.', 'bot/stale')
           await rt.load()
-          // A Bot id or an earlier part of its own chat means the current part.
-          const past = rt.pastOwners.get(body.sessionId)
-          const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
-          await rt.ensureCapabilities(sessionId)
-          await ctx.sessionController.prompt({
-            requestId: randomUUID(),
-            sessionId,
-            mode: 'queue',
-            content: [{ type: 'text', text }],
-          }, AbortSignal.timeout(30_000))
+          await rt.sendUser({
+            sessionId: body.sessionId,
+            content: [
+              ...(text === '' ? [] : [{ type: 'text', text }]),
+              ...images.map(({ mediaType, data }) => ({ type: 'image', mediaType, data })),
+            ],
+          })
+          for (const id of ids) staged.delete(id)
           return ok(true)
         }
         case 'btw-delete': {
@@ -726,6 +862,12 @@ export function install(rt) {
           return ok(rt.dshUpdateStart?.())
         case 'repo-stars':
           return ok(await rt.repoStars())
+        case 'browser-frame': {
+          if (rt.browserFrame === undefined && rt.browserChannel === undefined) return fail('Bot browsers are off on this host', 'bot/browser-off')
+          const frame = typeof rt.browserFrame === 'function' ? await rt.browserFrame(String(body.botId ?? '')) : undefined
+          if (frame === undefined) return fail('This Bot has no open browser', 'bot/not-found')
+          return ok(frame)
+        }
         // The Desktop window's long poll for read_browser, and its answers.
         // The panel's long poll: only where a window has the panel (browser.js).
         case 'browser-wait': {
@@ -815,6 +957,39 @@ export function install(rt) {
           rt.browserChannel?.setHold(botId, { by: 'user', reason: 'stopped', note: 'The user is controlling this browser.' })
           return ok(true)
         }
+        case 'im-add':
+        case 'im-update':
+        case 'im-remove':
+        case 'im-pair':
+        case 'im-unpair':
+        case 'im-chat':
+        case 'im-retry':
+        case 'im-login-start':
+        case 'im-login-wait':
+          await rt.load()
+          return ok(await rt.imEndpoint(endpoint, body))
+        case 'local-agents':
+        case 'local-agent-models':
+        case 'local-agent-refresh':
+        case 'local-agent-add':
+        case 'local-agent-update':
+        case 'local-agent-remove':
+          await rt.load()
+          return ok(await rt.localAgentsEndpoint(endpoint, body))
+        // "New session" and "open an earlier session" on an abot's chat: ordinary
+        // parts moves (parts.js), the same mechanism every Bot's chat uses.
+        case 'bot-new-part': {
+          await rt.load()
+          const bot = rt.botOf(String(body.botId ?? ''))
+          if (bot === undefined) return fail('Unknown Bot', 'bot/not-found')
+          return ok(await rt.newPart(rt.chatOf(bot.id)))
+        }
+        case 'bot-open-part': {
+          await rt.load()
+          const bot = rt.botOf(String(body.botId ?? ''))
+          if (bot === undefined) return fail('Unknown Bot', 'bot/not-found')
+          return ok(await rt.switchPart(bot.id, String(body.sessionId ?? '')))
+        }
         case 'diagnostics':
           await rt.load()
           return ok(await rt.diagnostics.report(body))
@@ -845,7 +1020,7 @@ export function install(rt) {
   ctx.effect(() => {
     void agentAccess.resume().catch(() => rt.warn('Agent access could not start'))
     return () => agentAccess.close()
-  }, 'ds-bot: agent access')
+  }, 'omni-ui: agent access')
 
   // A pet's sheet for the marks that wear it, and a character's baked sheet written into
   // Codex's own pets folder, as bytes rather than JSON. The write streams its body, which a
@@ -871,7 +1046,7 @@ export function install(rt) {
         return petFailure('pet route', error)
       }
     },
-  }), 'ds-bot: pet route')
+  }), 'omni-ui: pet route')
   // A generated image (imagegen.js) for its card, by its id.
   ctx.effect(() => ctx.connection.fetch.register({
     path: IMAGE_ROUTE,
@@ -882,7 +1057,7 @@ export function install(rt) {
       if (!bytes) return new Response('Not found', { status: 404 })
       return new Response(bytes, { status: 200, headers: { 'content-type': 'image/png', 'cache-control': 'private, max-age=86400' } })
     },
-  }), 'ds-bot: image route')
+  }), 'omni-ui: image route')
   ctx.effect(() => ctx.connection.fetch.register({
     path: PET_CODEX_ROUTE,
     methods: ['PUT'],
@@ -897,14 +1072,14 @@ export function install(rt) {
         return petFailure('pet to Codex route', error)
       }
     },
-  }), 'ds-bot: pet to Codex route')
+  }), 'omni-ui: pet to Codex route')
 
   ctx.effect(() => ctx.connection.fetch.register({
     path: MCP_PATH,
     methods: ['POST', 'GET', 'DELETE', 'OPTIONS'],
     requestBody: 'streaming',
     fetch: request => agentAccess.fetch(request),
-  }), 'ds-bot: MCP route')
+  }), 'omni-ui: MCP route')
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({
@@ -923,7 +1098,7 @@ export function install(rt) {
         'content-type': 'application/json', ...(noStore ? { 'cache-control': 'no-store' } : {}),
       } })
     },
-  }), 'ds-bot: api route')
+  }), 'omni-ui: api route')
 
   ctx.effect(() => {
     void rt.load()
@@ -931,5 +1106,5 @@ export function install(rt) {
     // In-flight side questions abort here; their entries stay answering for the
     // next owner.
     return () => Promise.all([rt.btwDispose?.(), rt.sideDispose?.()])
-  }, 'ds-bot: load state')
+  }, 'omni-ui: load state')
 }

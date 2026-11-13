@@ -19,10 +19,13 @@ const PROBE_BODY = JSON.stringify({
   params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'automagik-bots-dsh', version: '1' } },
 })
 
-export function validateCapabilityName(value) {
+// Connector ids are reserved: a capability named like one would collide with
+// its mcp__<id>__* tool prefix. The connectors module registers its ids here.
+export const CONNECTOR_IDS = new Set(['github', 'mail'])
+export function validateCapabilityName(value, reserved = CONNECTOR_IDS) {
   const name = String(value ?? '').trim()
-  if (name.length > 32 || !NAME.test(name) || name === 'github') {
-    throw refusal('Use a capability name with lowercase letters, digits, and single hyphens; "github" is reserved.')
+  if (name.length > 32 || !NAME.test(name) || name === 'github' || reserved.has(name)) {
+    throw refusal('Use a capability name with lowercase letters, digits, and single hyphens; connector names are reserved.')
   }
   return name
 }
@@ -168,6 +171,20 @@ export function install(rt) {
     for (const bot of Object.values(state.bots)) bot.capabilities = (bot.capabilities ?? []).filter(attached => attached !== item.name)
     await rt.save()
     return true
+  }
+  // Called with the Bot being deleted, after it left the team. The shared list belongs to
+  // the user, so only a local MCP this Bot added, nobody approved and no other Bot or pack
+  // uses goes: no one is left to ask for it, and approving it would start a server for no one.
+  // Anything a pack lists stays.
+  const dropOrphanCapabilities = (bot) => {
+    const items = library()
+    const packed = name => Object.values(items).some(item => item.kind === 'pack' && (item.items ?? []).includes(name))
+    for (const name of bot.capabilities ?? []) {
+      const item = own(items, name)
+      if (item === undefined || item.kind !== 'mcp' || item.transport !== 'stdio' || item.approved === true) continue
+      if (item.createdBy !== bot.id || usedByOthers(name, bot.id) || packed(name)) continue
+      delete items[item.name]
+    }
   }
   const changeAttachment = async (endpoint, { name, bot: targetRef }, callerId) => {
     await rt.load()
@@ -446,7 +463,7 @@ export function install(rt) {
       const sessionId = agent.session.id
       if (stopped || agents.get(sessionId)?.deref() !== agent) return
       await reconcileAgent(agent, botOfSession(sessionId))
-    }).catch(error => rt.warn('ds-bot: capability reconcile for %s failed: %s', agent.session?.id, error))
+    }).catch(error => rt.warn('omni-ui: capability reconcile for %s failed: %s', agent.session?.id, error))
     chains.set(agent, run)
     return run
   }
@@ -478,7 +495,7 @@ export function install(rt) {
     if (!scheduled) {
       scheduled = new Promise(resolve => queueMicrotask(() => {
         scheduled = null
-        resolve(reconcile().catch(error => rt.warn('ds-bot: capability reconcile failed: %s', error)))
+        resolve(reconcile().catch(error => rt.warn('omni-ui: capability reconcile failed: %s', error)))
       }))
     }
     return scheduled
@@ -488,7 +505,7 @@ export function install(rt) {
   const stalled = new WeakSet()
   const prepare = async (agent, sessionId) => {
     const run = loadInputs().then(() => reconcileOne(agent)).then(() => true, error => {
-      rt.warn('ds-bot: capability mount for %s failed: %s', sessionId, error)
+      rt.warn('omni-ui: capability mount for %s failed: %s', sessionId, error)
       return true
     })
     if (stalled.has(agent)) return
@@ -499,7 +516,7 @@ export function install(rt) {
     if (completed) return
     stalled.add(agent)
     void run.then(() => stalled.delete(agent))
-    rt.warn('ds-bot: capability mount for %s did not finish within %dms; continuing', sessionId, timeoutMs)
+    rt.warn('omni-ui: capability mount for %s did not finish within %dms; continuing', sessionId, timeoutMs)
   }
   async function ensureCapabilities(sessionId) {
     await rt.load()
@@ -510,7 +527,7 @@ export function install(rt) {
     try {
       agent = await rt.resolveAgent(sessionId)
     } catch (error) {
-      rt.warn('ds-bot: capability Agent for %s could not be resolved: %s', sessionId, rt.redactSecrets(String(error)))
+      rt.warn('omni-ui: capability Agent for %s could not be resolved: %s', sessionId, rt.redactSecrets(String(error)))
       return
     }
     trackAgent(agent)
@@ -526,7 +543,7 @@ export function install(rt) {
       clearSession(sessionId)
       for (const mount of mounts.get(agent)?.values() ?? []) void disposeMount(mount)
       mounts.delete(agent)
-    }, `ds-bot: capabilities ${sessionId}`)
+    }, `omni-ui: capabilities ${sessionId}`)
   }
   const trackBotAgents = async bot => {
     const sessionIds = new Set()
@@ -534,20 +551,20 @@ export function install(rt) {
       const sessionId = rt.chatOf(bot.id)
       if (typeof sessionId === 'string') sessionIds.add(sessionId)
     } catch (error) {
-      rt.warn('ds-bot: capability chat session for %s could not be read: %s', bot.id, error)
+      rt.warn('omni-ui: capability chat session for %s could not be read: %s', bot.id, error)
     }
     try {
       for (const sessionId of rt.groupSessionsOf(bot.id) ?? []) {
         if (typeof sessionId === 'string') sessionIds.add(sessionId)
       }
     } catch (error) {
-      rt.warn('ds-bot: capability group sessions for %s could not be read: %s', bot.id, error)
+      rt.warn('omni-ui: capability group sessions for %s could not be read: %s', bot.id, error)
     }
     for (const sessionId of sessionIds) {
       try {
         trackAgent(await rt.resolveAgent(sessionId))
       } catch (error) {
-        rt.warn('ds-bot: capability Agent for %s could not be resolved: %s', sessionId, error)
+        rt.warn('omni-ui: capability Agent for %s could not be resolved: %s', sessionId, error)
       }
     }
   }
@@ -591,7 +608,7 @@ export function install(rt) {
       const bot = botOfSession(agent.session.id)
       if ((bot?.capabilities ?? []).length > 0) await prepare(agent, agent.session.id)
     } catch (error) {
-      rt.warn('ds-bot: capability load failed: %s', error)
+      rt.warn('omni-ui: capability load failed: %s', error)
     }
   })
   ctx.effect(() => {
@@ -600,7 +617,7 @@ export function install(rt) {
         if ((bot.capabilities ?? []).length > 0) await trackBotAgents(bot)
       }
       await scheduleReconcile()
-    }).catch(error => rt.warn('ds-bot: capability startup failed: %s', error))
+    }).catch(error => rt.warn('omni-ui: capability startup failed: %s', error))
     return async () => {
       stopped = true
       const live = [...mounts.values()]
@@ -609,10 +626,11 @@ export function install(rt) {
       sessionStatuses.clear()
       await Promise.all(live.flatMap(agentMounts => [...agentMounts.values()].map(disposeMount)))
     }
-  }, 'ds-bot: capabilities')
+  }, 'omni-ui: capabilities')
   Object.assign(rt, {
     capabilitySave,
     capabilityDelete,
+    dropOrphanCapabilities,
     capabilityEndpoint,
     capabilityLibraryView: libraryView,
     capabilityStatusesView,

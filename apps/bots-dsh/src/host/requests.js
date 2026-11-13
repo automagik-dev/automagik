@@ -96,7 +96,7 @@ export function install(rt) {
         await rt.save({ required: true })
       } catch (error) {
         delete receipts()[request.key]
-        rt.warn('ds-bot: the receipt of the request was not saved: %s', error)
+        rt.warn('omni-ui: the receipt of the request was not saved: %s', error)
         throw error
       }
       try {
@@ -112,7 +112,7 @@ export function install(rt) {
             fresh.outcome = 'uncertain'
             fresh.at = Date.now()
             receipts()[request.key] = fresh
-            rt.warn('ds-bot: the removal of the request receipt was not saved: %s', error)
+            rt.warn('omni-ui: the removal of the request receipt was not saved: %s', error)
           }
           return receipt
         }

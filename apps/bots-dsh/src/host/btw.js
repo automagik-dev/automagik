@@ -8,8 +8,8 @@
 import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { refusal } from './refusal.js'
 import { dirname, join } from 'node:path'
-import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import { replaceFile } from './files.js'
+import { assembleLlmStream } from './models.js'
 
 export const RESTART_ERROR = 'Omni restarted before this answer finished.'
 export const TOOL_ERROR = 'The model called a tool again after being told not to, so this aside was not answered.'
@@ -85,7 +85,7 @@ function registerAnchor(ctx) {
     try {
       anchorHandle = await projections.register(anchorProjection)
     } catch (error) {
-      ctx.logger?.warn?.('ds-bot: the anchor projection was not registered: %s', error)
+      ctx.logger?.warn?.('omni-ui: the anchor projection was not registered: %s', error)
     }
   }
   if (typeof ctx.inject === 'function') {
@@ -181,16 +181,16 @@ export async function callAside(ctx, rt, snapshot, { extra = [], question, promp
     ...extra,
     { role: 'user', content: [{ type: 'text', text: promptFor(question, retry) }] },
   ], { sessionId: snapshot.sessionId, kind })
-  const assembler = new BlockAssembler()
   const tools = snapshot.header?.tools
-  for await (const chunk of ctx.llm.stream({
+  const callOptions = {
     ...snapshot.header?.config,
     messages,
     toolHistory: snapshot.toolHistory,
     ...(tools ? { tools: [...tools] } : {}),
     sessionId: snapshot.sessionId,
     signal,
-  })) assembler.push(chunk)
+  }
+  const assembler = await (rt?.assembleLlm ? rt.assembleLlm(callOptions) : assembleLlmStream(ctx, callOptions, { backoff: rt?.config?.llmRetryBackoff }))
   const finish = assembler.finish
   if (finish.kind === 'error' || finish.kind === 'aborted') {
     const kind = finish.kind === 'aborted' ? 'aborted' : failureKind(finish.failure)
@@ -281,7 +281,7 @@ export function install(rt) {
             .map(card => ({ ...card, botId, partId }))
         }
       } catch (error) {
-        if (error?.code !== 'ENOENT') rt.warn('ds-bot: unreadable btw cards %s: %s', partFile(botId, partId), error?.code ?? error)
+        if (error?.code !== 'ENOENT') rt.warn('omni-ui: unreadable btw cards %s: %s', partFile(botId, partId), error?.code ?? error)
       }
       if (writes()) {
         const now = Date.now()
@@ -292,7 +292,7 @@ export function install(rt) {
           return { ...card, status: 'failed', error: card.error ?? RESTART_ERROR, finishedAt: card.finishedAt ?? now }
         })
         byBot.set(partId, list)
-        if (touched) await writePart(botId, partId).catch(error => rt.warn('ds-bot: btw cards of %s not saved: %s', botId, error))
+        if (touched) await writePart(botId, partId).catch(error => rt.warn('omni-ui: btw cards of %s not saved: %s', botId, error))
       } else {
         byBot.set(partId, list)
       }
@@ -379,7 +379,7 @@ export function install(rt) {
     dropped.add(botId)
     cards.delete(botId)
     for (const key of reading.keys()) if (key.startsWith(`${botId}/`)) reading.delete(key)
-    if (cardsDir !== undefined && writes()) await rm(join(cardsDir, botId), { recursive: true, force: true }).catch(error => rt.warn('ds-bot: btw cards of %s not removed: %s', botId, error))
+    if (cardsDir !== undefined && writes()) await rm(join(cardsDir, botId), { recursive: true, force: true }).catch(error => rt.warn('omni-ui: btw cards of %s not removed: %s', botId, error))
   }
 
   // Channel can be installed without the roster (the thinking route test). The

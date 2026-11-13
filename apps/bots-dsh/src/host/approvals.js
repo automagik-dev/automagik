@@ -1,5 +1,5 @@
 // Approvals. A member's group Session is hidden, so DSH's approval card never shows
-// there and the turn would wait forever: DS Bot answers those requests itself, from
+// there and the turn would wait forever: Omni answers those requests itself, from
 // the group chat. A Bot's own chat keeps DSH's card; its requests are only noted, so
 // the team view can say who is waiting. So does a running task a Bot started
 // (start_task, agents.js): its approval is noted under that Bot with the task's id
@@ -59,16 +59,53 @@ export function install(rt) {
     }
     pending.set(id, entry)
     rt.noteApproval?.(sessionId, { tool: entry.tool, reason: entry.reason.slice(0, 200) })
-    const settled = () => {
+    rt.approvalWaiting?.(entry)
+    emit('open', { ...entry, answerable: true })
+    const settle = (outcome) => {
+      if (!pending.has(id)) return false
       pending.delete(id)
       rt.noteApproval?.(sessionId, undefined)
+      emit('settled', { id, outcome })
+      return true
     }
-    if (owner === undefined) return Promise.resolve(next()).finally(settled)
+    if (owner === undefined) {
+      // An own-chat approval races DSH's card. The card sees `linked`, our own
+      // AbortSignal: answering here resolves the request, then withdraws the card;
+      // an answer there settles `next()` first and is adopted. An abort of the
+      // original signal cancels either way.
+      const original = request.signal
+      const linked = new AbortController()
+      request.signal = linked.signal
+      return new Promise((resolve, reject) => {
+        const complete = (outcome) => {
+          if (!settle(outcome)) return
+          resolve(outcome)
+          linked.abort()
+          if (request.signal === linked.signal) request.signal = original
+        }
+        entry.answer = complete
+        if (original?.aborted) entry.answer('cancelled')
+        else original?.addEventListener('abort', () => entry.answer('cancelled'), { once: true })
+        Promise.resolve(next()).then(
+          (outcome) => {
+            if (!pending.has(id)) return
+            complete(outcome)
+          },
+          // DSH's answerer threw: close the entry and give the caller the error
+          // the way the pre-race code did, instead of hanging forever.
+          (error) => {
+            if (!settle('cancelled')) return
+            reject(error)
+            linked.abort()
+            if (request.signal === linked.signal) request.signal = original
+          },
+        )
+      })
+    }
     rt.yieldRoomTurn?.(sessionId)
     return new Promise((resolve) => {
       entry.answer = (outcome) => {
-        if (!pending.has(id)) return
-        settled()
+        if (!settle(outcome)) return
         resolve(outcome)
       }
       if (request.signal?.aborted) entry.answer('cancelled')
@@ -78,13 +115,13 @@ export function install(rt) {
 
   ctx.effect(() => () => {
     for (const entry of pending.values()) if (entry.child) entry.answer?.('cancelled')
-  }, 'ds-bot: cancel held subagent asks')
+  }, 'omni-ui: cancel held subagent asks')
 
   function childAsk(request, sessionId, owner) {
     // Fail closed: nothing here can ask the person, so this is not their answer.
     if (!answerableOwner(rt, owner)) {
       rt.noteStop?.(sessionId, { why: 'unavailable', tool: request.toolName, callId: request.callId }, request.agent)
-      rt.warn('ds-bot: subagent approval has no answerable owner: %s', sessionId)
+      rt.warn('omni-ui: subagent approval has no answerable owner: %s', sessionId)
       return 'cancelled'
     }
     const id = randomUUID()
@@ -129,5 +166,5 @@ export function install(rt) {
     }
   }
 
-  Object.assign(rt, { approvalsView, waitsForApproval, answerApproval, cancelApprovals })
+  Object.assign(rt, { approvalsView, waitsForApproval, answerApproval, cancelApprovals, onApproval })
 }

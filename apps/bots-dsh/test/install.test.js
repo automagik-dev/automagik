@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { apply } from '../index.js'
+import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 
+let rt
 function start(state, { config = {}, services } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-install-'))
   if (state) writeFileSync(join(home, 'state.json'), JSON.stringify(state))
@@ -16,7 +17,7 @@ function start(state, { config = {}, services } = {}) {
     route = options
     return register(options)
   }
-  const applyResult = apply(ctx, { home, ...config })
+  rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => {
     const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
@@ -25,20 +26,21 @@ function start(state, { config = {}, services } = {}) {
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { ctx, call, stop, applyResult }
+  return { ctx, call, stop, rt }
 }
 
-// Listeners run, and tools are listed, in the order they are registered.
-test('apply registers listeners, tools, and effects in a fixed order', (t) => {
-  const { ctx, stop, applyResult } = start()
+// Listeners run in registration order; the team tools are not in this list
+// because they are registered per Bot session scope, not globally.
+test('apply registers listeners and effects in a fixed order', (t) => {
+  const { ctx, stop } = start()
   t.after(stop)
-  assert.equal(applyResult, undefined)
   assert.deepEqual(ctx.calls, [
     'effect ds-bot: diagnostics log',
     'effect ds-bot: state lock',
     'on tools/pre-execute',
     'on llm/adapters-updated',
     'on credentials/reference-updated',
+    'on credentials/record-updated',
     'on settings/document-updated',
     'on llm/adapters-updated',
     'on settings/document-updated',
@@ -73,26 +75,15 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'tool update_bot',
     'tool delete_bot',
     'on tools/execute',
-    'tool list_bot_models',
-    'tool create_group',
-    'tool update_group',
-    'tool delete_group',
-    'tool post_to_group',
-    'tool ask_user',
-    'tool show_view',
+    'effect omni-ui: scoped team tools',
+    'on tools/change',
     'tools guard',
     'on agent/created',
+    'on system-prompt/assemble',
     'on session/event',
-    'tool list_capabilities',
-    'tool save_capability',
-    'tool delete_capability',
-    'tool attach_capability',
-    'tool detach_capability',
-    'effect ds-bot: chat index',
-    'tool group_relay',
-    'tool read_own_chat',
-    'tool read_group_chat',
-    'effect ds-bot: group step lines',
+    'effect omni-ui: chat index',
+    'effect omni-ui: group rounds',
+    'effect omni-ui: group step lines',
     'on llm/stream',
     'on approval/request (prepend)',
     'effect ds-bot: cancel held subagent asks',
@@ -106,16 +97,15 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'prompt context ds-bot:subagent-asks 121',
     'on agent/inbox/discarded',
     'on session/event',
-    'effect ds-bot: resume interrupted turns',
-    'effect ds-bot: memory recovery',
-    'effect ds-bot: memory section',
+    'effect omni-ui: resume interrupted turns',
+    'effect omni-ui: memory recovery',
+    'effect omni-ui: memory section',
     'prompt bot-memory 645',
-    'tool remember',
-    'tool forget',
-    'tool recall',
+    'on agent/pre-step',
     'on agent/status',
-    'effect ds-bot: memory review',
-    'effect ds-bot: Bot compaction',
+    'effect omni-ui: memory review',
+    'effect omni-ui: memory tidy',
+    'effect omni-ui: Bot compaction',
     'on agent/created',
     // Explicit checkpoints must cancel when their agent or plugin is disposed.
     'on agent/disposed',
@@ -126,7 +116,9 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on system-prompt/assemble (prepend)',
     'on agent/request-error (prepend)',
     'on agent/request-error (prepend)',
-    'effect ds-bot: hand on input kept in earlier parts',
+    'effect omni-ui: hand on input kept in earlier parts',
+    'on workspace/session-stop',
+    'on workspace/session-activity',
     'on agent/status',
     'on llm/stream',
     'on agent/request-error',
@@ -146,8 +138,9 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'tool list_secrets',
     'on tools/execute',
     'on llm/stream',
-    'effect ds-bot: load secrets',
-    'effect ds-bot: connectors',
+    'effect omni-ui: load secrets',
+    'on tools/change',
+    'effect omni-ui: connectors',
     'on agent/created',
     'effect ds-bot: capabilities',
     'effect ds-bot: schedule pause retry',
@@ -254,6 +247,12 @@ test('the client channel answers from the saved state', async (t) => {
   assert.equal('thinking' in (await call('set-prefs', { thinking: false })).value, false)
   await call('set-prefs', { thinking: true })
   assert.equal('thinking' in (await call('set-prefs', { thinking: null })).value, false)
+  // Enter sends by default; false persists until the user turns it back on.
+  assert.equal((await call('set-prefs', { enterToSend: false })).value.enterToSend, false)
+  assert.equal((await call('set-prefs', { enterToSend: 'no' })).value.enterToSend, false)
+  assert.equal('enterToSend' in (await call('set-prefs', { enterToSend: true })).value, false)
+  await call('set-prefs', { enterToSend: false })
+  assert.equal('enterToSend' in (await call('set-prefs', { enterToSend: null })).value, false)
   // A refusal from the team code keeps its message for the user.
   assert.deepEqual((await call('delete-bot', { id: 'nobody' })).error, { code: 'bot/refused', message: 'Unknown Bot', details: {} })
   // Off the Desktop profile there are no Bot browsers.
@@ -319,11 +318,11 @@ test('the desktop app has read_browser too; DSH Web does not', (t) => {
   t.after(() => { delete process.env.DS_BOT_APP })
   const app = start(TEAM, { services: { profileContext: { name: 'ds-bot' } } })
   t.after(app.stop)
-  assert.ok(app.ctx.calls.includes('tool read_browser'))
+  assert.ok(app.rt.teamTools.some(d => d.name === 'read_browser'))
   delete process.env.DS_BOT_APP
   const web = start(TEAM, { services: { profileContext: { name: 'web' } } })
   t.after(web.stop)
-  assert.ok(!web.ctx.calls.includes('tool read_browser'))
+  assert.ok(!web.rt.teamTools.some(d => d.name === 'read_browser'))
 })
 
 test('the Automagik app shows the Bot browser panel but leaves read_browser off', async (t) => {
@@ -345,7 +344,58 @@ test('the Automagik app shows the Bot browser panel but leaves read_browser off'
 })
 
 test('config.browser turns Bot browsers off even in the Desktop profile', (t) => {
-  const { ctx, stop } = start(TEAM, { config: { browser: false }, services: { profileContext: { name: 'desktop' } } })
+  const { stop } = start(TEAM, { config: { browser: false }, services: { profileContext: { name: 'desktop' } } })
   t.after(stop)
-  assert.ok(!ctx.calls.includes('tool read_browser'))
+  assert.ok(!rt.teamTools.some(d => d.name === 'read_browser'))
+})
+
+test('a custom agent keeps the local agents adapter live after install', async (t) => {
+  const { ctx, stop, rt } = start({ version: 1, localAgents: { custom: [{ id: 'a1', name: 'A', command: 'node', args: [] }], sessions: {} } })
+  t.after(stop)
+  await rt.load()
+  const entry = (ctx.adapters ?? []).find(candidate => candidate.routes.includes('local-acp-a1'))
+  assert.ok(entry, 'the custom route is registered')
+  assert.equal(entry.adapter.disposed, false, 'the adapter survives install')
+})
+
+// Local-agent routes have their own prefix (#1059): a Bot on DSH's own OpenCode
+// provider stays there, and Omni never registers a name another provider has.
+test('a Bot on DSH\'s opencode provider is not taken for a local agent', async (t) => {
+  const bot = { id: 'b1', name: 'Zen', model: 'opencode/glm-5', appliedModel: 'opencode/glm-5' }
+  const { ctx, stop, rt } = start({ version: 1, bots: { b1: bot }, localAgents: { custom: [], sessions: {} } })
+  t.after(stop)
+  await rt.load()
+  assert.equal(rt.state.bots.b1.model, 'opencode/glm-5')
+  assert.equal(rt.isLocalAgentRef('opencode/glm-5'), false)
+  const routes = (ctx.adapters ?? []).flatMap(entry => entry.routes)
+  assert.ok(!routes.includes('opencode'), 'Omni does not register the name DSH\'s provider uses')
+})
+
+test('a Bot saved on an old local-agent route moves to the prefixed one', async (t) => {
+  const state = {
+    version: 1,
+    bots: {
+      b1: { id: 'b1', name: 'Codex', model: 'codex-cli/gpt-6.1-sol', appliedModel: 'codex-cli/gpt-6.1-sol' },
+      b2: { id: 'b2', name: 'OC', sessionId: 's-oc', model: 'opencode/grok-code' },
+      b3: { id: 'b3', name: 'Mine', model: 'acp-a1/default' },
+    },
+    localAgents: {
+      custom: [{ id: 'a1', name: 'A', command: 'node', args: [] }],
+      sessions: { b1: { route: 'codex-cli', cliSessionId: 't1' }, 's-oc': { route: 'opencode', cliSessionId: 'oc1' } },
+    },
+  }
+  const { ctx, stop, rt } = start(state)
+  t.after(stop)
+  await rt.load()
+  const bots = rt.state.bots
+  assert.equal(bots.b1.model, 'local-codex-cli/gpt-6.1-sol')
+  assert.equal(bots.b1.appliedModel, undefined, 'the Sessions are selected again on the new route')
+  // The opencode CLI served this Bot's Session, so its old ref meant the CLI.
+  assert.equal(bots.b2.model, 'local-opencode/grok-code')
+  assert.equal(bots.b3.model, 'local-acp-a1/default')
+  assert.equal(rt.state.localAgents.sessions.b1.route, 'local-codex-cli')
+  assert.equal(rt.state.localAgents.sessions['s-oc'].route, 'local-opencode')
+  const routes = (ctx.adapters ?? []).flatMap(entry => entry.routes)
+  for (const route of ['local-codex-cli', 'local-opencode', 'local-acp-a1']) assert.ok(routes.includes(route), route)
+  assert.ok(!routes.some(route => ['codex-cli', 'opencode', 'acp-a1'].includes(route)))
 })

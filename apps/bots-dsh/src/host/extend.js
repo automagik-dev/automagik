@@ -35,14 +35,14 @@ export function install(rt) {
     try {
       return fn() ?? {}
     } catch (error) {
-      rt.warn?.('ds-bot: a team view hook failed: %s', error?.message ?? error)
+      rt.warn?.('omni-ui: a team view hook failed: %s', error?.message ?? error)
       return {}
     }
   }))
 
   rt.hooks = {
     endpoint(name, fn, { read = false } = {}) {
-      if (endpoints.has(name)) throw new Error(`ds-bot: endpoint ${name} is already served`)
+      if (endpoints.has(name)) throw new Error(`omni-ui: endpoint ${name} is already served`)
       const entry = { fn, read: read === true }
       endpoints.set(name, entry)
       return () => { if (endpoints.get(name) === entry) endpoints.delete(name) }
@@ -56,9 +56,9 @@ export function install(rt) {
       return dispose
     },
     botModels(kind, source) {
-      if (typeof kind !== 'string' || kind === '') throw new Error('ds-bot: a model menu needs a Bot kind')
-      if (botModels.has(kind)) throw new Error(`ds-bot: the model menu of ${kind} Bots is already served`)
-      if (typeof source?.snapshot !== 'function' || typeof source.pick !== 'function') throw new Error('ds-bot: a model menu needs snapshot() and pick()')
+      if (typeof kind !== 'string' || kind === '') throw new Error('omni-ui: a model menu needs a Bot kind')
+      if (botModels.has(kind)) throw new Error(`omni-ui: the model menu of ${kind} Bots is already served`)
+      if (typeof source?.snapshot !== 'function' || typeof source.pick !== 'function') throw new Error('omni-ui: a model menu needs snapshot() and pick()')
       botModels.set(kind, source)
       return () => { if (botModels.get(kind) === source) botModels.delete(kind) }
     },
@@ -73,7 +73,7 @@ export function install(rt) {
           const owner = fn(sessionId)
           if (owner && rt.botOf?.(owner.botId) !== undefined) return { botId: owner.botId, label: String(owner.label ?? '').trim().slice(0, 80) }
         } catch (error) {
-          rt.warn?.('ds-bot: a Session owner hook failed: %s', error?.message ?? error)
+          rt.warn?.('omni-ui: a Session owner hook failed: %s', error?.message ?? error)
         }
       }
       return undefined
@@ -88,7 +88,7 @@ export function install(rt) {
       try {
         return rule.fn(self)
       } catch (error) {
-        rt.warn?.('ds-bot: a Main Bot rule failed: %s', error?.message ?? error)
+        rt.warn?.('omni-ui: a Main Bot rule failed: %s', error?.message ?? error)
         return ''
       }
     }).filter(text => typeof text === 'string' && text !== ''),

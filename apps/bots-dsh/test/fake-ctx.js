@@ -1,18 +1,33 @@
-// DSH's `attachments` service for generic files, in memory. Reads come back in small
-// chunks that split characters, as a stream may.
+// DSH's `attachments` service (dsh-attachment-local), in memory. A file ref has a
+// name and is read as a stream, in small chunks that split characters as a stream
+// may. An image ref, as a prompt's image block stores it, has no name: only
+// readImage reads it, and a file read refuses it as DSH does.
 export function fakeAttachments() {
   const files = new Map()
+  let next = 0
+  const id = () => `sha256:${String(++next).padStart(64, '0')}`
   return {
     files,
     async saveFile({ data, name }) {
-      const ref = { attachmentId: `sha256:${files.size + 1}`, name, bytes: data.length }
+      const ref = { attachmentId: id(), name, bytes: data.length }
+      files.set(ref.attachmentId, data)
+      return ref
+    },
+    async saveImage({ data, mediaType, width, height }) {
+      const ref = { attachmentId: id(), mediaType, bytes: data.length, width, height }
       files.set(ref.attachmentId, data)
       return ref
     },
     async* readFileStream(ref) {
+      if (typeof ref.name !== 'string' || ref.name === '') throw Object.assign(new Error('File attachment reference is invalid.'), { code: 'INVALID_ATTACHMENT_REF' })
       const data = files.get(ref.attachmentId)
       if (data === undefined) throw new Error('no such file')
       for (let at = 0; at < data.length; at += 1001) yield data.subarray(at, at + 1001)
+    },
+    async readImage(ref) {
+      const data = files.get(ref.attachmentId)
+      if (data === undefined || ref.name !== undefined) throw Object.assign(new Error('Image attachment reference is invalid.'), { code: 'INVALID_ATTACHMENT_REF' })
+      return { ref, data: new Uint8Array(data) }
     },
   }
 }
@@ -57,6 +72,26 @@ export function fakeContext({ services = {} } = {}) {
     emit(name, payload) {
       for (const listener of listeners.get(name) ?? []) {
         if (listener.length < 2) listener(payload)
+      }
+    },
+    // emit, but waits for async listeners — for paths like agent/created whose
+    // work must finish before the test goes on.
+    async emitAsync(name, payload) {
+      for (const listener of listeners.get(name) ?? []) {
+        if (listener.length < 2) await listener(payload)
+      }
+    },
+    // An Agent handle for sessionId whose own tool scope feeds the same map the
+    // global registrations use — how agent.ctx.tools.register looks to the host.
+    scopeAgent(sessionId) {
+      return {
+        id: sessionId,
+        session: { id: sessionId },
+        ctx: {
+          tools: { register: (tool) => { registeredTools.set(tool.name, tool); return () => {} } },
+          effect: () => {},
+          on: () => () => {},
+        },
       }
     },
     effect(execute, label) {

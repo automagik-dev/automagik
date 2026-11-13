@@ -19,6 +19,8 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { openTurnAt } from './btw.js'
 import { HANDOFF_ACK, HISTORY_TIMEOUT_MS, REPLY_KIND, SOURCE_KIND } from './constants.js'
+import { assembleLlmStream } from './models.js'
+import { parseReplies, relayRange, stackReplies } from '../shared/group-replies.js'
 import { CHECKPOINT_PROMPT, STEWARD_SYSTEM, checkpointCount, checkpointTail, checkpointTailNote, checkpointText, linesFor, parseDecision, stewardRequest } from './steward.js'
 import { RESUME_DELAY_MS } from './resume.js'
 import { switchFailure } from './model-state.js'
@@ -26,7 +28,8 @@ import { turnFailure } from './turns.js'
 import { contextPolicy } from '../shared/context-policy.js'
 import { crossesHarness } from '../shared/routes.js'
 import { clip, createClock, escapeRegExp, estimateTokens, splitRef, textOf } from './text.js'
-import { checkShownView, inputsSummary, normalizeView, validateViewAnswer, viewSummary } from '../shared/views.js'
+import { viaOf } from '../shared/im-platforms.js'
+import { checkShownView, normalizeView, readViewReply, viewCardText, viewReply, viewReplyText } from 'deep-view/core'
 
 // Whether a Bot's part has something a handoff note must carry. The team's own setup kickoff
 // is not a conversation; anything else a person or another Bot put in the part is: a typed
@@ -57,23 +60,8 @@ export function cardText(args) {
   return `[Question card] ${question}${detail ? ` (${detail})` : ''}\nOptions: ${options.join(' / ')}`
 }
 
-// A show_view card as the user saw it. A call the tool would refuse (an oversized
-// or invalid view, no title, a display-only card asked to wait or an interactive
-// one told not to) showed no card, so it gives no text. checkShownView runs the
-// tool's own checks, normalization included, so a wrapped card keeps its summary.
-export function viewCardText(args) {
-  let card = args
-  if (typeof card === 'string') {
-    try { card = JSON.parse(card) } catch { return '' }
-  }
-  const shown = checkShownView(card?.title, card?.view)
-  if (shown.error !== undefined) return ''
-  if (!shown.interactive && card?.await_reply === true) return ''
-  if (shown.interactive && card?.await_reply === false) return ''
-  const summary = viewSummary(shown.view)
-  const head = shown.title === '' ? '[View card]' : `[View card] ${shown.title}`
-  return summary === '' ? head : `${head}\n${summary}`
-}
+// The card text and reply format live in the shared deep-view core.
+export { viewCardText, viewReply }
 
 // What one event adds to a Bot's chat history: an answer of the Bot's (its text, or a
 // question card), or a message from the user (`who: 'user'`) or another Bot
@@ -104,19 +92,6 @@ export function questionReply(question, answer) {
   }
 }
 
-// The user's answer to a show_view card. The message carries the blueprint with
-// the answer, so the answer still makes sense after a checkpoint drops the card.
-export function viewReply(record, action, values) {
-  const checked = validateViewAnswer(record?.view, action, values)
-  if (checked.error !== undefined) return undefined
-  const callId = record.callId ?? record.id
-  const shown = { id: record.id, title: record.title, view: record.view }
-  const given = { id: record.id, action, values: checked }
-  return {
-    text: JSON.stringify({ kind: 'answer_to_pending_view', tool: 'show_view', callId, views: [shown], answers: [given] }),
-    source: { kind: REPLY_KIND, callId, outcome: 'answered' },
-  }
-}
 
 // The user's answer to a browser_handoff card: they finished the step, skipped it,
 // or only gave the browser back from its panel. The message carries the reason with
@@ -143,8 +118,6 @@ export function handoffReply(hold, outcome) {
   }
 }
 
-const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value)
-
 export function readReply(text) {
   let value
   try { value = JSON.parse(text) } catch { return undefined }
@@ -152,33 +125,12 @@ export function readReply(text) {
     if (typeof value.callId !== 'string' || typeof value.reason !== 'string') return undefined
     return { handoff: { callId: value.callId, reason: value.reason, note: typeof value.note === 'string' ? value.note : '', outcome: value.outcome === 'skipped' || value.outcome === 'returned' ? value.outcome : 'done' } }
   }
-  if (value?.kind === 'answer_to_pending_view' || (Array.isArray(value?.views) && value.views.length > 0 && value?.kind !== 'answer_to_pending_question')) {
-    const views = (Array.isArray(value.views) ? value.views : []).filter(item => typeof item?.id === 'string' && typeof item.title === 'string' && isRecord(item.view))
-    if (views.length === 0) return undefined
-    const answers = (Array.isArray(value.answers) ? value.answers : []).filter(item => typeof item?.id === 'string' && typeof item.action === 'string' && isRecord(item.values))
-    return { views, answers }
-  }
+  const viewReplyData = readViewReply(text)
+  if (viewReplyData !== undefined) return viewReplyData
   const questions = Array.isArray(value?.questions) ? value.questions.filter(item => typeof item?.id === 'string' && typeof item.question === 'string') : []
   if (questions.length === 0) return undefined
   const answers = (Array.isArray(value.answers) ? value.answers : []).filter(item => typeof item?.id === 'string' && Array.isArray(item.selected))
   return { questions, answers }
-}
-
-// The submitted component, and the view's inputs as the user left them. A long form
-// is cut so a checkpoint stays small.
-function actionSummary(answer, view) {
-  const values = answer?.values
-  if (!isRecord(values)) return '(skipped)'
-  const inputs = inputsSummary(view, values.inputs)
-  let text
-  if (Array.isArray(values.selected)) text = `selected: ${values.selected.join(', ')}`
-  else if (typeof values.confirmed === 'boolean') text = values.confirmed ? 'confirmed' : 'cancelled'
-  else if (isRecord(values.fields)) text = Object.entries(values.fields).map(([key, value]) => `${key}: ${value}`).join('; ')
-  else if (inputs !== '') text = ''
-  else text = typeof answer.action === 'string' && answer.action !== '' ? answer.action : '(skipped)'
-  if (inputs !== '') text = text === '' ? inputs : `${text}; ${inputs}`
-  if (text === '') text = '(empty)'
-  return text.length > 500 ? text.slice(0, 500) : text
 }
 
 export function replyText(text) {
@@ -188,12 +140,7 @@ export function replyText(text) {
     const { reason, note, outcome } = reply.handoff
     return `[Browser handoff] ${note === '' ? reason : `${reason} — ${note}`}\nAnswer: ${outcome}`
   }
-  if (reply.views !== undefined) {
-    return reply.views.map((view) => {
-      const answer = reply.answers.find(item => item.id === view.id)
-      return `${view.title === '' ? '[Answer to view card]' : `[Answer to view card] ${view.title}`}\nAnswer: ${actionSummary(answer, view.view)}`
-    }).join('\n\n')
-  }
+  if (reply.views !== undefined) return viewReplyText(text)
   return reply.questions.map((question) => {
     const answer = reply.answers.find(item => item.id === question.id)
     const values = [...(answer?.selected ?? []), ...(answer?.custom ? [answer.custom] : [])]
@@ -219,7 +166,7 @@ export function historyEntry(event, group) {
   if (event.type !== 'user/message' || (source?.kind !== 'user' && source?.kind !== SOURCE_KIND)) return undefined
   const text = textOf(event.data.content)
   const ours = source.kind === SOURCE_KIND
-  const skipped = (ours && (source.handoff === true || source.role === 'kickoff')) || (!group && text.startsWith('[Group chat'))
+  const skipped = (ours && (source.handoff === true || source.role === 'kickoff' || source.role === 'goal')) || (!group && text.startsWith('[Group chat'))
   // A turn that went on after a handoff did real work, so its answers stay.
   return { answer: false, who: ours ? 'bot' : 'user', text: skipped ? '' : text, keepAnswers: !skipped || (ours && source.resume === true) }
 }
@@ -252,6 +199,9 @@ export function install(rt) {
   const LIST_LINE_MAX = 400
   const HANDOFF_READ_MS = 60_000
   const NOTE_MAX_TOKENS = 8_192
+  // A note cut off at the output limit is asked again with more room, up to what
+  // the route allows.
+  const NOTE_RETRY_MAX_TOKENS = 16_384
   const NOTE_TIMEOUT_MS = 600_000
   const NOTE_ATTEMPTS = 2
   // After a note fails below the hard line the part stays as it is, and tries again
@@ -259,8 +209,11 @@ export function install(rt) {
   const NOTE_COOLDOWN_MS = [60_000, 300_000, 900_000]
   const SWITCH_ATTEMPTS = 5
   const OVERFLOW = 'CONTEXT_WINDOW_EXCEEDED'
-  // A failed connection says nothing about the conversation, so it never moves a part on.
-  const STUCK_CODES = ['INVALID_REQUEST', 'IMAGE_OFFLOAD_REQUIRED']
+  // A checkpoint DSH asked for so a model switch could go ahead, written while no route
+  // could produce a summary. It is honest about that and points at the messages.
+  const NO_SUMMARY = '(No summary was written: no model was free to write it, so the messages the earlier part sent you are carried over word for word below. Read it from them, and read_own_chat finds the rest.)'
+  // Generic request and credential errors say nothing about the conversation.
+  const STUCK_CODES = ['IMAGE_OFFLOAD_REQUIRED']
   const ORIGINAL_COMPACT = Symbol.for('ds-bot/compaction')
   const STEWARD_MAX_TOKENS = 4_096
   const STEWARD_TIMEOUT_MS = 120_000
@@ -286,7 +239,7 @@ export function install(rt) {
     } catch (error) {
       if (!quiet && !measureWarned) {
         measureWarned = true
-        rt.warn('ds-bot: token measure failed; context sizes are estimated: %s', error)
+        rt.warn('omni-ui: token measure failed; context sizes are estimated: %s', error)
       }
     }
     try {
@@ -298,6 +251,39 @@ export function install(rt) {
   }
   const tokensOf = session => tokenUsage(session).tokens ?? undefined
   const clock = createClock(config.timeZone)
+  // Replacing a handoff must shrink the request, not just create another Session.
+  async function canMakeRoom(agent, carry = []) {
+    const session = agent.session
+    const messages = session.deriveMessages()
+    if (!messages.some(message => message.source?.handoff === true)) return true
+    const place = placeOf(agent.id)
+    const room = rt.roomOf(place.roomId)
+    const parts = partsOf(place.botId, place.roomId)
+    const previous = parts.at(-2)
+    const lines = await contextLines(session).catch(() => undefined)
+    const budget = Math.min(RECENT_TOKENS, Math.floor((lines?.check ?? 4 * RECENT_TOKENS) / 4))
+    const text = handoffPackage({
+      room,
+      segment: { fallback: 'overflow', ...(previous?.note ? { note: previous.note, noteFrom: previous.noteFrom ?? previous.number } : {}) },
+      lines: await handoffLines(agent.id, { budget, group: room !== undefined, number: parts.length }),
+      number: parts.length + 1,
+      resume: true,
+      overflow: true,
+    })
+    const meter = ctx.get('tokenMeter')
+    const size = message => meter?.estimateMessage(message) ?? estimateTokens(textOf(message.content))
+    const measured = measureOf(session)
+    // Images in the replaced history must use the same route pricing as the total.
+    const history = measured?.nodes === undefined
+      ? messages.filter(message => message.role !== 'system').reduce((total, message) => total + size(message), 0)
+      : measured.nodes.filter(node => session.eventAt(node.seq).type !== 'system/message').reduce((total, node) => total + node.tokens, 0)
+    const pending = carry.reduce((total, message) => total + size(message), 0)
+    const replacement = size({ role: 'user', content: [{ type: 'text', text }] }) + pending
+    const tokens = measured?.totalTokens
+    // The system prompt and tool definitions stay; pending input is forwarded whole.
+    return replacement < history + pending
+      && (lines === undefined || tokens === undefined || tokens - history + replacement <= lines.usable)
+  }
 
   // Lines for the model the Session last routed to; undefined while it has not
   // routed yet.
@@ -310,12 +296,15 @@ export function install(rt) {
 
   // The backend's own entry points leave Bot Sessions alone, earlier parts and group
   // records included: automatic pressure and overflow compaction do nothing, and
-  // /compact and explicit ranges are refused. Only DS Bot condenses a Bot Session,
-  // when the steward says so, and then the summary is DS Bot's checkpoint. Each preset
-  // mount has its own compaction backend. Every other Session, subagents included, is
-  // as it was.
+  // /compact is refused. Only Omni condenses a Bot Session, when the steward says so,
+  // and then the summary is Omni's checkpoint. An explicit range is different: with
+  // those entry points closed, the only range DSH still asks of a Bot Session is the one
+  // a model switch needs to fit the new model's window, and a refusal there ended the
+  // switch itself (MODEL_SWITCH_COMPACTION_FAILED). So Omni condenses that range as its
+  // own checkpoint instead. Each preset mount has its own compaction backend. Every other
+  // Session, subagents included, is as it was.
   const adoptedEngines = new Set()
-  // Sessions DS Bot itself is condensing right now.
+  // Sessions Omni itself is condensing right now.
   const condensing = new Set()
   // Only this async call chain may cross the native guard. A public /compact
   // request must still be refused while another chain is making a checkpoint.
@@ -337,7 +326,7 @@ export function install(rt) {
     const permit = internalCompaction.getStore()
     return isBotTarget(target) && !(permit?.active === true && permit.sessionId === target.session.id)
   }
-  // The engine that serves this agent, when DS Bot can condense through it.
+  // The engine that serves this agent, when Omni can condense through it.
   const engineOf = agent => [ctx.get('agentPresets')?.serviceFor(agent, 'compaction'), ctx.get('compaction')]
     .find(engine => typeof engine?.[ORIGINAL_COMPACT]?.summarize === 'function')
   // The wrapper decides per call, so it can go on before the Session is a Bot's.
@@ -364,8 +353,11 @@ export function install(rt) {
       return original.compactNow.call(this, target, signal, commandId)
     }
     engine.compactRegion = function compactRegionOutsideBots(start, end, target, signal) {
-      if (ownedByBot(target)) return refuseCompaction()
-      return original.compactRegion.call(this, start, end, target, signal)
+      if (!ownedByBot(target)) return original.compactRegion.call(this, start, end, target, signal)
+      // Without the summary hook the backend would summarize a Bot conversation itself,
+      // so that case keeps the refusal.
+      if (original.summarize === undefined) return refuseCompaction()
+      return condenseRange(target, () => original.compactRegion.call(this, start, end, target, signal), { forSwitch: true })
     }
     if (original.summarize !== undefined) {
       engine.summarize = function summarizeForBots(input, agent, signal) {
@@ -384,7 +376,7 @@ export function install(rt) {
       delete engine[ORIGINAL_COMPACT]
     }
     adoptedEngines.clear()
-  }, 'ds-bot: Bot compaction')
+  }, 'omni-ui: Bot compaction')
   ctx.on('agent/created', ({ agent }) => { agents.set(agent.id, agent); adoptCompaction(agent) })
   ctx.on('agent/disposed', ({ agent }) => {
     agents.delete(agent.id)
@@ -394,14 +386,23 @@ export function install(rt) {
     disposed = true
     for (const job of checkpoints.values()) job.controller.abort(refused('cancelled', 'The checkpoint was cancelled because the plugin closed.'))
     agents.clear()
-  }, 'ds-bot: cancel explicit checkpoints')
+  }, 'omni-ui: cancel explicit checkpoints')
 
-  // A Bot's own chat, or its Session in one group, as numbered parts, oldest first;
-  // the last one is current.
+  // A Bot's own chat, or its Session in one group, or the group's own Session
+  // (`botId === undefined`), as numbered parts, oldest first; the last one is
+  // current.
   function partsOf(botId, roomId) {
+    const room = rt.roomOf(roomId)
+    if (botId === undefined) {
+      if (room === undefined) return []
+      const earlier = room.parts ?? []
+      const parts = earlier.map((segment, index) => ({ ...segment, number: index + 1, startedAt: earlier[index - 1]?.endedAt ?? room.createdAt }))
+      const current = rt.sessionOfRoom(room)
+      if (current !== undefined) parts.push({ sessionId: current, number: parts.length + 1, startedAt: earlier.at(-1)?.endedAt ?? room.createdAt })
+      return parts
+    }
     const bot = rt.botOf(botId)
     if (bot === undefined) return []
-    const room = rt.roomOf(roomId)
     const earlier = (room ? room.segments?.[botId] : bot.segments) ?? []
     const current = room ? room.sessions?.[botId] : rt.chatOf(botId)
     const parts = earlier.map((segment, index) => ({ ...segment, number: index + 1, startedAt: earlier[index - 1]?.endedAt ?? bot.createdAt }))
@@ -467,7 +468,7 @@ export function install(rt) {
       // The latest messages matter most; what could not be read is only noted.
       if (recent.length === 0) throw error
       complete = false
-      rt.warn('ds-bot: reading %s for its handoff stopped early: %s', sessionId, error)
+      rt.warn('omni-ui: reading %s for its handoff stopped early: %s', sessionId, error)
     }
     // `whole`: every message of the part is in `recent`.
     return { recent: recent.reverse(), earlier: earlier.reverse(), unlisted, complete, whole: complete && !full }
@@ -526,7 +527,7 @@ export function install(rt) {
     if (!route?.provider || !route?.model || rt.answersAside?.(`${route.provider}/${route.model}`) !== false) return true
     if (!asideSkipped.has(session.id)) {
       asideSkipped.add(session.id)
-      rt.warn('ds-bot: %s runs on an agent over ACP and no model answers beside it, so Omni makes no context check, note or checkpoint there (first skipped: %s); past the hard line it moves on with its latest messages, without a model call. A background model in Settings lifts this.', session.id, what)
+      rt.warn('omni-ui: %s runs on an agent over ACP and no model answers beside it, so Omni makes no context check, note or checkpoint there (first skipped: %s); past the hard line it moves on with its latest messages, without a model call. A background model in Settings lifts this.', session.id, what)
     }
     return false
   }
@@ -645,19 +646,20 @@ export function install(rt) {
     let problem
     for (let attempt = 1; attempt <= NOTE_ATTEMPTS; attempt += 1) {
       const prompt = retry === undefined ? base : `${base}\n\n${retry}`
-      const assembler = new BlockAssembler()
-      for await (const chunk of ctx.llm.stream({
+      const maxTokens = Math.min(attempt === 1 ? NOTE_MAX_TOKENS : NOTE_RETRY_MAX_TOKENS, limit)
+      const callOptions = {
         provider: route.provider,
         model: route.model,
         ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
         messages: rt.tagUsage([...messages, { role: 'user', content: [{ type: 'text', text: prompt }] }], { sessionId: session.id, kind: 'handoff' }),
         toolHistory: session.toolHistory(),
         ...(header.tools ? { tools: [...header.tools] } : {}),
-        maxTokens: Math.min(NOTE_MAX_TOKENS, route.maxTokens ?? NOTE_MAX_TOKENS),
+        maxTokens,
         sessionId: session.id,
         purpose: 'compaction',
         signal,
-      })) assembler.push(chunk)
+      }
+      const assembler = await (rt.assembleLlm ? rt.assembleLlm(callOptions) : assembleLlmStream(ctx, callOptions, { backoff: rt.config?.llmRetryBackoff }))
       const finish = assembler.finish
       if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
       const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
@@ -673,11 +675,27 @@ export function install(rt) {
         problem = `it lacked ${missing.join(', ')}`
         retry = noteRetryMissing(missing)
       } else {
-        return { note, attempts: attempt }
+        return { note, attempts: attempt, finish: finish.kind, usage: assembler.usage }
       }
-      rt.warn('ds-bot: handoff note attempt %d of %d for %s not used: %s', attempt, NOTE_ATTEMPTS, session.id, problem)
+      rt.warn('omni-ui: handoff note attempt %d of %d for %s on %s/%s not used: %s (finish %s, output %s tokens)', attempt, NOTE_ATTEMPTS, session.id, route.provider, route.model, problem, finish.kind, assembler.usage?.outputTokens ?? 'unknown')
     }
-    throw new Error(`no usable note in ${NOTE_ATTEMPTS} attempts; the last one: ${problem}`)
+    return { problem }
+  }
+
+  // A note is written on the Session's own route — the provider the user chose for this
+  // conversation. No other route is tried, so the conversation never leaves that
+  // provider. Anything unusable is dropped, never used as a note.
+  async function writeNote(agent, signal, { folder = false } = {}) {
+    const session = agent.session
+    const header = session.requestHeader()
+    const route = header?.config
+    if (!route?.provider || !route?.model) throw new Error('the Session has not called a model yet')
+    const messages = session.deriveMessages()
+    const base = folder ? FOLDER_PROMPT : HANDOFF_PROMPT
+    const own = { provider: route.provider, model: route.model, ...(route.maxTokens === undefined ? {} : { maxTokens: route.maxTokens }) }
+    const written = await noteThrough(session, header, messages, own, base, signal)
+    if (written.note !== undefined) return { note: written.note, attempts: written.attempts }
+    throw new Error(`no usable note in ${NOTE_ATTEMPTS} attempts on ${route.provider}/${route.model}; the last one: ${written.problem}`)
   }
 
   // The messages to the Bot in this part, newest kept first within the budget, as a
@@ -701,7 +719,7 @@ export function install(rt) {
     return { kept: kept.reverse(), more }
   }
 
-  // DS Bot's summary for a Bot Session, in place of the backend's. Like the backend's
+  // Omni's summary for a Bot Session, in place of the backend's. Like the backend's
   // own, it is one request on the conversation's own prefix, so the provider serves
   // that from cache.
   async function writeCheckpoint(input, agent, signal) {
@@ -754,13 +772,61 @@ export function install(rt) {
     if (job !== undefined) assertCheckpoint(job)
     return {
       summary: [{ type: 'text', text }],
-      rawOutput,
-      llmStreamCall: true,
-      provider: route.provider,
-      model: route.model,
+      rawOutput: written?.rawOutput ?? [{ type: 'text', text: NO_SUMMARY }],
+      llmStreamCall: written !== undefined,
+      provider: written?.provider ?? route.provider,
+      model: written?.model ?? route.model,
       ...(maxTokens !== undefined ? { maxTokens } : {}),
-      ...(assembler.usage === undefined ? {} : { usage: assembler.usage }),
+      ...(written?.usage === undefined ? {} : { usage: written.usage }),
     }
+  }
+
+  // The summary request itself. The Session's own route answers it, as it always has. A
+  // range DSH condenses for a model switch is different: the route the Session used last
+  // is the one being switched away from, and the switch can be because of that route (a
+  // model out of quota, for one). So the Bot's own model is tried next, and with no route
+  // left the checkpoint carries the messages without a summary rather than fail - a
+  // failure there is what DSH reports as MODEL_SWITCH_COMPACTION_FAILED, and it would
+  // leave the Bot on the model the user is trying to leave.
+  async function summaryThrough(session, route, { input, head, tail, prompt, maxTokens, signal }) {
+    const forSwitch = switchRanges.has(session.id)
+    const routes = [{ provider: route.provider, model: route.model, ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}) }]
+    if (forSwitch) {
+      const bot = rt.selfOf(session.id) === undefined ? undefined : rt.botOf(rt.selfOf(session.id))
+      const ref = bot === undefined ? undefined : await Promise.resolve(rt.desiredModel?.(bot)).catch(() => undefined)
+      const wanted = splitRef(ref)
+      if (wanted !== undefined && routes.every(one => one.provider !== wanted.provider || one.model !== wanted.model)) routes.push(wanted)
+    }
+    let last
+    for (const one of routes) {
+      try {
+        const callOptions = {
+          ...one,
+          messages: [...head, ...tail, { role: 'user', content: [{ type: 'text', text: prompt }] }],
+          toolHistory: session.toolHistory(),
+          ...(input.tools ? { tools: [...input.tools] } : {}),
+          ...(maxTokens !== undefined ? { maxTokens } : {}),
+          sessionId: session.id,
+          purpose: 'compaction',
+          signal,
+        }
+        const assembler = await (rt.assembleLlm ? rt.assembleLlm(callOptions) : assembleLlmStream(ctx, callOptions, { backoff: rt.config?.llmRetryBackoff }))
+        const finish = assembler.finish
+        if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
+        if (finish.kind === 'max-tokens') throw new Error('the checkpoint was cut off at the output limit')
+        const rawOutput = assembler.blocks()
+        const summary = rawOutput.filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
+        if (summary === '') throw new Error('the checkpoint was empty')
+        return { summary, rawOutput, provider: one.provider, model: one.model, usage: assembler.usage }
+      } catch (error) {
+        // A cancelled request is the caller's own decision, not a route that cannot answer.
+        if (!forSwitch || signal?.aborted) throw error
+        last = error
+        rt.warn('omni-ui: no checkpoint from %s/%s for %s: %s', one.provider, one.model, session.id, error?.message ?? error)
+      }
+    }
+    rt.warn('omni-ui: the checkpoint for %s carries no summary; the switch goes ahead without one: %s', session.id, last?.message ?? last)
+    return undefined
   }
 
   // The steward's call: the latest messages of this part, and nothing of the Bot's
@@ -779,8 +845,7 @@ export function install(rt) {
     const info = await ctx.llm.resolveModelInfo(route.provider, route.model).catch(() => undefined)
     // The decision needs no long thinking.
     const off = info?.reasoning?.efforts?.some(effort => effort.id === 'off')
-    const assembler = new BlockAssembler()
-    for await (const chunk of ctx.llm.stream({
+    const callOptions = {
       provider: route.provider,
       model: route.model,
       ...(off ? { reasoningEffort: 'off' } : {}),
@@ -790,7 +855,8 @@ export function install(rt) {
       sessionId: session.id,
       purpose: 'compaction',
       signal: AbortSignal.timeout(STEWARD_TIMEOUT_MS),
-    })) assembler.push(chunk)
+    }
+    const assembler = await (rt.assembleLlm ? rt.assembleLlm(callOptions) : assembleLlmStream(ctx, callOptions, { backoff: rt.config?.llmRetryBackoff }))
     const finish = assembler.finish
     if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
     return parseDecision(assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('\n'))
@@ -803,9 +869,9 @@ export function install(rt) {
     try {
       const action = await askSteward(agent, { midTurn })
       if (action !== undefined) return action
-      rt.warn('ds-bot: the context steward gave no usable answer for %s; moving on to a fresh part', agent.id)
+      rt.warn('omni-ui: the context steward gave no usable answer for %s; moving on to a fresh part', agent.id)
     } catch (error) {
-      rt.warn('ds-bot: the context steward failed for %s; moving on to a fresh part: %s', agent.id, error)
+      rt.warn('omni-ui: the context steward failed for %s; moving on to a fresh part: %s', agent.id, error)
     }
     return 'switch'
   }
@@ -821,7 +887,7 @@ export function install(rt) {
     const sessionId = agent.session.id
     condensing.add(sessionId)
     try {
-      // Through the service itself, past DS Bot's own wrapper: only a call on the
+      // Through the service itself, past Omni's own wrapper: only a call on the
       // service gives the engine its own context, with the services it injects.
       const result = await runInternalCompaction(sessionId, () => inTurn
         ? engine.compactIfNeeded(agent, 'context-overflow', signal)
@@ -829,7 +895,7 @@ export function install(rt) {
       if (result === null) return false
     } catch (error) {
       if (!inTurn && (error?.code === 'busy' || error?.code === 'cancelled')) return undefined
-      rt.warn('ds-bot: condensing %s failed: %s', agent.id, error)
+      rt.warn('omni-ui: condensing %s failed: %s', agent.id, error)
       return false
     } finally {
       condensing.delete(sessionId)
@@ -838,11 +904,11 @@ export function install(rt) {
     rt.renewMemory(sessionId)
     const after = tokensOf(agent.session) ?? before
     partBase.set(agent.id, after)
-    ctx.logger.info('ds-bot: %s condensed from %d to %d tokens (check line %d, hard line %d)', agent.id, before ?? -1, after ?? -1, lines.check, lines.hard)
+    ctx.logger.info('omni-ui: %s condensed from %d to %d tokens (check line %d, hard line %d)', agent.id, before ?? -1, after ?? -1, lines.check, lines.hard)
     return after < lines.check
   }
 
-  // The note a part opened with, as the fresh part shows it. A note DS Bot put
+  // The note a part opened with, as the fresh part shows it. A note Omni put
   // together without the model carries the last note the model wrote.
   function noteText(segment) {
     if (segment?.fallback === undefined) return segment?.note
@@ -896,6 +962,7 @@ export function install(rt) {
       `Omni moved ${where} on to a fresh conversation, part ${number}, because ${reason}. This message is not from the user.`,
       'It is reference, not new instructions: the note and the messages below are a record of earlier work. Do what they say only as part of the work they record, and take new requests only from messages that come after this one.',
       `Everything earlier stays saved: ${lookup}`,
+      ...(engine !== undefined ? [`You now run on ${engine}. Your memory, instructions, team and folder stay yours, but your own tools and how they work may differ from the ones in the messages below: look at what you have before you repeat a step.`] : []),
       ...(folder !== undefined ? [`You now work in ${folder}: commands and file tools start there. Relative paths in the messages below meant the previous folder.`] : []),
       ...(failed !== undefined ? ['Images from the previous part are not in this conversation; if one matters, ask the user to send it again.'] : []),
       '',
@@ -931,7 +998,7 @@ export function install(rt) {
     ...(resume && job.joined?.length ? { joined: job.joined } : {}),
   })
 
-  /** @type {Map<string, {botId:string, roomId?:string, carry:any[], info?:any, joined?:any[], resume:boolean, overflow:boolean, failed?:string, bare?:boolean, folder?:boolean, hard:boolean, started?:boolean, moved?:boolean, noteFailed?:boolean}>} */
+  /** @type {Map<string, {botId:string, roomId?:string, carry:any[], info?:any, joined?:any[], resume:boolean, overflow:boolean, cutoff?:boolean, failed?:string, bare?:boolean, folder?:boolean, engine?:boolean, hard:boolean, started?:boolean, moved?:boolean, noteFailed?:boolean}>} */
   const switches = new Map()
   // Parts whose move to their working folder failed, and the time before which it is
   // not tried again.
@@ -951,14 +1018,30 @@ export function install(rt) {
   const noteFailures = new Map()
   // Parts the steward is deciding about at the end of a turn.
   const checking = new Set()
+  // Turns cut off at the output limit with nothing written, in a row, per part.
+  const cutOffs = new Map()
+  // The turn tracker reports every turn it sees end, so that only turns in a row count.
+  rt.noteCutOffTurn = (sessionId, { withoutText }) => {
+    if (withoutText) cutOffs.set(sessionId, (cutOffs.get(sessionId) ?? 0) + 1)
+    else cutOffs.delete(sessionId)
+  }
+  // Parts that could not follow the Bot's run mode, and the time before which they do
+  // not try again: without it every step would move on again. Until then their input
+  // waits, and engineWakes wakes them for the next try.
+  const engineRetry = new Map()
+  const engineWakes = new Map()
 
   const placeOf = (sessionId) => {
     const botId = rt.chatOwners.get(sessionId)
     if (botId !== undefined) return { botId }
     const owner = rt.groupOwners.get(sessionId)
-    return owner && { botId: owner.botId, roomId: owner.roomId }
+    if (owner !== undefined) return { botId: owner.botId, roomId: owner.roomId }
+    const roomId = rt.roomOwners.get(sessionId)
+    return roomId === undefined ? undefined : { roomId }
   }
-  const currentOf = owner => (owner.roomId === undefined ? rt.chatOf(owner.botId) : rt.roomOf(owner.roomId)?.sessions?.[owner.botId])
+  const currentOf = owner => (owner.roomId === undefined ? rt.chatOf(owner.botId)
+    : owner.botId === undefined ? rt.sessionOfRoom(rt.roomOf(owner.roomId))
+      : rt.roomOf(owner.roomId)?.sessions?.[owner.botId])
   const grown = (sessionId, tokens, lines) => tokens >= (partBase.get(sessionId) ?? 0) + lines.check / 4
   // A read-only process (another dsh holds the team) neither condenses nor switches.
   const readOnly = () => rt.readOnly() !== undefined
@@ -1023,7 +1106,7 @@ export function install(rt) {
   // Input in the inbox is durable but does not wake the driver; send() is what wakes
   // it. Re-send what waits, in order, the first message with the wake, so a stopped
   // turn goes on without waiting for the next input. Only while the plugin is live —
-  // a turn that starts during unload would run without DS Bot's hooks.
+  // a turn that starts during unload would run without Omni's hooks.
   const wake = (agent) => {
     const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
     for (const message of pending) agent.inbox.remove(message.id)
@@ -1034,7 +1117,14 @@ export function install(rt) {
   // state.switching. Hand on what it kept: input an earlier part still holds goes to
   // the part that replaced it and the earlier part is archived as the switch meant
   // to; a part that stayed just wakes so its kept input goes on.
-  async function heldBack() {
+  // The start timer and a direct call can overlap on a slow start; both share one pass,
+  // so kept input is handed on once.
+  let heldBackRun
+  function heldBack() {
+    heldBackRun ??= handOnHeld().finally(() => { heldBackRun = undefined })
+    return heldBackRun
+  }
+  async function handOnHeld() {
     await rt.load()
     if (rt.readOnly() !== undefined) return
     for (const [sessionId, owner] of Object.entries(state.switching ?? {})) {
@@ -1048,14 +1138,14 @@ export function install(rt) {
           // the earlier part only after they sit on the part that replaced it.
           await rt.moveSchedules?.(sessionId, currentOf(owner))
           await ctx.workspaceRegistry.archiveSession(sessionId, { stopActivity: true })
-            .catch(error => rt.warn('ds-bot: earlier part %s not archived: %s', sessionId, error))
+            .catch(error => rt.warn('omni-ui: earlier part %s not archived: %s', sessionId, error))
         } else {
-          try { wake(agent) } catch (error) { rt.warn('ds-bot: part %s could not be woken for its kept input: %s', sessionId, error) }
+          try { wake(agent) } catch (error) { rt.warn('omni-ui: part %s could not be woken for its kept input: %s', sessionId, error) }
         }
         delete state.switching[sessionId]
         await rt.save()
       } catch (error) {
-        rt.warn('ds-bot: input kept in part %s was not handed on: %s', sessionId, error)
+        rt.warn('omni-ui: input kept in part %s was not handed on: %s', sessionId, error)
       }
     }
     // Earlier parts left for a fresh part's first answer by a run that is gone: nothing
@@ -1068,9 +1158,9 @@ export function install(rt) {
       for (const segment of segmentsOf(owner) ?? []) {
         if (segment.archivePending === undefined || switches.has(segment.sessionId) || [...awaiting.values()].some(entry => entry.oldId === segment.sessionId)) continue
         delete segment.archivePending
-        await rt.save().catch(error => rt.warn('ds-bot: %s could not be saved: %s', segment.sessionId, error))
+        await rt.save().catch(error => rt.warn('omni-ui: %s could not be saved: %s', segment.sessionId, error))
         await ctx.workspaceRegistry.archiveSession(segment.sessionId, { stopActivity: true })
-          .catch(error => rt.warn('ds-bot: earlier part %s not archived: %s', segment.sessionId, error))
+          .catch(error => rt.warn('omni-ui: earlier part %s not archived: %s', segment.sessionId, error))
       }
     }
   }
@@ -1097,8 +1187,9 @@ export function install(rt) {
     job.done = running.then(() => {}, () => {})
     void running
       .catch(error => {
-        if (unloaded(error)) return noteInfo('ds-bot: plugin unloaded while %s switched parts; input kept in part %s', rt.botOf(job.botId)?.name ?? agent.id, agent.id)
-        rt.warn('ds-bot: %s did not move on to a fresh part: %s', rt.botOf(job.botId)?.name ?? agent.id, error)
+        const name = rt.botOf(job.botId)?.name ?? rt.roomOf(job.roomId)?.name ?? agent.id
+        if (unloaded(error)) return noteInfo('omni-ui: plugin unloaded while %s switched parts; input kept in part %s', name, agent.id)
+        rt.warn('omni-ui: %s did not move on to a fresh part: %s', name, error)
       })
       .finally(async () => {
         switches.delete(agentId)
@@ -1110,11 +1201,13 @@ export function install(rt) {
           }
           noteFailures.delete(agent.id)
           folderRetry.delete(agent.id)
+          engineRetry.delete(agent.id)
           // The folder may have changed again while the switch ran.
-          if (job.roomId === undefined) void followFolder(job.botId)
+          void followFolder(job)
           return
         }
         if (folder) folderRetry.set(agent.id, Date.now() + FOLDER_RETRY_MS)
+        if (job.engine) engineRetry.set(agent.id, Date.now() + FOLDER_RETRY_MS)
         if (!job.noteFailed) partBase.set(agent.id, tokensOf(agent.session) ?? 0)
         // The stopped turn goes on where it was. A retry finds the note among the
         // input this part kept, so it is added once.
@@ -1132,8 +1225,8 @@ export function install(rt) {
         }).catch((error) => {
           job.kept = true
           try { restore(agent, back) } catch {}
-          if (unloaded(error)) return noteInfo('ds-bot: plugin unloaded during the switch of %s; input kept in part %s', agent.id, agent.id)
-          rt.warn('ds-bot: input for %s was not handed on: %s', agent.id, error)
+          if (unloaded(error)) return noteInfo('omni-ui: plugin unloaded during the switch of %s; input kept in part %s', agent.id, agent.id)
+          rt.warn('omni-ui: input for %s was not handed on: %s', agent.id, error)
           // The input is back where it was; the turn that owns it goes on at once.
           try { wake(agent) } catch {}
         })
@@ -1141,7 +1234,7 @@ export function install(rt) {
       })
       // A state write that fails here (full disk, a file another program holds, a lost lock)
       // must not end up as an unhandled rejection, which stops the whole host.
-      .catch(error => rt.warn('ds-bot: the switch of %s did not finish: %s', agent.id, error))
+      .catch(error => rt.warn('omni-ui: the switch of %s did not finish: %s', agent.id, error))
     return job
   }
 
@@ -1192,7 +1285,7 @@ export function install(rt) {
       // moveOn before the fresh part's first turn could start).
       if (job.freshId !== undefined && job.noNote !== undefined) return
       await ctx.workspaceRegistry.archiveSession(agent.id, { stopActivity: true })
-        .catch(error => rt.warn('ds-bot: earlier part %s not archived: %s', agent.id, error))
+        .catch(error => rt.warn('omni-ui: earlier part %s not archived: %s', agent.id, error))
     }
   }
 
@@ -1219,10 +1312,10 @@ export function install(rt) {
     const segment = segmentsOf(entry)?.find(item => item.sessionId === entry.oldId)
     if (segment?.archivePending !== undefined) {
       delete segment.archivePending
-      await rt.save().catch(error => rt.warn('ds-bot: %s could not be saved: %s', entry.oldId, error))
+      await rt.save().catch(error => rt.warn('omni-ui: %s could not be saved: %s', entry.oldId, error))
     }
     await ctx.workspaceRegistry.archiveSession(entry.oldId, { stopActivity: true })
-      .catch(error => rt.warn('ds-bot: earlier part %s not archived: %s', entry.oldId, error))
+      .catch(error => rt.warn('omni-ui: earlier part %s not archived: %s', entry.oldId, error))
   }
 
   // The fresh part's first call failed before any answer: the Bot goes back to the part it
@@ -1263,18 +1356,18 @@ export function install(rt) {
     }
     await rt.save()
     await rt.moveSchedules?.(freshId, entry.oldId)
-      ?.catch?.(error => rt.warn('ds-bot: tasks of the fresh part of %s not moved back: %s', bot.name, error))
+      ?.catch?.(error => rt.warn('omni-ui: tasks of the fresh part of %s not moved back: %s', bot.name, error))
     const old = await rt.resolveAgent(entry.oldId).catch(() => undefined)
     if (old !== undefined) {
-      try { await takeBack(freshId, old) } catch (error) { rt.warn('ds-bot: input of the fresh part of %s not taken back: %s', bot.name, error) }
-    } else rt.warn('ds-bot: the part %s came from could not be loaded; its input stays in the fresh part', bot.name)
+      try { await takeBack(freshId, old) } catch (error) { rt.warn('omni-ui: input of the fresh part of %s not taken back: %s', bot.name, error) }
+    } else rt.warn('omni-ui: the part %s came from could not be loaded; its input stays in the fresh part', bot.name)
     const picked = await freshRoute(bot, old?.session)
     if (picked !== undefined) await selectRoute(bot, entry.oldId, picked)
     if (old !== undefined) partBase.set(entry.oldId, tokensOf(old.session) ?? 0)
     rt.renewMemory(entry.oldId)
-    rt.warn('ds-bot: the first call in the fresh part of %s failed before any answer; it is back on the part it came from, which was not archived', bot.name)
+    rt.warn('omni-ui: the first call in the fresh part of %s failed before any answer; it is back on the part it came from, which was not archived', bot.name)
     await ctx.workspaceRegistry.archiveSession(freshId, { stopActivity: true })
-      .catch(error => rt.warn('ds-bot: unused fresh part of %s not archived: %s', bot.name, error))
+      .catch(error => rt.warn('omni-ui: unused fresh part of %s not archived: %s', bot.name, error))
   }
 
   // What a fresh part holds of the user's input goes back to the part it came from, in
@@ -1307,7 +1400,7 @@ export function install(rt) {
   // nothing else will answer. A failure the fallback model answers (fallback.js armed its turn:
   // a provider down, a timeout) leaves the switch to that turn: an answer settles it, and only a
   // fallback turn that fails too goes back.
-  const settleLater = (freshId, entry) => void settleSwitch(freshId, entry).catch(error => rt.warn('ds-bot: earlier part %s not archived: %s', entry.oldId, error))
+  const settleLater = (freshId, entry) => void settleSwitch(freshId, entry).catch(error => rt.warn('omni-ui: earlier part %s not archived: %s', entry.oldId, error))
   ctx.on('session/event', (session, event) => {
     const entry = awaiting.get(session?.id)
     if (entry === undefined) return
@@ -1336,7 +1429,7 @@ export function install(rt) {
           entry.fellBack = true
           return
         }
-        void revertSwitch(session.id, entry, event.data.reason.error).catch(error => rt.warn('ds-bot: going back from the fresh part %s failed: %s', session.id, error))
+        void revertSwitch(session.id, entry, event.data.reason.error).catch(error => rt.warn('omni-ui: going back from the fresh part %s failed: %s', session.id, error))
       }
     }
   })
@@ -1361,19 +1454,23 @@ export function install(rt) {
       await rt.save()
       return true
     }, (error) => {
-      rt.warn('ds-bot: model for the fresh part of %s not applied: %s', bot.name, error)
+      rt.warn('omni-ui: model for the fresh part of %s not applied: %s', bot.name, error)
       return false
     })
 
   async function moveOn(agent, job, signal) {
     job.started = true
-    const bot = rt.botOf(job.botId)
+    const bot = job.botId === undefined ? undefined : rt.botOf(job.botId)
     const room = rt.roomOf(job.roomId)
-    if (bot === undefined || (job.roomId !== undefined && room === undefined)) return
+    if (bot === undefined ? room === undefined
+      : job.roomId !== undefined && (room === undefined || !room.members.includes(bot.id))) return
+    // A switch for another reason that lands on a moved part makes no request either.
+    job.engine ||= engineMoved(agent, job)
+    const name = bot?.name ?? room?.name ?? agent.id
     const session = agent.session
     const tokens = tokensOf(session)
     const lines = await contextLines(session).catch(() => undefined)
-    const parts = partsOf(bot.id, room?.id)
+    const parts = bot === undefined ? partsOf(undefined, room.id) : partsOf(bot.id, room?.id)
     const number = parts.length
     const recentTokens = policyOf(session.id).recentTokens
     // A part a switch outgrew carries what fits under the destination's threshold, not
@@ -1401,15 +1498,15 @@ export function install(rt) {
     }
     // Below the hard line a part without a good note stays as it is: it still works,
     // and a later try may write one.
-    if (written === undefined && !job.hard) {
+    if (written === undefined && !job.hard && !job.engine) {
       const count = (noteFailures.get(agent.id)?.count ?? 0) + 1
       const wait = NOTE_COOLDOWN_MS[Math.min(count, NOTE_COOLDOWN_MS.length) - 1]
       noteFailures.set(agent.id, { count, until: Date.now() + wait })
       job.noteFailed = true
-      rt.warn('ds-bot: handoff note for %s failed (%d in a row); part %d goes on, next try in %ds: %s', bot.name, count, number, wait / 1000, failure)
+      rt.warn('omni-ui: handoff note for %s failed (%d in a row); part %d goes on, next try in %ds: %s', name, count, number, wait / 1000, failure)
       return
     }
-    if (failure !== undefined) rt.warn('ds-bot: handoff note for %s failed past the hard line; moving on with the earlier note: %s', bot.name, failure)
+    if (failure !== undefined) rt.warn('omni-ui: handoff note for %s failed past the hard line; moving on with the earlier note: %s', name, failure)
     const previous = parts.at(-2)
     const carriedNote = previous?.note ? { note: previous.note, noteFrom: previous.noteFrom ?? previous.number } : {}
     const noted = written !== undefined ? { note: written.note }
@@ -1424,7 +1521,7 @@ export function install(rt) {
     const picked = await freshRoute(bot, session, job.target)
     const selected = picked === undefined || await selectRoute(bot, freshId, picked)
     await rt.applyPermission(bot, freshId, room)
-      .catch(error => rt.warn('ds-bot: permission for the fresh part of %s not applied: %s', bot.name, error))
+      .catch(error => rt.warn('omni-ui: permission for the fresh part of %s not applied: %s', bot.name, error))
     // At Full access with the Bot's coding CLI model not served, or not selected just above,
     // the fresh part would answer on another provider's model: it is not kept, as one whose
     // Bot is gone is not (below). The fresh Session is not the Bot's yet, so its level is read
@@ -1433,18 +1530,19 @@ export function install(rt) {
     try {
       await rt.assertNotOffCli?.(bot, freshId, undefined, { owner: { bot, room }, unselected: !selected && job.target === undefined })
     } catch (error) {
-      rt.warn('ds-bot: no fresh part for %s: %s', bot.name, error?.message ?? error)
+      rt.warn('omni-ui: no fresh part for %s: %s', bot.name, error?.message ?? error)
       await ctx.workspaceRegistry.archiveSession(freshId, { stopActivity: true })
-        .catch(failure => rt.warn('ds-bot: unused fresh part of %s not archived: %s', bot.name, failure))
+        .catch(failure => rt.warn('omni-ui: unused fresh part of %s not archived: %s', bot.name, failure))
       return
     }
     // The fresh part took several awaits: a Bot or group deleted meanwhile, a member that
     // left, or a part that is no longer the current one gets no fresh part.
-    const current = room !== undefined ? room.sessions?.[bot.id] : rt.chatOf(bot.id)
-    const gone = rt.botOf(bot.id) === undefined || (room !== undefined && (rt.roomOf(room.id) !== room || !room.members.includes(bot.id)))
+    const current = bot === undefined ? rt.sessionOfRoom(room) : room === undefined ? rt.chatOf(bot.id) : room.sessions?.[bot.id]
+    const gone = bot === undefined ? rt.roomOf(room.id) !== room
+      : rt.botOf(bot.id) === undefined || (room !== undefined && (rt.roomOf(room.id) !== room || !room.members.includes(bot.id)))
     if (gone || current !== agent.id) {
       await ctx.workspaceRegistry.archiveSession(freshId, { stopActivity: true })
-        .catch(error => rt.warn('ds-bot: unused fresh part of %s not archived: %s', bot.name, error))
+        .catch(error => rt.warn('omni-ui: unused fresh part of %s not archived: %s', name, error))
       return
     }
     const segment = { sessionId: agent.id, endedAt: Date.now(), ...(tokens !== undefined ? { tokens } : {}), ...noted, ...(job.noNote !== undefined ? { archivePending: true } : {}) }
@@ -1459,20 +1557,20 @@ export function install(rt) {
       // The card's call stays in the old part, so the fresh part shows it in the
       // composer dock, which takes a card without a call.
       if (state.questions[agent.id] !== undefined) {
-        const { callId: _call, ...question } = state.questions[agent.id]
-        state.questions[freshId] = question
+        const pending = state.questions[agent.id]
+        state.questions[freshId] = pending.callId && !pending.callSessionId ? { ...pending, callSessionId: agent.id } : pending
         delete state.questions[agent.id]
       }
       if (state.views?.[agent.id] !== undefined) {
-        const { callId: _call, ...pending } = state.views[agent.id]
-        state.views[freshId] = pending
+        const pending = state.views[agent.id]
+        state.views[freshId] = pending.callId && !pending.callSessionId ? { ...pending, callSessionId: agent.id } : pending
         delete state.views[agent.id]
       }
     }
     // The fresh part is the Bot's current Session now, so its Bot is known: the deny list
     // lands before the handoff starts a turn there, not on the next resolve.
     await rt.applyToolDeny(bot, [freshId])
-      .catch(error => rt.warn('ds-bot: tool deny for the fresh part of %s not applied: %s', bot.name, error?.message ?? error))
+      .catch(error => rt.warn('omni-ui: tool deny for the fresh part of %s not applied: %s', bot.name, error?.message ?? error))
     await rt.save()
     // A model the user picked until now went to the earlier part, which was still the
     // Bot's; from here on a change goes to the fresh one.
@@ -1498,7 +1596,7 @@ export function install(rt) {
       // A fresh part that is not where it was made for would move on at every step.
       if (intended !== undefined && cwd !== undefined && cwd !== intended) {
         folderRetry.set(freshId, Date.now() + FOLDER_RETRY_MS)
-        rt.warn('ds-bot: the fresh part of %s did not start in %s; it works in %s', bot.name, intended, cwd)
+        rt.warn('omni-ui: the fresh part of %s did not start in %s; it works in %s', name, intended, cwd)
       }
       const text = job.fresh ? freshPackage({ room, number: number + 1 }) : handoffPackage({ room, segment, lines: carried, number: number + 1, resume, overflow: job.overflow, failed: job.failed, bare: job.bare, folder, target: job.target })
       freshParts.set(freshId, estimateTokens(text))
@@ -1520,10 +1618,18 @@ export function install(rt) {
         throw error
       })
     }
-    ctx.logger.info('ds-bot: %s%s moved on to part %d at %d tokens (check line %d, hard line %d); %s; %d latest and %d earlier messages carried%s', bot.name, room ? ` in ${room.name}` : '', number + 1, tokens ?? -1, lines?.check ?? -1, lines?.hard ?? -1,
+    ctx.logger.info('omni-ui: %s%s moved on to part %d at %d tokens (check line %d, hard line %d); %s; %d latest and %d earlier messages carried%s', bot.name, room ? ` in ${room.name}` : '', number + 1, tokens ?? -1, lines?.check ?? -1, lines?.hard ?? -1,
       written !== undefined ? `note written in ${written.attempts} attempt(s)` : `note put together by Omni (${noted.fallback}${noted.note ? `, carries part ${noted.noteFrom}'s` : ', nothing to carry'})`,
       carried.recent.length, carried.earlier.length, folder === undefined ? '' : `; now works in ${folder}`)
   }
+
+  // Ends a step Omni takes over. Before a turn's first step an empty batch ends the
+  // turn as completed, where a reject ends it as blocked, which other listeners read as
+  // a failure. Later in a turn an empty batch would run another model step, and a turn
+  // carried through a steer cut keeps its reject, since a completed turn reads as answered.
+  const takeOverStep = (agent, payload) => (payload.step === 1 && rt.live.get(agent.id)?.carried !== true
+    ? { kind: 'enter', messages: [] }
+    : { kind: 'reject' })
 
   // Runs first: an earlier part hands its input on, a part past the hard line makes
   // room before the step (condensed in place, or it stops and goes on in a fresh
@@ -1542,15 +1648,16 @@ export function install(rt) {
     }
     const past = rt.pastOwners.get(agent.id)
     if (past !== undefined && !rt.isBotSession(agent.id)) {
-      await forward(past, payload.messages).catch(error => rt.warn('ds-bot: input for %s was not handed on: %s', agent.id, error))
-      return { kind: 'reject' }
+      await forward(past, payload.messages).catch(error => rt.warn('omni-ui: input for %s was not handed on: %s', agent.id, error))
+      return takeOverStep(agent, payload)
     }
-    if (!rt.isBotSession(agent.id)) return next()
+    const place = placeOf(agent.id)
+    if (place === undefined) return next()
     adoptCompaction(agent)
     const job = switches.get(agent.id)
     if (job !== undefined) {
       job.carry.push(...payload.messages)
-      return { kind: 'reject' }
+      return takeOverStep(agent, payload)
     }
     const fresh = freshParts.get(agent.id)
     if (fresh !== undefined) {
@@ -1563,7 +1670,7 @@ export function install(rt) {
     if (!readOnly()) {
       const outgrown = await makeRoomForSwitch(agent, payload)
       if (outgrown !== undefined) {
-        ctx.logger.info('ds-bot: %s is at %d tokens for %s, over its switch threshold %d; it moves on to a fresh part without a model call', agent.id, outgrown.tokens, outgrown.ref, outgrown.threshold)
+        ctx.logger.info('omni-ui: %s is at %d tokens for %s, over its switch threshold %d; it moves on to a fresh part without a model call', agent.id, outgrown.tokens, outgrown.ref, outgrown.threshold)
         return switchBeforeStep(agent, payload, { hard: true, noNote: 'switch', target: outgrown.ref, threshold: outgrown.threshold })
       }
     }
@@ -1573,6 +1680,7 @@ export function install(rt) {
     // A-2': nothing answers beside the agent, so the hard line moves on without a note.
     if (!await asideReady(agent.session, 'context steward')) return switchBeforeStep(agent, payload, { hard: true, noNote: 'aside' })
     if (await decide(agent, { midTurn: payload.step > 1 }) === 'compact' && await condense(agent, lines, { inTurn: true, signal: payload.signal })) return next()
+    if (!await canMakeRoom(agent, payload.messages)) return next()
     return switchBeforeStep(agent, payload, { hard: true })
   }, { prepend: true })
 
@@ -1582,13 +1690,15 @@ export function install(rt) {
     const running = switches.get(agent.id)
     if (running !== undefined) {
       running.carry.push(...payload.messages)
-      return { kind: 'reject' }
+      return takeOverStep(agent, payload)
     }
-    const midTurn = payload.step > 1
     const entry = rt.liveOf(agent.id)
+    // A turn carried through a steer cut keeps its trigger and joined work, so
+    // its first step is already the middle of a turn for the folder check.
+    const midTurn = payload.step > 1 || entry.carried === true
     entry.switched = true
     startSwitch(agent, { resume: midTurn, carry: payload.messages, info: midTurn ? entry.info : undefined, joined: midTurn ? [...(entry.joined ?? [])] : undefined, ...options })
-    return { kind: 'reject' }
+    return takeOverStep(agent, payload)
   }
 
   // The folder a part should move to, when it is not the one the part was made in. A
@@ -1615,7 +1725,7 @@ export function install(rt) {
 
   // DSH 0.2.1 checks a Session's folder as it puts each model request together, before
   // agent/pre-step, and fails the turn when both the folder and the one the Session was
-  // made in are gone. The team folder is DS Bot's own, so it is made again; a Bot whose
+  // made in are gone. The team folder is Omni's own, so it is made again; a Bot whose
   // own folder went away first changes to the folder it would move to, through DSH's
   // documented way out (`workingDirectory.set`), and the pre-step then moves it to a
   // fresh part there, as on DSH 0.2.0.
@@ -1624,30 +1734,67 @@ export function install(rt) {
     const folders = ctx.get?.('workingDirectory')
     if (agent === undefined || typeof folders?.get !== 'function' || readOnly()) return next()
     const current = folders.get(agent.session)
-    if (current === undefined || await rt.isFolder(current)) return next()
+    if (current === undefined) return next()
     await rt.load()
-    const team = await rt.keepTeamFolder()
-    if (current === team || !rt.isBotSession(agent.id)) return next()
+    // A group's own Session only relays, so it stays in the team workspace. It has no
+    // fresh part to move to, so a stale or gone folder is corrected in place; without
+    // this every round failed with 'directory does not exist' (#710).
+    if (rt.roomOf(agent.id) !== undefined) {
+      if (current === rt.teamFolder() && await rt.isFolder(current)) return next()
+      const team = await rt.keepTeamFolder()
+      if (team === undefined) return next()
+      // Already at the team path, it was only gone and is now made again.
+      if (current !== team) {
+        await folders.set(agent, team, context.signal)
+          .catch(error => rt.warn('omni-ui: the group chat works in %s and could not change to %s: %s', current, team, error))
+      }
+      return next()
+    }
     const place = placeOf(agent.id)
     const wanted = rt.workDirOf(place)
-    const target = wanted !== undefined && await rt.isFolder(wanted) ? wanted : team
+    const usable = wanted !== undefined && await rt.isFolder(wanted)
+    // A member whose group's folder went away works on in the team workspace; the
+    // group is told once, so every round is not told again. A member still in a
+    // usable folder — it may never have moved to the group's — needs no correction,
+    // but the group is told all the same.
+    if (!usable) await rt.roomFolderNotice?.(place?.roomId, wanted)
+    if (await rt.isFolder(current)) return next()
+    const team = await rt.keepTeamFolder()
+    if (current === team || !rt.isBotSession(agent.id)) return next()
+    const target = usable ? wanted : team
     if (target !== undefined) {
       await folders.set(agent, target, context.signal)
-        .catch(error => rt.warn('ds-bot: %s works in %s, which is gone, and could not change to %s: %s', rt.botOf(place?.botId)?.name ?? agent.id, current, target, error))
+        .catch(error => rt.warn('omni-ui: %s works in %s, which is gone, and could not change to %s: %s', rt.botOf(place?.botId)?.name ?? agent.id, current, target, error))
     }
     return next()
   }, { prepend: true })
 
   // A Bot's own chat moves to its new folder now when it is idle; a running turn
-  // moves at its next step, and each group conversation at its next turn there.
-  async function followFolder(botId) {
-    const sessionId = rt.chatOf(botId)
+  // moves at its next step, and each group conversation at its next turn there. The
+  // group's own Session follows the same way when the group's folder changes.
+  async function followFolder(owner) {
+    const sessionId = currentOf(owner)
     if (sessionId === undefined || switches.has(sessionId) || readOnly()) return
     try {
       const agent = await rt.resolveAgent(sessionId)
       if (agent.status === 'idle' && await folderMove(agent) !== undefined) startSwitch(agent, { folder: true })
     } catch (error) {
-      rt.warn('ds-bot: %s did not move to its working folder: %s', rt.botOf(botId)?.name ?? botId, error)
+      rt.warn('omni-ui: %s did not move to its working folder: %s', owner.botId === undefined ? rt.roomOf(owner.roomId)?.name ?? owner.roomId : rt.botOf(owner.botId)?.name ?? owner.botId, error)
+    }
+  }
+
+  // A Bot's new run mode reaches all its conversations at once: each part that is idle
+  // moves on now, and one that is running at its next step (agent/pre-step).
+  async function followEngine(botId) {
+    for (const sessionId of [rt.chatOf(botId), ...rt.groupSessionsOf(botId)]) {
+      if (sessionId === undefined || switches.has(sessionId) || readOnly()) continue
+      engineRetry.delete(sessionId)
+      try {
+        const agent = await rt.resolveAgent(sessionId)
+        if (agent.status === 'idle' && engineMoved(agent, placeOf(sessionId))) startSwitch(agent, { engine: true })
+      } catch (error) {
+        rt.warn('omni-ui: %s did not follow its run mode in %s: %s', rt.botOf(botId)?.name ?? botId, sessionId, error)
+      }
     }
   }
 
@@ -1704,6 +1851,7 @@ export function install(rt) {
         if (condensed !== false) return
       }
       if (switches.has(agent.id)) return
+      if (!await canMakeRoom(agent)) return
       startSwitch(agent, { hard: (tokensOf(agent.session) ?? tokens) >= lines.hard })
     } finally {
       checking.delete(agent.id)
@@ -1727,16 +1875,31 @@ export function install(rt) {
   }
 
   ctx.effect(() => {
-    const timer = setTimeout(() => void heldBack().catch(error => rt.warn('ds-bot: handing on input kept in earlier parts failed: %s', error)), RESUME_DELAY_MS)
+    const timer = setTimeout(() => void heldBack().catch(error => rt.warn('omni-ui: handing on input kept in earlier parts failed: %s', error)), RESUME_DELAY_MS)
     timer.unref?.()
     return () => clearTimeout(timer)
-  }, 'ds-bot: hand on input kept in earlier parts')
+  }, 'omni-ui: hand on input kept in earlier parts')
+
+  // An archive from DSH's own Session list while the team runs: DSH asks for the
+  // Session's activity (plain archive) or stops it (stopActivity) inside the archive,
+  // so an unarchive started here queues behind that archive and undoes it. The team's
+  // own archives drop the Session from its owner first.
+  const keepCurrent = ({ sessionId }) => {
+    if (readOnly() || !(rt.isBotSession(sessionId) || rt.roomOwners.has(sessionId))) return
+    void ctx.workspaceRegistry.unarchiveSession(sessionId)
+      .catch(error => rt.warn('omni-ui: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
+  }
+  ctx.on('workspace/session-stop', keepCurrent)
+  ctx.on('workspace/session-activity', (request, next) => {
+    keepCurrent(request)
+    return next()
+  })
 
   ctx.on('agent/status', ({ agent, status }) => {
     agents.set(agent.id, agent)
     if (status === 'idle' && rt.isBotSession(agent.id) && !nativeDshSession(agent.id)) {
       releaseRescued(agent)
-      void checkContext(agent).catch(error => rt.warn('ds-bot: context check for %s failed: %s', agent.id, error))
+      void checkContext(agent).catch(error => rt.warn('omni-ui: context check for %s failed: %s', agent.id, error))
     }
   })
 
@@ -1764,6 +1927,10 @@ export function install(rt) {
   const EARLIER_PAGE = 60
   function displayItems(partId, events, session, seedTurn) {
     const hidden = new Set(state.exchangeTurns[partId] ?? [])
+    // Call ids of the page's group_relay calls; their tool/result events carry the
+    // round's replies. A result without its call on the page (the page cut between
+    // them) draws nothing rather than guessing.
+    const relayCalls = new Set()
     const items = []
     // The turn/start still in effect. A steered or queued user message stays in
     // it; only another turn/start moves on. A later page does not repeat the
@@ -1790,16 +1957,49 @@ export function install(rt) {
         continue
       }
       if (event.type === 'tool/call') {
-        // Hidden turns and refused calls never showed a display card. Interactive
-        // cards live in the pending dock or on their answer message instead.
-        if (event.data?.name === 'show_view' && !hidden.has(event.data?.turn)) {
+        // A group_relay call's result is paired back to it by call id — the tool
+        // name is on the call, never on the result.
+        if (event.data?.name === 'group_relay') relayCalls.add(event.data?.callId)
+        // Hidden turns and refused calls never showed a display card. Closed cards
+        // stay at the call that asked them, including in a hidden Bot-to-Bot turn.
+        const named = event.data?.name
+        if (named === 'show_view' || named === 'ask_user') {
           let args = event.data?.arguments
           if (typeof args === 'string') { try { args = JSON.parse(args) } catch { args = undefined } }
+          const callId = event.data?.callId ?? null
+          const closed = callId === null ? undefined : rt.own(rt.own(state.closedCards, partId), callId)
+          if (named === 'ask_user') {
+            if (closed !== undefined) items.push({ kind: 'closed', closed, question: { question: String(args?.question ?? ''), ...(args?.detail ? { detail: String(args.detail) } : {}), options: Array.isArray(args?.options) ? args.options : [], multiSelect: args?.multiSelect === true }, callId, time: event.time })
+            continue
+          }
           const view = normalizeView(args?.view)
           const shown = checkShownView(args?.title, view)
           if (shown.error === undefined && !shown.interactive && args?.await_reply !== true) {
-            items.push({ kind: 'view', title: shown.title, view, callId: event.data?.callId ?? null, time: event.time })
+            if (!hidden.has(event.data?.turn ?? turn)) items.push({ kind: 'view', title: shown.title, view, callId, time: event.time })
+          } else if (shown.error === undefined && closed !== undefined) {
+            items.push({ kind: 'closed', closed, title: shown.title, view, callId, time: event.time })
           }
+        }
+        continue
+      }
+      if (event.type === 'tool/result') {
+        // A group's own Session runs no model; its turns are synthesized group_relay
+        // calls whose results hold the round's replies — the group's conversation,
+        // read the way the live chat reads a settled call (shared/group-replies.js).
+        const message = event.data?.message
+        if (!relayCalls.has(message?.toolCallId)) continue
+        const text = textOf(message?.content)
+        const range = relayRange(text)
+        const room = range === undefined ? undefined : rt.roomOf(partId) ?? rt.roomOf(rt.pastOwners.get(partId)?.roomId)
+        const replies = range === undefined ? parseReplies(text).replies : room === undefined ? [] : rt.groupRows(room.id, range.from, range.to, range.anchor)
+        for (const { reply, texts, time, duration } of stackReplies(replies)) {
+          // Reply rows take the reply's own time, and no seq: several rows share
+          // the result event's seq, which the chat keys a post's anchor by.
+          const item = { time: time ?? reply.time ?? event.time }
+          if (turn !== undefined) item.turn = turn
+          if (reply.kind === 'user') items.push({ kind: 'user', text: reply.text, ...(reply.via ? { via: reply.via } : {}), ...item })
+          else if (reply.kind === undefined) items.push({ kind: 'post', botId: reply.botId ?? null, name: reply.name ?? null, texts, ...item, ...(duration === undefined ? {} : { duration }) })
+          else items.push({ kind: 'relay', reply, ...item })
         }
         continue
       }
@@ -1807,14 +2007,30 @@ export function install(rt) {
       const source = event.data?.source
       if (source?.kind === 'user') {
         const content = Array.isArray(event.data.content) ? event.data.content : []
+        const imageRefs = content.filter(block => block?.type === 'image' && block.attachment !== undefined)
+          .map(block => ({ attachmentId: block.attachment.attachmentId, mime: block.attachment.mediaType ?? block.attachment.mime ?? block.attachment.mimeType, name: block.attachment.name }))
         const images = content.filter(block => block?.type === 'image').length
-        stamp(event, { kind: 'user', text: textOf(content), ...(images > 0 ? { images } : {}), time: event.time })
+        const via = viaOf(source)
+        stamp(event, { kind: 'user', text: textOf(content), ...(images > 0 ? { images } : {}), ...(imageRefs.length > 0 ? { imageRefs } : {}), ...(via ? { via } : {}), time: event.time })
       } else if (source?.kind === REPLY_KIND) {
         const text = textOf(event.data.content)
         const reply = readReply(text)
         if (reply?.questions !== undefined) stamp(event, { kind: 'answer', questions: reply.questions, answers: reply.answers, time: event.time })
         else if (reply?.handoff !== undefined) stamp(event, { kind: 'answer', text: replyText(text), handoff: reply.handoff, time: event.time })
         else if (reply?.views !== undefined) stamp(event, { kind: 'answer', text: replyText(text), views: reply.views, answers: reply.answers, time: event.time })
+      } else if (source?.kind === SOURCE_KIND && source.role === 'post') {
+        // A group's own Session reads as one conversation: member posts are its
+        // messages. A post past what a message holds came as a file, with its start.
+        const content = Array.isArray(event.data.content) ? event.data.content : []
+        const file = source.length === undefined ? undefined : content.find(block => block?.type === 'file')?.attachment
+        stamp(event, {
+          kind: 'post',
+          botId: source.senderSessionId ?? null,
+          name: source.senderName ?? null,
+          text: textOf(content).replace(/^\[Group post from (?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, ''),
+          ...(file ? { file, length: source.length } : {}),
+          time: event.time,
+        })
       } else if (source?.kind === SOURCE_KIND && source.handoff !== true && source.deferred !== true && ['request', 'reply', 'report', 'stopped'].includes(source.role)) {
         stamp(event, { kind: 'event', role: source.role, botId: source.senderSessionId ?? null, name: source.senderName ?? null, roomId: source.roomId ?? null, time: event.time })
       }
@@ -1822,7 +2038,7 @@ export function install(rt) {
     return items
   }
 
-  async function partPage(parts, index, cursor) {
+  async function partPage(parts, index, cursor, steps = false) {
     const part = parts[index]
     const signal = AbortSignal.timeout(HISTORY_TIMEOUT_MS)
     // An archived earlier part may have no live agent left; its stored events
@@ -2075,7 +2291,7 @@ export function install(rt) {
       try {
         await ctx.workspaceRegistry.unarchiveSession(bot.id)
       } catch (error) {
-        rt.warn('ds-bot: %s stays on part %s; its first Session was not restored: %s', bot.name, current, error)
+        rt.warn('omni-ui: %s stays on part %s; its first Session was not restored: %s', bot.name, current, error)
         return false
       }
     }
@@ -2100,37 +2316,142 @@ export function install(rt) {
       try {
         await rt.moveSchedules?.(part, bot.id)
       } catch (error) {
-        rt.warn('ds-bot: tasks of part %s not moved back, so it is not archived: %s', part, error)
+        rt.warn('omni-ui: tasks of part %s not moved back, so it is not archived: %s', part, error)
         continue
       }
       await ctx.workspaceRegistry.archiveSession(part, { stopActivity: true })
-        .catch(error => rt.warn('ds-bot: part %s not archived: %s', part, error))
+        .catch(error => rt.warn('omni-ui: part %s not archived: %s', part, error))
     }
-    if (moved) ctx.logger?.info?.('ds-bot: %s is back on its first Session; %d later part(s) archived', bot.name, parts.length)
+    if (moved) ctx.logger?.info?.('omni-ui: %s is back on its first Session; %d later part(s) archived', bot.name, parts.length)
     return moved
   }
 
   async function earlierPage(sessionId, cursor) {
     const past = rt.pastOwners.get(sessionId)
-    const botId = rt.chatOwners.get(sessionId) ?? (past?.roomId === undefined ? past?.botId : undefined)
-    const parts = botId === undefined ? [] : partsOf(botId)
+    // A group's own Session is its own chain of parts like a Bot's own chat: its
+    // current Session and every earlier `room.parts` page the same "Load earlier".
+    const roomId = rt.roomOwners?.get(sessionId) ?? (past?.botId === undefined ? past?.roomId : undefined)
+    const botId = roomId === undefined ? rt.chatOwners.get(sessionId) ?? (past?.roomId === undefined ? past?.botId : undefined) : undefined
+    const parts = roomId === undefined ? (botId === undefined ? [] : partsOf(botId)) : partsOf(undefined, roomId)
     const at = parts.findIndex(part => part.sessionId === sessionId)
     const index = Number.isInteger(cursor?.part) ? cursor.part : at - 1
     if (at <= 0 || index < 0 || index >= at) return { items: [], cursor: null, startedAt: parts[at]?.startedAt ?? null }
     // Aside cards belong to the part that was current when they were asked, so
     // they ride along with that part's history instead of the team view.
-    const btw = (await rt.btwPartCards?.(botId, parts[index].sessionId)) ?? []
+    const btw = botId === undefined ? [] : (await rt.btwPartCards?.(botId, parts[index].sessionId)) ?? []
     return { ...(await partPage(parts, index, cursor)), btw, startedAt: parts[at].startedAt }
   }
 
   // A Bot's whole own chat, newest page first: the current part, then the earlier
   // ones, for a window that draws the conversation itself.
-  async function chatPage(botId, cursor) {
+  // The same short labels the client gives a tool (cells.js cannot be loaded
+  // here; keep the two tables in step).
+  const TOOL_PHRASES = [
+    [/web_?search|search_?web/i, 'Searching online'],
+    [/fetch|browse|browser|web/i, 'Reading a page'],
+    [/shell|bash|pwsh|powershell|exec|command|terminal/i, 'Running shell commands'],
+    [/^(read|view|cat)\b|read_/i, 'Opening a file'],
+    [/grep|glob|list_dir|^ls$|find|search/i, 'Looking through files'],
+    [/write|edit|patch|apply|replace/i, 'Writing changes'],
+    [/image|photo|draw/i, 'Working on an image'],
+  ]
+  const STEP_LABELS = {
+    list_secrets: 'Checking the keys', ask_user_question: 'Waiting for your answer',
+    message_bot: 'Asking another Bot', stop_bot: 'Stopping another Bot',
+    create_bot: 'Creating a Bot', update_bot: 'Updating a Bot',
+    create_group: 'Creating a group', update_group: 'Updating the group',
+    delete_group: 'Deleting the group', post_to_group: 'Posting in the group',
+    list_bots: 'Checking the team', read_group_chat: 'Reading a group chat',
+    read_own_chat: 'Looking back through the chat',
+    remember: 'Saving to memory', forget: 'Updating memory', recall: 'Checking memory',
+  }
+  const toolLabel = name => STEP_LABELS[name] ?? TOOL_PHRASES.find(([pattern]) => pattern.test(name))?.[1]
+
+  // Per-turn folds of a page's tool calls, for `chat`/`room-chat` with
+  // `steps: true`. Interactive calls stay out: they show as cards, not steps.
+  function stepsItems(events, partId) {
+    const hidden = new Set(state.exchangeTurns[partId] ?? [])
+    const byTurn = new Map()
+    let turn
+    for (const event of events) {
+      if (event.type === 'turn/start') {
+        if (typeof event.data?.turn === 'number' && Number.isInteger(event.data.turn)) turn = event.data.turn
+        continue
+      }
+      if (turn === undefined || hidden.has(turn)) continue
+      if (event.type === 'tool/call') {
+        const name = event.data?.name
+        if (typeof name !== 'string' || name === 'ask_user' || name === 'request_secret' || name === 'group_relay') continue
+        const list = byTurn.get(turn) ?? byTurn.set(turn, []).get(turn)
+        list.push({ callId: event.data?.callId ?? null, name, label: toolLabel(name) ?? null })
+        continue
+      }
+      if (event.type === 'tool/result') {
+        const callId = event.data?.message?.toolCallId
+        const entry = byTurn.get(turn)?.find(tool => tool.callId === callId)
+        if (entry !== undefined && typeof event.data?.message?.ok === 'boolean') entry.ok = event.data.message.ok
+      }
+    }
+    for (const tools of byTurn.values()) for (const tool of tools) delete tool.callId
+    return byTurn
+  }
+
+  // Places a page's `steps` items after the last row of each turn and fills in
+  // `ms` from the turn's thinking time when the stream has it.
+  async function applySteps(items, events, sessionId) {
+    const byTurn = stepsItems(events, sessionId)
+    for (const [turn, tools] of byTurn) {
+      const item = { kind: 'steps', turn, tools, time: items.filter(it => it.turn === turn).at(-1)?.time ?? events.at(-1)?.time }
+      const ms = await rt.thinkingOf(sessionId, turn).catch(() => undefined)
+      if (typeof ms === 'number' && ms > 0) item.ms = ms
+      const at = items.reduce((last, it, index) => it.turn === turn ? index : last, -1)
+      items.splice(at < 0 ? items.length : at + 1, 0, item)
+    }
+    return items
+  }
+
+  // The newest line of a Bot's own-chat part, for the list row's order and
+  // preview. Read once per part, then kept by session/event.
+  const PREVIEWABLE = new Set(['bot', 'user', 'answer', 'post', 'view'])
+  const tails = new Map()
+  const previewText = item => String(item.text ?? item.title ?? item.texts?.join(' ') ?? '').replace(/\s+/g, ' ').trim()
+  const applyTail = (sessionId, item) => tails.set(sessionId, { lastAt: item.time ?? 0, preview: previewText(item) })
+  const fillTail = async sessionId => {
+    // Newest page back until a row shows; chats almost always have it on page one.
+    try {
+      let beforeSeq
+      for (let pages = 0; pages < 10; pages += 1) {
+        const page = await ctx.sessionController.page({
+          address: { kind: 'session', sessionId },
+          ...(beforeSeq !== undefined ? { beforeSeq } : {}),
+          maxMessages: EARLIER_PAGE,
+        }, AbortSignal.timeout(HISTORY_TIMEOUT_MS))
+        const events = page.records.map(record => record.event)
+        const last = [...displayItems(sessionId, events)].reverse().find(item => PREVIEWABLE.has(item.kind))
+        if (last !== undefined) { applyTail(sessionId, last); return }
+        if (!page.hasMore || events.length === 0) break
+        beforeSeq = events[0]?.seq
+      }
+      tails.set(sessionId, { lastAt: 0, preview: '' })
+    } catch { tails.set(sessionId, { lastAt: 0, preview: '' }) }
+  }
+  rt.chatTail = sessionId => {
+    if (!tails.has(sessionId)) { tails.set(sessionId, null); void fillTail(sessionId); return undefined }
+    return tails.get(sessionId) ?? undefined
+  }
+  ctx.on('session/event', (session, event) => {
+    if (!tails.has(session.id)) return
+    try {
+      for (const item of displayItems(session.id, [event], session)) if (PREVIEWABLE.has(item.kind)) applyTail(session.id, item)
+    } catch { /* a tail miss must never take out the other listeners */ }
+  })
+
+  async function chatPage(botId, cursor, steps = false) {
     const parts = partsOf(botId)
     if (parts.length === 0) throw Object.assign(new Error('Unknown Bot'), { code: 'bot/not-found' })
     const index = Number.isInteger(cursor?.part) ? cursor.part : parts.length - 1
     if (index < 0 || index >= parts.length) return { sessionId: parts.at(-1).sessionId, items: [], cursor: null }
-    return { sessionId: parts.at(-1).sessionId, ...(await partPage(parts, index, cursor)) }
+    return { sessionId: parts.at(-1).sessionId, ...(await partPage(parts, index, cursor, steps)) }
   }
 
   Object.assign(rt, { clock, partsOf, historyEntry, partLines, noteText, earlierPage, chatPage, displayItems, followFolder, heldBack, startFresh, switchRoute, keepAdoptedSession, contextStatus, checkpointBot, switchJobs: () => switches.values(), switchingChat: id => [...switches.values()].some(job => job.botId === id && job.roomId === undefined && job.target !== undefined),

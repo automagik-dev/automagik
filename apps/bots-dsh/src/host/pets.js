@@ -207,7 +207,7 @@ export function createPets({ home, codexHome = join(homedir(), '.codex'), builti
     const sheet = await download(url)
     if (sheetVersion(sheet) === undefined) throw fail('That pet\'s spritesheet is not in the Codex format (1536x1872 or 1536x2288 WebP)')
     const manifest = manifestOf(listed, clean)
-    warn('ds-bot: pet %s installed from codex-pets.net', clean)
+    warn('omni-ui: pet %s installed from codex-pets.net', clean)
     return keep(clean, { ...manifest, from: `${MARKET}/#/pets/${clean}` }, sheet)
   }
 

@@ -6,6 +6,7 @@ import { mkdir, open, readFile, realpath, stat, unlink, writeFile } from 'node:f
 import { basename, extname, isAbsolute, join, relative as relativePath } from 'node:path'
 import { gateScope } from './gate.js'
 import { keepTabs, restoreTabs } from './tabs.js'
+import { runIsolatedScript } from './script-runner.js'
 
 const ACTION_TIMEOUT = 5_000
 const SNAPSHOT_LIMIT = 40_000
@@ -79,8 +80,10 @@ function inspectWriteTarget(el, { url, mode, active = false }) {
   return kind ? action(kind, label) : null
 }
 
+// playwright-core ships with Omni and drives the desktop app's own browser; a
+// full playwright the user installed also brings its own Chromium build.
 async function loadChromium(playwrightUrl) {
-  const loaded = playwrightUrl ? await import(playwrightUrl) : await import('playwright')
+  const loaded = playwrightUrl ? await import(playwrightUrl) : await import('playwright').catch(() => import('playwright-core'))
   const chromium = loaded.chromium ?? loaded.default?.chromium
   if (!chromium) throw new Error('Playwright has no chromium export. Install playwright and its Chromium build before using a browser plugin.')
   return chromium
@@ -821,6 +824,12 @@ export function createSession({
       return finishAction(() => target.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => {}), target)
     },
     shot,
+    async frame() {
+      const target = activePage()
+      if (!target) return undefined
+      const image = await target.screenshot({ type: 'jpeg', quality: 40 })
+      return { mime: 'image/jpeg', data: image.toString('base64'), url: target.url(), title: await target.title().catch(() => '') }
+    },
     // `origin` names the call and Session that asked, so a card can answer them.
     handoff(reason, note, origin) {
       ready()
@@ -842,38 +851,27 @@ export function createSession({
     async runScript(source, origin) {
       const body = String(source ?? '')
       if (body.length > 8_000) throw new Error('Script is longer than 8000 characters.')
-      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-      let answer
-      const fn = new AsyncFunction(
-        'goto', 'snapshot', 'click', 'type', 'fill', 'select', 'press', 'scroll', 'tabs', 'screenshot', 'text', 'upload', 'handoff', 'resume', 'back', 'done',
-        `"use strict";\n${body}`,
-      )
-      const done = value => { answer = value }
-      const run = fn(
-        url => this.open(url),
-        () => this.snapshotText(),
-        (ref, options) => this.clickWithOptions(ref, options),
-        (ref, text, submit) => this.type(ref, text, submit),
-        (ref, text) => this.type(ref, text),
-        (ref, values) => this.select(ref, values),
-        key => this.press(key),
-        direction => this.scroll(direction),
-        (action, index) => action === 'list' ? this.tabs() : action === 'select' ? this.selectTab(index) : this.closeTab(index),
-        async () => {
+      const answer = await runIsolatedScript(body, {
+        goto: url => this.open(url),
+        snapshot: () => this.snapshotText(),
+        click: (ref, options) => this.clickWithOptions(ref, options),
+        type: (ref, text, submit) => this.type(ref, text, submit),
+        fill: (ref, text) => this.type(ref, text),
+        select: (ref, values) => this.select(ref, values),
+        press: key => this.press(key),
+        scroll: direction => this.scroll(direction),
+        tabs: (action, index) => action === 'list' ? this.tabs() : action === 'select' ? this.selectTab(index) : this.closeTab(index),
+        screenshot: async () => {
           const picture = await this.shot()
           return picture.text
         },
-        () => this.snapshotText(),
-        (ref, paths) => this.upload(ref, paths),
-        (reason, note) => this.handoff(reason, note, origin),
-        () => this.resume(),
-        () => this.back(),
-        done,
-      )
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Script ran longer than 20 seconds.')), 20_000))
-      const value = await Promise.race([run, timeout])
-      const finalAnswer = answer ?? value
-      return finalAnswer === undefined ? 'Script finished without done().' : String(finalAnswer)
+        text: () => this.snapshotText(),
+        upload: (ref, paths) => this.upload(ref, paths),
+        handoff: (reason, note) => this.handoff(reason, note, origin),
+        resume: () => this.resume(),
+        back: () => this.back(),
+      })
+      return answer ?? 'Script finished without done().'
     },
     get closed() { return closed },
     onClosed(listener) {

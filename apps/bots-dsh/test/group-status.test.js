@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { apply } from '../index.js'
+import { afterRound } from './relay-rows.js'
+import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 import { immediate, until } from './until.js'
 import { ROOM_REPLY_TIMEOUT_MS } from '../src/host/constants.js'
@@ -62,15 +63,15 @@ async function start(extra = {}) {
   let route
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
-  apply(ctx, { home })
+  rt = createRuntime(ctx, { home })
   let seq = 0
   const emit = (id, type, data) => {
     for (const listener of ctx.listeners.get('session/event') ?? []) {
       if (listener.length >= 2) listener({ id }, { type, seq: ++seq, data })
     }
   }
-  const tool = (name, args, sessionId, exec = {}) => ctx.registeredTools.get(name).execute(args, { agent: { id: sessionId }, ...exec })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const tool = (name, args, sessionId, exec = {}) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId }, ...exec })
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   const askApproval = (sessionId, extra = {}, next = () => 'from-dsh') => ctx.listeners.get('approval/request')[0]({ agent: { session: { id: sessionId } }, toolName: 'pwsh', reason: 'escalate sandbox', ...extra }, next)
   const stop = async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) }
   await tool('list_bots', {}, 'a')
@@ -86,14 +87,14 @@ async function openTurn(t, { agentOf, emit, tool }) {
   let result
   const stop = new AbortController()
   t.after(() => stop.abort())
-  void tool('group_relay', {}, 'r1', { callId: 'c1', signal: stop.signal }).then((value) => { result = JSON.parse(value) })
+  void tool('group_relay', {}, 'r1', { callId: 'c1', signal: stop.signal }).then(async (value) => { result = await afterRound(rt, 'r1', value) })
   await settle(() => agentOf('gb').calls.length === 1)
   const message = agentOf('gb').calls[0]
   agentOf('gb').inbox.nextTurn.length = 0
   emit('gb', 'turn/start', { turn: 1 })
   emit('gb', 'user/message', { content: message.content, source: message.source })
   const read = () => result
-  read.stop = () => stop.abort()
+  read.stop = () => rt.stopRoomRound('r1')
   return read
 }
 
@@ -157,10 +158,12 @@ test('an own chat\'s approval stays with DSH and is listed while it waits', asyn
   let release
   const outcome = host.askApproval('a', {}, () => new Promise((resolve) => { release = resolve }))
   const [approval] = (await host.call('state', {})).value.work.approvals
-  assert.deepEqual([approval.botId, approval.roomId, approval.answerable], ['a', undefined, false])
-  assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'allow' })).error.code, 'bot/stale')
+  assert.deepEqual([approval.botId, approval.roomId, approval.answerable], ['a', undefined, true])
+  assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'allow' })).ok, true)
+  assert.equal(await outcome, 'allowed-once')
+  // DSH's card answering late is ignored once Omni settled the race.
   release('rejected')
-  assert.equal(await outcome, 'rejected')
+  assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'allow' })).error.code, 'bot/stale')
   assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
   // Sessions off the team are not Omni's to answer.
   assert.equal(await host.askApproval('elsewhere'), 'from-dsh')
@@ -222,9 +225,9 @@ test('stopping a round withdraws a member turn that has not started', async (t) 
   let result
   const stop = new AbortController()
   t.after(() => stop.abort())
-  void host.tool('group_relay', {}, 'r1', { callId: 'c1', signal: stop.signal }).then((value) => { result = JSON.parse(value) })
+  void host.tool('group_relay', {}, 'r1', { callId: 'c1', signal: stop.signal }).then(async (value) => { result = await afterRound(rt, 'r1', value) })
   await settle(() => host.agentOf('gb').calls.length === 1)
-  stop.abort()
+  rt.stopRoomRound('r1')
   await settle(() => result !== undefined)
   await settle(() => host.agentOf('gb').inbox.nextTurn.length === 0)
   assert.deepEqual(host.agentOf('gb').cancelled, [])
@@ -272,8 +275,10 @@ test('a member that fails after the round moved on shows the failure in the grou
   assert.deepEqual([post.source.late, post.source.quiet, post.source.failed], [true, true, { code: 'RATE_LIMIT', status: 429, message: 'Too many requests' }])
 
   host.emit('r1', 'user/message', { content: post.content, source: post.source })
-  const round = JSON.parse(await host.tool('group_relay', {}, 'r1', { callId: 'c2', signal: new AbortController().signal }))
-  assert.deepEqual(round.replies.map(reply => [reply.kind, reply.name, reply.code, reply.status]), [['failed', 'Writer', 'RATE_LIMIT', 429]])
+  const round = await afterRound(rt, 'r1', await host.tool('group_relay', {}, 'r1', { callId: 'c2', signal: new AbortController().signal }))
+  // The failure shows where it happened, before the post that tells the group.
+  assert.deepEqual(rt.groupRows('r1', 1).filter(reply => reply.kind === 'failed').map(reply => [reply.kind, reply.name, reply.code, reply.status]), [['failed', 'Writer', 'RATE_LIMIT', 429]])
+  assert.deepEqual(round.replies, [])
   assert.deepEqual(round.failed, ['Writer'])
   assert.equal(host.agentOf('gb').calls.length, 1)
 })

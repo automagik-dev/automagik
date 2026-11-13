@@ -138,7 +138,7 @@ test('a Bot with no model yet changes nothing until the user picks one', async (
 
 // A runtime with two providers, a DSH default, and a session controller that, like
 // DSH, saves every Session selection as the default.
-function bench({ providers = { deepseek: ['v4-flash'], stepfun: ['step-5'] }, fallback = { provider: 'stepfun', model: 'step-5' }, reasoning = {} } = {}) {
+function bench({ providers = { deepseek: ['v4-flash'], stepfun: ['step-5'] }, fallback = { provider: 'stepfun', model: 'step-5' }, reasoning = {}, services = {} } = {}) {
   let current = { ...fallback }
   const selected = []
   const saved = []
@@ -147,7 +147,7 @@ function bench({ providers = { deepseek: ['v4-flash'], stepfun: ['step-5'] }, fa
     on(name, listener) { listeners.set(name, listener); return () => listeners.delete(name) },
     get: name => (name === 'agentDefaultModel'
       ? { currentSelection: () => ({ ...current }), saveSelection: async (next) => { saved.push(next); current = { ...next } } }
-      : undefined),
+      : services[name]),
     llm: {
       listProviders: () => Object.keys(providers).map(id => ({ id, name: id.toUpperCase() })),
       listModels: async id => providers[id].map(model => ({ id: model, name: model, inputModalities: ['text'] })),
@@ -299,6 +299,84 @@ test('the catalog attaches thinking levels to models a Bot uses', async () => {
   assert.equal(entries.find(entry => entry.ref === 'stepfun/step-5')?.reasoning, undefined)
 })
 
+// #637: a hosted loop engine publishes a route that resolves models but refuses every
+// generation with HOSTED_ENGINE_ROUTE; once it refuses, nothing chooses it again.
+test('a route refused for not being a model endpoint is chosen nowhere again', async () => {
+  const { rt, selected } = bench({ providers: { external: ['default'], deepseek: ['v4-flash'] }, fallback: { provider: 'external', model: 'default' } })
+  const pinned = { id: 'b1', model: 'external/default', appliedModel: 'external/default' }
+  const clean = { id: 'b2', model: 'deepseek/v4-flash' }
+  rt.state.bots = { b1: pinned, b2: clean }
+  await rt.routeRefused('external/default', pinned)
+  // The pinned Bot moves to what it would be given today and re-selects its Session.
+  assert.equal(pinned.model, 'deepseek/v4-flash')
+  assert.equal(pinned.appliedModel, 'deepseek/v4-flash')
+  assert.equal(clean.model, 'deepseek/v4-flash')
+  assert.deepEqual(selected, ['b1:deepseek/v4-flash'])
+  // Pickers, the deployment default and explicit naming keep it out too.
+  assert.deepEqual((await rt.catalog({ fresh: true })).map(entry => entry.ref), ['deepseek/v4-flash'])
+  assert.deepEqual(rt.cachedCatalog().map(entry => entry.ref), ['deepseek/v4-flash'])
+  assert.equal(await rt.defaultModel(), 'deepseek/v4-flash')
+  await assert.rejects(rt.resolveModel('external/default'), /Model external\/default is not available/)
+})
+
+test('a Bot on a clean record but a poisoned Session re-selects its own model', async () => {
+  const { rt, selected } = bench({ providers: { external: ['default'], deepseek: ['v4-flash'] }, fallback: { provider: 'external', model: 'default' } })
+  // Its group Session ran on another Bot's route; its own record never named it.
+  const bot = { id: 'b1', model: 'deepseek/v4-flash', appliedModel: 'deepseek/v4-flash' }
+  rt.state.bots = { b1: bot }
+  await rt.routeRefused('external/default', bot)
+  assert.equal(bot.model, 'deepseek/v4-flash')
+  assert.deepEqual(selected, ['b1:deepseek/v4-flash'])
+})
+
+// Every Bot the route was pinned to may have its Session still on it, even one whose
+// record already names the replacement; re-pinning the record alone leaves that
+// Session failing on every turn.
+test('every Bot re-pinned off a refused route re-selects its Session', async () => {
+  const { rt, selected } = bench({ providers: { external: ['default'], deepseek: ['v4-flash'] }, fallback: { provider: 'external', model: 'default' } })
+  const failed = { id: 'b1', model: 'external/default', appliedModel: 'external/default' }
+  const alsoPinned = { id: 'b2', model: 'external/default', appliedModel: 'deepseek/v4-flash' }
+  rt.state.bots = { b1: failed, b2: alsoPinned }
+  await rt.routeRefused('external/default', failed)
+  assert.equal(alsoPinned.model, 'deepseek/v4-flash')
+  assert.equal(alsoPinned.appliedModel, 'deepseek/v4-flash')
+  assert.deepEqual([...selected].sort(), ['b1:deepseek/v4-flash', 'b2:deepseek/v4-flash'])
+})
+
+// The sync key must see the filtered catalog: the catalog itself does not change
+// on a refusal, so an unfiltered key would never run the sync again.
+test('a refusal changes the sync key, so the next sync applies what the records say', async () => {
+  const { rt, selected } = bench({ providers: { external: ['default'], deepseek: ['v4-flash'] } })
+  const bot = { id: 'b1', model: 'deepseek/v4-flash', appliedModel: 'deepseek/v4-flash' }
+  rt.state.bots = { b1: bot }
+  await rt.catalog()
+  await rt.syncModels()
+  await rt.routeRefused('external/default')
+  // The Session drifted meanwhile — its own picker can move it without telling us.
+  delete bot.appliedModel
+  await rt.syncModels()
+  assert.deepEqual(selected, ['b1:deepseek/v4-flash'])
+})
+
+// A refused route is chosen again only once its provider serves other models: the same
+// placeholder registered again, even after it was unregistered, is still not an endpoint.
+test('an adapter update ends a refusal only when its provider serves other models', async () => {
+  const { rt, providers, listeners } = bench({ providers: { external: ['default'], deepseek: ['v4-flash'] }, fallback: { provider: 'external', model: 'default' } })
+  const adaptersUpdated = () => listeners.get('llm/adapters-updated')()
+  await rt.routeRefused('external/default')
+  await adaptersUpdated()
+  assert.equal(rt.defaultRef(), undefined)
+  delete providers.external
+  await adaptersUpdated()
+  providers.external = ['default']
+  await adaptersUpdated()
+  assert.equal(rt.defaultRef(), undefined)
+  providers.external = ['default', 'real']
+  await adaptersUpdated()
+  assert.equal(rt.defaultRef(), 'external/default')
+  assert.ok((await rt.catalog()).some(entry => entry.ref === 'external/default'))
+})
+
 test('a greeting waits for the provider of its Bot model to register', async () => {
   const { rt, providers, listeners } = bench({ providers: {} })
   const waiting = rt.waitForModel({ model: 'stepfun/step-5' }, 5000)
@@ -308,6 +386,58 @@ test('a greeting waits for the provider of its Bot model to register', async () 
   }, 20)
   assert.equal(await waiting, 'stepfun/step-5')
   assert.equal(await rt.waitForModel({}, 5000), undefined)
+})
+
+test('a key set or a sign-in lifts what blocked a Bot; a key removed, a sign-out, a provider or a settings change only re-reads', async () => {
+  const keys = new Set(['DEEPSEEK_API_KEY'])
+  const records = new Set(['deepseek-account-platform/default'])
+  const credentials = {
+    describe: async ref => ({ configured: keys.has(ref), writable: true }),
+    describeRecord: async key => ({ configured: records.has(key), writable: true }),
+  }
+  const { rt, listeners, providers } = bench({ services: { credentials } })
+  const lifted = []
+  // Each listing also passes the providers listed with their key (the next test).
+  rt.unblockBots = fix => { if (fix.keyed === undefined) lifted.push(fix) }
+  await rt.catalog()
+  providers.deepseek = ['v4-pro']
+  await listeners.get('credentials/reference-updated')('DEEPSEEK_API_KEY')
+  assert.ok((await rt.catalog()).some(entry => entry.ref === 'deepseek/v4-pro'))
+  await listeners.get('credentials/reference-updated')('STEPFUN_API_KEY')
+  // Another plugin's record, such as an OAuth token refresh, is no sign-in.
+  await listeners.get('credentials/record-updated')('llm-pi-ai/github-copilot')
+  providers.deepseek = ['v4-flash']
+  await listeners.get('credentials/record-updated')('deepseek-account-platform/default')
+  assert.ok((await rt.catalog()).some(entry => entry.ref === 'deepseek/v4-flash'))
+  // The provider refused the token and its record went.
+  records.clear()
+  await listeners.get('credentials/record-updated')('deepseek-account-platform/default')
+  listeners.get('llm/adapters-updated')()
+  listeners.get('settings/document-updated')()
+  assert.deepEqual(lifted, [{ ref: 'DEEPSEEK_API_KEY' }, { signedIn: true }])
+})
+
+test('every listing passes the providers listed with their key, so a key that came without an event still lifts', async () => {
+  const { rt, providers } = bench()
+  providers.stepfun = ['step-5']
+  rt.missingKeys = async () => new Set(['stepfun'])
+  const passed = []
+  rt.unblockBots = fix => passed.push([...fix.keyed].sort())
+  await rt.catalog({ fresh: true })
+  rt.missingKeys = async () => new Set()
+  await rt.catalog({ fresh: true })
+  assert.equal(passed.length, 2)
+  assert.equal(passed[0].includes('stepfun'), false)
+  assert.equal(passed[1].includes('stepfun'), true)
+})
+
+test('a credential DSH cannot describe counts as there, so its fix still lifts', async () => {
+  const { rt, listeners } = bench({ services: { credentials: { describe: async () => { throw new Error('locked') } } } })
+  const lifted = []
+  rt.unblockBots = fix => { if (fix.keyed === undefined) lifted.push(fix) }
+  await listeners.get('credentials/reference-updated')('DEEPSEEK_API_KEY')
+  await listeners.get('credentials/record-updated')('deepseek-account-platform/default')
+  assert.deepEqual(lifted, [{ ref: 'DEEPSEEK_API_KEY' }, { signedIn: true }])
 })
 
 test('a Bot on the default model with its own thinking level leaves the default level as it was', async () => {

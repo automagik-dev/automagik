@@ -108,9 +108,9 @@ export function install(rt) {
   const attach = (sub) => {
     const own = sub.schedule
     service = own
-    sub.effect(() => () => { if (service === own) service = null }, 'ds-bot: schedule service')
+    sub.effect(() => () => { if (service === own) service = null }, 'omni-ui: schedule service')
     void revokeNewSchedules()
-      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+      .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
   }
   if (typeof ctx.inject === 'function') ctx.inject(['schedule'], attach)
   else if (ctx.get?.('schedule') !== undefined) attach({ schedule: ctx.get('schedule'), effect: (execute, label) => ctx.effect(execute, label) })
@@ -120,7 +120,8 @@ export function install(rt) {
   const ownerOf = (sessionId) => {
     const chat = rt.chatOwners.get(sessionId)
     if (chat !== undefined) return { botId: chat }
-    if (rt.roomOf(sessionId) !== undefined) return { roomId: sessionId }
+    const room = rt.roomOf(sessionId)
+    if (room !== undefined) return { roomId: room.id }
     return rt.groupOwners.get(sessionId) ?? rt.pastOwners.get(sessionId)
   }
   const known = owner => owner !== undefined && (owner.botId === undefined ? rt.roomOf(owner.roomId) !== undefined : rt.botOf(owner.botId) !== undefined)
@@ -182,7 +183,7 @@ export function install(rt) {
     if (typeof runtime?.requestDrive !== 'function') {
       if (!warnedNoDrive) {
         warnedNoDrive = true
-        rt.warn('ds-bot: the schedule service has no requestDrive hook; '
+        rt.warn('omni-ui: the schedule service has no requestDrive hook; '
           + 'a refused delivery waits for DSH\'s own next tick')
       }
       return
@@ -190,7 +191,7 @@ export function install(rt) {
     try {
       runtime.requestDrive()
     } catch (error) {
-      rt.warn('ds-bot: the schedule drive was not re-requested: %s', error?.message ?? error)
+      rt.warn('omni-ui: the schedule drive was not re-requested: %s', error?.message ?? error)
     }
   }
   let retryTimer
@@ -202,12 +203,12 @@ export function install(rt) {
     if (retryTimer !== undefined) return
     retryTimer = setInterval(() => {
       void revokeNewSchedules()
-        .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+        .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
       if (stuck.size === 0) stopRetry()
     }, PAUSE_RETRY_MS)
     retryTimer.unref?.()
   }
-  ctx.effect(() => stopRetry, 'ds-bot: schedule pause retry')
+  ctx.effect(() => stopRetry, 'omni-ui: schedule pause retry')
 
   /**
    * Pause every active task with a fresh-Session target that a restricted Bot is involved
@@ -280,11 +281,11 @@ export function install(rt) {
         await service.edit({ id: entry.id, action: 'update', patch: { active: false } })
         stuck.delete(entry.id)
         paused.push(entry.id)
-        rt.warn('ds-bot: paused the scheduled task %s: '
+        rt.warn('omni-ui: paused the scheduled task %s: '
           + 'its fresh Session would run with no Bot lineage', entry.title ?? entry.id)
       } catch (error) {
         stuck.add(entry.id)
-        rt.warn('ds-bot: the scheduled task %s could not be paused (%s); '
+        rt.warn('omni-ui: the scheduled task %s could not be paused (%s); '
           + 'a delivery to a fresh Session is refused until it is', entry.title ?? entry.id,
         error?.message ?? error)
       }
@@ -321,12 +322,12 @@ export function install(rt) {
   void Promise.resolve(rt.load?.()).then(() => {
     teamLoaded = true
     return revokeNewSchedules()
-  }).catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+  }).catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
   // A task armed later for a restricted Bot's Session (by the user, in DSH's own surface)
   // is checked the moment the service reports it.
   ctx.on('schedule/changed', () => {
     void revokeNewSchedules()
-      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+      .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
   })
   // Whether one delivery still belongs to a task a restricted Bot is involved in. Reads the
   // catalog only: management writes are serialized behind a delivery, reads are not.
@@ -394,7 +395,7 @@ export function install(rt) {
           if ((await lineageOf(id)).bot !== undefined) { hasBot = true; break }
         }
         if (!hasBot) {
-          rt.warn('ds-bot: the fresh scheduled Session %s keeps its level: a task no Bot armed may be the one it is for', sessionId)
+          rt.warn('omni-ui: the fresh scheduled Session %s keeps its level: a task no Bot armed may be the one it is for', sessionId)
           return agent
         }
       }
@@ -409,8 +410,8 @@ export function install(rt) {
     try {
       await rt.lowerScheduledSession?.(agent.session, levels)
     } catch (cause) {
-      rt.warn('ds-bot: the fresh Session %s of a scheduled task was not lowered to its Bot\'s level: %s', sessionId, cause)
-      throw new Error('ds-bot: a scheduled delivery is held until its Session runs no wider than its Bot\'s permission level', { cause })
+      rt.warn('omni-ui: the fresh Session %s of a scheduled task was not lowered to its Bot\'s level: %s', sessionId, cause)
+      throw new Error('omni-ui: a scheduled delivery is held until its Session runs no wider than its Bot\'s permission level', { cause })
     }
     return agent
   }
@@ -424,12 +425,13 @@ export function install(rt) {
     const unsafe = teamLoaded ? await unsafeDelivery(sessionId) : true
     if (!unsafe) return openedLevel(sessionId, await next())
     void revokeNewSchedules()
-      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
-    throw new Error('ds-bot: a scheduled delivery is blocked until its task can be paused')
+      .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
+    throw new Error('omni-ui: a scheduled delivery is blocked until its task can be paused')
   })
 
   async function schedulesView() {
     if (service === null) return { available: false, tasks: [] }
+    const now = Date.now()
     const tasks = []
     for (const entry of await service.catalog()) {
       const sessionId = targetSessionOf(entry)
@@ -481,7 +483,7 @@ export function install(rt) {
         await service.edit({ id: record.id, action: 'delete' })
       } catch (error) {
         // The copy is safe; archiving the earlier part will remove its old task.
-        rt.warn('ds-bot: earlier copy of task %s not removed: %s', record.title, error?.message ?? error)
+        rt.warn('omni-ui: earlier copy of task %s not removed: %s', record.title, error?.message ?? error)
       }
     }
   }

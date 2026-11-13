@@ -57,3 +57,12 @@ test('a reference takes out only its own "@label", so a typed call with the same
   assert.deepEqual(names(mentionsIn('@Kate, @K', [...members, { name: 'Kate' }], [{ labels: ['K'] }])), { all: false, found: ['Kate'] })
   assert.deepEqual(names(mentionsIn('@K notes and @K', members, [{ labels: ['K notes'] }])), { all: false, found: ['K'] })
 })
+
+test('the default group relay limit scales with member count', async () => {
+  const { defaultRelayLimit } = await import('../src/host/groups.js')
+  assert.equal(defaultRelayLimit({ members: [] }), 0)
+  assert.equal(defaultRelayLimit({ members: ['a', 'b', 'c'] }), 9)
+  assert.equal(defaultRelayLimit({ members: ['a', 'b', 'c', 'd'] }), 12)
+  // A saved room override remains authoritative; the helper only supplies the default.
+  assert.equal({ relayLimit: 2 }.relayLimit, 2)
+})

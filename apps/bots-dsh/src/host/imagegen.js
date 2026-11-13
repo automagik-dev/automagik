@@ -262,7 +262,7 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
       return await keep(image.base64, { callId, via: found.kind, size: image.size ?? base.size })
     } catch (error) {
       note(callId, { phase: 'failed', error: String(error?.message ?? error).slice(0, 300) })
-      if (signal?.aborted) warn('ds-bot: an image generation was stopped')
+      if (signal?.aborted) warn('omni-ui: an image generation was stopped')
       throw error
     }
   }
@@ -300,7 +300,7 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
       return await keep(made.base64, { callId, via: 'codex', size: SIZES.includes(size) ? size : 'auto' })
     } catch (error) {
       note(callId, { phase: 'failed', error: String(error?.message ?? error).slice(0, 300) })
-      if (signal?.aborted) warn('ds-bot: an image generation was stopped')
+      if (signal?.aborted) warn('omni-ui: an image generation was stopped')
       throw error
     }
   }
@@ -352,7 +352,7 @@ export function install(rt) {
   // so they show in the chat's image card and stay in the team workspace like generate_image's.
   const attachKeeper = (sub) => {
     const off = sub.acpAgents?.keepImages?.(images.agentImages)
-    if (typeof off === 'function') sub.effect(() => off, 'ds-bot: agent images')
+    if (typeof off === 'function') sub.effect(() => off, 'omni-ui: agent images')
   }
   if (typeof ctx.inject === 'function') ctx.inject(['acpAgents'], attachKeeper)
   else if (ctx.get?.('acpAgents') !== undefined) attachKeeper({ acpAgents: ctx.get('acpAgents'), effect: (execute, label) => ctx.effect(execute, label) })

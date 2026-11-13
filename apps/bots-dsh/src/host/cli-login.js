@@ -266,7 +266,7 @@ export function install(rt) {
         // said by kind, as the rest of the route does.
         const message = typeof error?.code === 'string' && error.code.startsWith('bot/') && typeof error.message === 'string' ? error.message.slice(0, 300) : 'The model could not be selected.'
         outcomes.set(key, { ref: choice.ref, ok: false, message, kept, at: Date.now() })
-        rt.warn('ds-bot: %s signed in, but %s was not put on %s: %s', provider, bot.name, choice.ref, error?.code ?? 'error')
+        rt.warn('omni-ui: %s signed in, but %s was not put on %s: %s', provider, bot.name, choice.ref, error?.code ?? 'error')
       } finally {
         if (applying.get(key) === choice) applying.delete(key)
       }
@@ -274,7 +274,7 @@ export function install(rt) {
   }
   ctx.on('acp-dsh/login-ready', (payload) => {
     if (!PROVIDERS.has(payload?.id)) return
-    void applyChoices(payload.id).catch(error => rt.warn('ds-bot: the model chosen for %s was not applied: %s', payload.id, error?.message ?? error))
+    void applyChoices(payload.id).catch(error => rt.warn('omni-ui: the model chosen for %s was not applied: %s', payload.id, error?.message ?? error))
       // Then the Bots that waited on this CLI's sign-in move to it (subscription-move.js, #868):
       // after the choices, so a model the person picked with the sign-in is theirs.
       .finally(() => rt.moveSubscriptionBots?.())
@@ -508,7 +508,7 @@ export function install(rt) {
         if (typeof exchangeId === 'string' && exchangeId !== '') {
           try { rt.forgetDelivery?.(exchangeId) } catch {}
         }
-        rt.warn('ds-bot: a message in %s carried a sign-in code and was not sent', agentId)
+        rt.warn('omni-ui: a message in %s carried a sign-in code and was not sent', agentId)
       }
     }
   }
@@ -521,7 +521,7 @@ export function install(rt) {
   if (typeof deliver === 'function') {
     rt.deliver = async (args) => {
       if (loginTextMatches(args?.text)) {
-        rt.warn('ds-bot: a delivery to %s carried a sign-in code and was not sent', args?.toId)
+        rt.warn('omni-ui: a delivery to %s carried a sign-in code and was not sent', args?.toId)
         throw failed(CODE_REFUSED)
       }
       return await deliver(args)

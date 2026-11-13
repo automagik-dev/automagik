@@ -192,7 +192,7 @@ export function install(rt) {
       const apply = rt.applyModel
       if (typeof apply !== 'function') break
       await apply(bot, { force: true })
-        .catch(error => rt.warn('ds-bot: model for %s not restored: %s', bot.name, error))
+        .catch(error => rt.warn('omni-ui: model for %s not restored: %s', bot.name, error))
     }
   }
 
@@ -275,7 +275,7 @@ export function install(rt) {
       // The thinking level is the Bot's own, resolved against the route just picked: the move
       // carries it where the agent offers it, never dropping it before the route answers.
       await apply(bot, { force: true })
-        .catch(error => rt.warn('ds-bot: model for %s not applied: %s', bot.name, error))
+        .catch(error => rt.warn('omni-ui: model for %s not applied: %s', bot.name, error))
     }
     // The agent's catalog may have landed after the move: re-apply the moved Bots so the
     // thinking level is set once the route can express it. A no-op when it already is.
@@ -283,7 +283,7 @@ export function install(rt) {
       const apply = rt.applyModel
       if (typeof apply !== 'function') break
       await apply(bot)
-        .catch(error => rt.warn('ds-bot: thinking level for %s not applied: %s', bot.name, error))
+        .catch(error => rt.warn('omni-ui: thinking level for %s not applied: %s', bot.name, error))
     }
   }
 
@@ -302,7 +302,7 @@ export function install(rt) {
         if (!again) break
       }
     })()
-      .catch(error => rt.warn('ds-bot: the Claude Bots were not moved to acp-claude: %s', error))
+      .catch(error => rt.warn('omni-ui: the Claude Bots were not moved to acp-claude: %s', error))
       .finally(() => {
         running = undefined
         // An event that landed after the loop's last check gets its own pass.

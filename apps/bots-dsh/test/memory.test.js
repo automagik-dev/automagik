@@ -3,11 +3,15 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { apply } from '../index.js'
+import { format } from 'node:util'
+import { createRuntime } from '../index.js'
 import {
   MEMORY_LIMITS, addLink, cleanEntry, cleanTopic, formatEntry, insertEntry, looksLikeKey,
   looksSecret, matchEntries, parseAsk, parseMemory, parseReview, reviewEntries, removeLink, splitMeta, writtenIn,
 } from '../src/host/memory.js'
+import { fitWindow, isExpired, isPinned, promptEntry } from '../src/host/memory-entries.js'
+import { rankEntries } from '../src/host/memory-search.js'
+import { estimateTokens } from '../src/host/text.js'
 import { latestMemoryChange, summaryBlocks } from '../src/client/text.js'
 import { fakeContext } from './fake-ctx.js'
 
@@ -60,9 +64,30 @@ test('a request names one entry by its text, or by a part only it has', () => {
   assert.deepEqual(matchEntries(nestedTwins, '- - Nested note').map(entry => entry.line), [0, 1])
 })
 
+test('memory search recalls Han text by character bigrams', () => {
+  const [hit] = rankEntries([
+    { text: 'AI中文教程在书架上', file: { topic: '' } },
+    { text: 'English notes about a shelf', file: { topic: '' } },
+  ], '中文')
+  assert.equal(hit?.entry.text, 'AI中文教程在书架上')
+  assert.equal(hit?.hits, 1)
+})
+
+test('memory windows keep pinned entries and recognize expiry without moving earlier', () => {
+  const pinned = { text: 'Pinned fact', meta: { pinned: 'true', added: '2026-01-01' } }
+  const newer = { text: 'Newer fact', meta: { added: '2026-11-01' } }
+  const expired = { text: 'Expired fact', meta: { until: '2026-11-01' } }
+  assert.equal(isPinned(pinned), true)
+  assert.equal(isExpired(expired, '2026-11-12'), true)
+  assert.equal(isExpired(newer, '2026-11-12'), false)
+  const window = fitWindow([newer, pinned], 28, prompt => prompt.length)
+  assert.deepEqual(window.shown, [pinned])
+  assert.equal(window.left, 1)
+})
+
 test('keys are refused, while paths, names, and links are kept', () => {
   for (const key of ['sk-' + 'abcdefghijklmnopqrstuv', 'ghp_abcdefghijklmnopqrstuvwxyz12', 'AKIA' + 'ABCDEFGHIJKLMNOP', 'token aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3f']) assert.equal(looksLikeKey(key), true, key)
-  for (const fine of ['The repo is ~/repos/deepseek-bot/ds-bot/src/host', 'Doc: https://docs.example.com/d/aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3f/edit', 'Uses deepseek-v4-flash for drafts', '用户喜欢简短的回答']) assert.equal(looksLikeKey(fine), false, fine)
+  for (const fine of ['The repo is ~/repos/dsbot/ds-bot/src/host', 'Doc: https://docs.example.com/d/aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3f/edit', 'Uses deepseek-v4-flash for drafts', '用户喜欢简短的回答']) assert.equal(looksLikeKey(fine), false, fine)
   // Passwords given as such, and ID or card numbers, are secrets too.
   for (const secret of ['测试服务器的 root 密码是 hunter2-prod', 'The root password is hunter2', 'pwd: x', '身份证号 330106199001011234', 'card 6222 0212 3456 7890', 'the password for root is hunter2', 'The user\'s ATM PIN is 1234', 'passcode is 654321', '验证码是 123456', 'the CVV is 123', 'staging password remains hunter2', 'root 的密码还是 hunter2', 'the db password was changed to s3cret', 'card 6222-0212-3456-7890', 'Amex 3714-496353-98431', '身份证 330106-19900101-1234', 'I use hunter2 as my password', 'Use 654321 for the PIN', 'The user uses s3cret as the staging root password', '我的密码用 hunter2', '我用 hunter2 当密码', '用 abc123 作为服务器密码', 'I use correct horse battery staple as my password', 'Use six five four three two one for the PIN', '我用 correct horse battery staple 当密码', 'The user\'s SSN is 123-45-6789', 'passport number is A12345678', '护照号E12345678', 'driver\'s license D1234567']) assert.equal(looksSecret(secret), true, secret)
   for (const fine of ['用户不想把密码存进记忆', 'Trip on 2026-11-15, back 2026-11-17', 'The user keeps passwords in a password manager, which is 1Password', '用户的密码管理器是 1Password', 'The user pins the sidebar', 'Pin the tab, it is handy', 'The user uses 1Password for passwords', 'Uses Bitwarden as the password manager', 'Use the PIN pad on the left', '密码用 1Password 管理', '密码不能告诉用户', '密码用于登录', '用 1Password 作为密码管理器', 'Uses Tab for the password field', 'The user uses Vim for editing and Rust for work', 'The user\'s passport expires 2027-05-01', 'Passport renewed 2026-11-15, flight 2026-11-17', 'ID card photo, call 138 0013 8000', '密码不能明文保存因为不安全', 'Off 2026-11-15 2026-11-17', '电话 138-0013-8000', '手机 138 0013 8000 是工作号', 'Issue https://x.test/a/1234567890123456789']) assert.equal(looksSecret(fine), false, fine)
@@ -80,10 +105,16 @@ test('the memory panel reads JSON from the model, in a fence or not', () => {
   assert.deepEqual(parseAsk('I could not do that.'), { reply: 'I could not do that.', changes: [] })
   assert.deepEqual(parseAsk('{"reply": 3}'), { reply: '3', changes: [] })
   // The review takes only a list of changes; prose or a broken object is no answer.
-  assert.deepEqual(parseReview('```json\n{"changes": [{"op": "add", "text": "x"}]}\n```'), [{ op: 'add', text: 'x' }])
-  assert.deepEqual(parseReview('{"changes": []}'), [])
-  for (const bad of ['Nothing to keep.', '{"changes": "none"}', '{"changes": [{"op": "add"', '{"changes": ["remember this"]}', '{"changes": [{"text": "x"}]}', '{"changes": [{"op": "add", "text": " "}]}', '{"changes": [{"op": "edit", "entry": "two", "text": "x"}]}', '{"changes": [{"op": "remove", "entry": 0}]}', '{"changes": [{"op": "add", "text": "x", "team": "true"}]}']) assert.equal(parseReview(bad), undefined, bad)
-  assert.deepEqual(parseReview('{"changes": [{"op": "remove", "entry": "2"}]}'), [{ op: 'remove', entry: '2' }])
+  assert.deepEqual(parseReview('```json\n{"changes": [{"op": "add", "text": "x"}]}\n```'), { changes: [{ op: 'add', text: 'x' }], leftOut: [] })
+  assert.deepEqual(parseReview('{"changes": []}'), { changes: [], leftOut: [] })
+  for (const bad of ['Nothing to keep.', '{"changes": "none"}', '{"changes": [{"op": "add"']) assert.equal(parseReview(bad), undefined, bad)
+  // A malformed change is set aside; the well-formed ones still count.
+  for (const bad of ['"remember this"', '{"text": "x"}', '{"op": "add", "text": " "}', '{"op": "edit", "entry": "two", "text": "x"}', '{"op": "remove", "entry": 0}', '{"op": "add", "text": "x", "team": "true"}']) {
+    const parsed = parseReview(`{"changes": [${bad}, {"op": "add", "text": "y"}]}`)
+    assert.deepEqual(parsed.changes, [{ op: 'add', text: 'y' }], bad)
+    assert.deepEqual(parsed.leftOut, [JSON.parse(bad)], bad)
+  }
+  assert.deepEqual(parseReview('{"changes": [{"op": "remove", "entry": "2"}]}'), { changes: [{ op: 'remove', entry: '2' }], leftOut: [] })
 })
 
 test('the panel shows a summary as headings over paragraphs', () => {
@@ -143,6 +174,8 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-')), replies =
     services.credentials = { describe: async () => ({ configured: false, writable: true }) }
   }
   const ctx = fakeContext({ services })
+  const warnings = []
+  ctx.logger.warn = (...args) => warnings.push(format(...args))
   const requests = []
   Object.assign(ctx, {
     llm: {
@@ -157,7 +190,7 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-')), replies =
         if (reply instanceof Error) throw reply
         const out = typeof reply === 'object' && reply !== null ? reply : { text: reply ?? '' }
         yield { type: 'text-delta', index: 0, text: out.text ?? '' }
-        yield { type: 'finish', reason: { kind: out.finish ?? 'stop', ...(out.failure ? { failure: { message: out.failure } } : {}) } }
+        yield { type: 'finish', reason: { kind: out.finish ?? 'stop', ...(out.failure ? { failure: typeof out.failure === 'string' ? { message: out.failure } : out.failure } : {}) } }
       },
     },
     sessionController: {
@@ -178,12 +211,12 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-')), replies =
     route = options
     return register(options)
   }
-  apply(ctx, { home, ...config })
+  rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
-  const tool = (name, args, sessionId) => ctx.registeredTools.get(name).execute(args, { agent: { id: sessionId } })
+  const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId } })
   const section = sessionId => ctx.sections.get('bot-memory').text({ agent: { id: sessionId } })
   const read = (...path) => readFileSync(join(home, 'memory', ...path), 'utf8')
   const journal = () => read('journal.jsonl').trim().split('\n').map(line => JSON.parse(line))
@@ -191,10 +224,20 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-')), replies =
     await ctx.dispose()
     if (!keep) rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { ctx, home, call, tool, section, read, journal, requests, stop }
+  return { ctx, home, call, tool, section, read, journal, requests, warnings, stop }
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
+
+// The group memory message the memory's pre-step puts before a Session's step, given
+// what its history holds.
+const textOf = message => (message?.content ?? []).map(block => block.text).join('')
+async function groupMemoryOf(ctx, sessionId, history = []) {
+  const step = ctx.listeners.get('agent/pre-step').find(listener => /isGroupMemory|memoryUpdate/.test(String(listener)))
+  const agent = { id: sessionId, session: { deriveMessages: () => history } }
+  const decision = await step({ agent, messages: [], step: 1, signal: AbortSignal.timeout(10_000) }, async () => ({ kind: 'enter', messages: [] }))
+  return decision.messages.find(message => message.source?.kind === 'ds-bot-group-memory')
+}
 
 // The summary is written to disk after the model answers; a fixed wait is too short on
 // a slow disk and leaves the write running into the next step or the cleanup.
@@ -214,8 +257,8 @@ async function until(check) {
 test('remember saves one entry with its source, and forget removes it, both in the journal', async (t) => {
   const { tool, read, journal, stop } = start()
   t.after(() => stop())
-  assert.match(await tool('remember', { text: '- User prefers short replies' }, 'b2'), /^Saved to your memory, in MEMORY\.md \(MEMORY\.md: \d+ of 4000 characters\)\. It shows in your memory from your next conversation; recall finds it now\.$/)
-  assert.match(read('bots', 'b2', 'MEMORY.md'), /^# Memory\n\n- User prefers short replies \[source: part 1 #10; added: \d{4}-\d{2}-\d{2}\]\n\n## Index\n$/)
+  assert.match(await tool('remember', { text: '- User prefers short replies' }, 'b2'), /^Saved to your memory, in MEMORY\.md \(MEMORY\.md: \d+ of 8000 characters\)\. Your other conversations see it at their next step; recall finds it now\.$/)
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /^# Memory\n\n- User prefers short replies \[id: [0-9a-f]{4}; source: part 1 #10; added: \d{4}-\d{2}-\d{2}\]\n\n## Index\n$/)
   assert.match(await tool('remember', { text: 'user prefers  SHORT replies' }, 'b2'), /^Already in your memory \(MEMORY\.md\): "User prefers short replies"\. Nothing changed\.$/)
 
   assert.match(await tool('remember', { text: 'User prefers detailed replies', replace: 'short replies' }, 'b2'), /"User prefers short replies" is now "User prefers detailed replies"/)
@@ -243,13 +286,32 @@ test('topics hold details, linked from MEMORY.md, and go when their last entry d
   await assert.rejects(tool('remember', { text: 'x', topic: '../up' }, 'b2'), /cannot be a topic name/)
 
   assert.match(await tool('recall', { topic: 'travel' }, 'b2'), /^Topic \[\[travel\]\] in your memory \(travel\.md: \d+ of 16000 characters\):\n# travel\n\n- Flies from Hangzhou/)
-  assert.match(await tool('recall', { query: 'window' }, 'b2'), /^Entries with "window" in your memory and the team memory:\n\[yours · \[\[travel\]\]\] Prefers window seats \[source: part 1 #10; added: /)
-  assert.match(await tool('recall', {}, 'b2'), /^Your memory: MEMORY\.md has 0 entries \(MEMORY\.md: \d+ of 4000 characters\); topics \[\[travel\]\] \(2\)\.\n\nThe team memory: MEMORY\.md has 0 entries/)
+  assert.match(await tool('recall', { query: 'window' }, 'b2'), /^Entries with "window" in your memory and the team memory:\n\[yours · \[\[travel\]\]\] Prefers window seats \[id: [0-9a-f]{4}; source: part 1 #10; added: /)
+  assert.match(await tool('recall', {}, 'b2'), /^Your memory: MEMORY\.md has 0 entries \(MEMORY\.md: \d+ of 8000 characters\); topics \[\[travel\]\] \(2\)\.\n\nThe team memory: MEMORY\.md has 0 entries/)
 
   await tool('forget', { entry: 'Flies' }, 'b2')
   assert.match(await tool('forget', { entry: 'window', topic: 'travel' }, 'b2'), /The topic \[\[travel\]\] was empty, so it is gone too\./)
   assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'travel.md')), false)
   assert.equal(read('bots', 'b2', 'MEMORY.md'), '# Memory\n\n## Index\n')
+})
+
+test('memory history and restore keep a change anchored to its original entry', async (t) => {
+  const { tool, call, read, journal, stop } = start()
+  t.after(() => stop())
+  await tool('remember', { text: 'User prefers short replies' }, 'b2')
+  const added = journal().at(-1)
+  await tool('forget', { entry: 'short replies' }, 'b2')
+  const removed = journal().at(-1)
+  const history = await call('memory-history', { botId: 'b2' })
+  assert.equal(history.ok, true, JSON.stringify(history))
+  assert.equal(history.value.rows.find(row => row.id === removed.id)?.restored, false)
+  const restored = await call('memory-restore', { botId: 'b2', id: removed.id })
+  assert.equal(restored.ok, true, JSON.stringify(restored))
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /- User prefers short replies \[/)
+  assert.equal(journal().at(-1).restored, removed.id)
+  const undone = await call('memory-restore', { botId: 'b2', id: added.id })
+  assert.equal(undone.ok, true, JSON.stringify(undone))
+  assert.doesNotMatch(read('bots', 'b2', 'MEMORY.md'), /short replies/)
 })
 
 test('duplicate entries never resolve to the first: one file is ambiguous, a topic names one', async (t) => {
@@ -330,10 +392,10 @@ test('an entry whose text starts with a bullet matches itself, not the entry tha
 test('Main Bots and group admins write the team memory; only Main Bots touch another Bot\'s', async (t) => {
   const { tool, read, stop } = start()
   t.after(() => stop())
-  await assert.rejects(tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'b2'), /Only Main Bots and group admins write the team memory/)
+  await assert.rejects(tool('remember', { text: 'Ship on Friday', scope: 'team', always: true }, 'b2'), /Only Main Bots and group admins write the team memory/)
   // Coder is the admin of Launch, and speaks there from its group Session.
-  assert.match(await tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'g3'), /^Saved to the team memory/)
-  assert.match(read('team', 'MEMORY.md'), /- Ship on Friday \[source: group "Launch" \d{2}-\d{2} \d{2}:\d{2}; by: Coder; added: /)
+  assert.match(await tool('remember', { text: 'Ship on Friday', scope: 'team', always: true }, 'g3'), /^Saved to the team memory/)
+  assert.match(read('team', 'MEMORY.md'), /- Ship on Friday \[id: [0-9a-f]{4}; source: group "Launch" #\d+; by: Coder; added: /)
   assert.match(await tool('remember', { text: 'Writes in Chinese', scope: 'Writer' }, 'm1'), /^Saved to Writer's memory/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /- Writes in Chinese \[source: part 1 #10; by: Omni; added: /)
   await assert.rejects(tool('remember', { text: 'Bossy', scope: 'Omni' }, 'b2'), /Only a Main Bot can change another Bot's memory/)
@@ -345,7 +407,7 @@ test('Main Bots and group admins write the team memory; only Main Bots touch ano
   await assert.rejects(tool('remember', { text: 'x' }, 'stranger'), /Only Bots on the team keep a memory\./)
 })
 
-test('keys, long entries, and full files are refused with what to do instead', async (t) => {
+test('keys and long entries are refused with what to do instead, and a full file makes room', async (t) => {
   const { tool, read, stop, home } = start()
   t.after(() => stop())
   await assert.rejects(tool('remember', { text: 'API key sk-' + 'abcdefghijklmnopqrstuvwx' }, 'b2'), /looks like a key.*request_secret/)
@@ -353,11 +415,10 @@ test('keys, long entries, and full files are refused with what to do instead', a
   await assert.rejects(tool('remember', { text: '  ' }, 'b2'), /Write the entry to save\.$/)
 
   // A MEMORY.md written past its size by hand still takes a shorter replacement.
-  const big = Array.from({ length: 16 }, (_, index) => `- Fact ${index} ${'y'.repeat(250)}`)
+  const big = Array.from({ length: 40 }, (_, index) => `- Fact ${index} ${'y'.repeat(250)}`)
   mkdirSync(join(home, 'memory', 'bots', 'b2'), { recursive: true })
   writeFileSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), `# Memory\n\n${big.join('\n')}\n`)
-  await assert.rejects(tool('remember', { text: 'One more' }, 'b2'), /MEMORY\.md would have \d+ of its 4000 characters\. Make room first: move details into a topic/)
-  assert.match(await tool('remember', { text: 'Fact 3 is short now', replace: 'Fact 3 ' }, 'b2'), /is now "Fact 3 is short now"/)
+  assert.match(await tool('remember', { text: 'Fact 3 is short now', replace: 'Fact 3 y' }, 'b2'), /is now "Fact 3 is short now"/)
   assert.match(read('bots', 'b2', 'MEMORY.md'), /- Fact 3 is short now \[/)
   await assert.rejects(tool('forget', { entry: 'Fact 1' }, 'b2'), /: The text given \(6 chars\) matches \d+ entries in your memory; quote more of the one you mean\. recall shows what is saved\.$/)
 })
@@ -366,9 +427,9 @@ test('a write that changed nothing fails the call with a code, and a saved one k
   const { tool, stop } = start()
   t.after(() => stop())
   // What a saved write answers is what the model reads, word for word.
-  assert.match(await tool('remember', { text: 'Likes tea' }, 'b2'), /^Saved to your memory, in MEMORY\.md \(MEMORY\.md: \d+ of 4000 characters\)\. It shows in your memory from your next conversation; recall finds it now\.$/)
+  assert.match(await tool('remember', { text: 'Likes tea' }, 'b2'), /^Saved to your memory, in MEMORY\.md \(MEMORY\.md: \d+ of 8000 characters\)\. Your other conversations see it at their next step; recall finds it now\.$/)
   // A refusal is a failure, with the kind of failure in its code.
-  await assert.rejects(tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'b2'), (error) => {
+  await assert.rejects(tool('remember', { text: 'Ship on Friday', scope: 'team', always: true }, 'b2'), (error) => {
     assert.equal(error.code, 'memory/refused')
     assert.match(error.message, /Only Main Bots and group admins write the team memory/)
     return true
@@ -393,7 +454,7 @@ test('a Session keeps the memory it began with, across restarts, until its snaps
   await first.tool('remember', { text: 'Likes tea' }, 'b2')
   const opened = first.section('b2')
   assert.match(opened, /^# Your memory\n/)
-  assert.match(opened, /## Your memory \(MEMORY\.md\)\n- Likes tea \[source: part 1 #10; added: [\d-]+\]\n\n## Team memory, shared by every Bot \(team\/MEMORY\.md\)\n\(nothing saved yet\)$/)
+  assert.match(opened, /## Your memory \(MEMORY\.md\)\n- Likes tea \[[0-9a-f]{4} · \d\d-\d\d\]\n\n## Team memory, shared by every Bot \(team\/MEMORY\.md\)\n\(nothing saved yet\)$/)
   assert.match(opened, /when the whole team should know something, tell a Main Bot with message_bot/)
   assert.match(first.section('m1'), /As a Main Bot you write it with remember scope "team"/)
   assert.match(first.section('g3'), /As a group admin you write it/)
@@ -412,7 +473,7 @@ test('a Session keeps the memory it began with, across restarts, until its snaps
   t.after(() => renewed.stop())
   rmSync(join(first.home, 'memory', 'snapshots', 'b2.md'))
   await renewed.tool('recall', {}, 'b2')
-  assert.match(renewed.section('b2'), /- Likes tea \[.*\]\nTopics: \[\[home\]\]\n/)
+  assert.match(renewed.section('b2'), /- Likes tea \[.*\]\nTopic \[\[home\]\]\n/)
 })
 
 test('a memory file that cannot be read is left alone, and the section says so', async (t) => {
@@ -479,7 +540,7 @@ test('the memory panel shows every entry and a summary the Bot\'s model writes o
   assert.equal((await call('state', {})).value.memory, true)
   const empty = (await call('memory-view', { botId: 'b2', summarize: true })).value
   assert.deepEqual([empty.entries, empty.summary, empty.fresh, empty.summarizing], [[], null, true, false])
-  assert.deepEqual(empty.limits, MEMORY_LIMITS)
+  assert.deepEqual(empty.limits, { ...MEMORY_LIMITS, own: MEMORY_LIMITS.bot })
   assert.equal(requests.length, 0)
 
   await tool('remember', { text: 'Likes tea' }, 'b2')
@@ -520,7 +581,7 @@ test('a summary cut off at the output limit is written once more with a bigger b
   await summarized(call)
   const done = (await call('memory-view', { botId: 'b2' })).value
   assert.deepEqual([done.summary?.text, done.fresh, done.error], ['## Overview\nYou like tea.', true, null])
-  assert.deepEqual(requests.map(request => request.maxTokens), [2048, 8192])
+  assert.deepEqual(requests.map(request => request.maxTokens), [16384, 32768])
 })
 
 test('a summary cut off at both budgets keeps the old one and says the reasoning used the budget', async (t) => {
@@ -540,8 +601,94 @@ test('a summary cut off at both budgets keeps the old one and says the reasoning
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2' })).value
   assert.equal(failed.summary.text, '## Overview\nYou like tea.')
-  assert.match(failed.error, /reasoning.*output budget|output budget.*reasoning/i)
-  assert.deepEqual(requests.map(request => request.maxTokens), [2048, 2048, 8192])
+  assert.match(failed.error, /cut off.*no complete answer/i)
+  assert.deepEqual(requests.map(request => request.maxTokens), [16384, 16384, 32768])
+})
+
+test('a gateway that turns an empty reply into a 502 is retried with a bigger budget', async (t) => {
+  // The reported shape: the model spends the whole budget on reasoning, the gateway
+  // reports the empty reply as HTTP 502. Before, this was an `error` and never retried.
+  const replies = [
+    { text: '', finish: 'error', failure: { message: 'an empty reply (the model answered nothing; try again)', code: 'SERVER', status: 502 } },
+    '## Overview\nYou like tea.',
+  ]
+  const { tool, call, requests, stop } = start({ replies })
+  t.after(() => stop())
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const done = (await call('memory-view', { botId: 'b2' })).value
+  assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
+  assert.deepEqual(requests.map(request => request.maxTokens), [16384, 32768])
+  assert.equal(requests[0].reasoningEffort, 'off')
+})
+
+test('an empty reply without an error is retried with a bigger budget too', async (t) => {
+  const replies = [{ text: '' }, '## Overview\nYou like tea.']
+  const { tool, call, requests, stop } = start({ replies })
+  t.after(() => stop())
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const done = (await call('memory-view', { botId: 'b2' })).value
+  assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
+  assert.deepEqual(requests.map(request => request.maxTokens), [16384, 32768])
+})
+
+test('an aborted summary call is not retried', async (t) => {
+  const replies = [{ text: '', finish: 'aborted' }]
+  const { tool, call, requests, stop } = start({ replies })
+  t.after(() => stop())
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const failed = (await call('memory-view', { botId: 'b2' })).value
+  assert.equal(requests.length, 1)
+  assert.match(failed.error, /aborted/)
+})
+
+test('an auth failure is not retried: only the profile fallback is tried', async (t) => {
+  const replies = [
+    { text: '', finish: 'error', failure: { message: 'invalid key', code: 'AUTH', status: 401 } },
+    '## Overview\nYou like tea.',
+  ]
+  const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
+  t.after(() => stop())
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const done = (await call('memory-view', { botId: 'b2' })).value
+  assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
+  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/flash@16384'])
+})
+
+test('an adapter output default leaves room for a larger retry', async (t) => {
+  // pi-ai classifies the gateway's 502 as SERVER without a structured status.
+  const replies = [
+    { text: '', finish: 'error', failure: { code: 'SERVER', message: 'HTTP 502: an empty reply' } },
+    '## ok',
+  ]
+  const { tool, call, requests, stop } = start({ replies, modelMaxTokens: 8_192 })
+  t.after(() => stop())
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const done = (await call('memory-view', { botId: 'b2' })).value
+  assert.equal(done.summary?.text, '## ok')
+  assert.deepEqual(requests.map(request => request.maxTokens), [8192, 16384])
+})
+
+test('a provider failure on both tries says the provider failed, not that the model thought too long', async (t) => {
+  const failure = { text: '', finish: 'error', failure: { message: 'an empty reply', code: 'EMPTY_RESPONSE', status: 502 } }
+  const replies = [failure, failure]
+  const { tool, call, requests, stop } = start({ replies })
+  t.after(() => stop())
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const failed = (await call('memory-view', { botId: 'b2' })).value
+  assert.equal(requests.length, 2)
+  assert.match(failed.error, /provider returned an error \(EMPTY_RESPONSE 502\): an empty reply/)
 })
 
 test('the panel call asks for the model\'s lowest thinking level when it has no "off"', async (t) => {
@@ -590,7 +737,8 @@ test('a summary cut off at both budgets on the background model is written by th
 })
 
 test('a summary that failed on both models is tried again once the Bot has another model', async (t) => {
-  const replies = [new Error('401: Unauthorized'), { text: '', finish: 'error', failure: '503 Service Unavailable' }]
+  const unavailable = { text: '', finish: 'error', failure: { code: 'SERVER', status: 503, message: 'Service Unavailable' } }
+  const replies = [new Error('401: Unauthorized'), unavailable]
   const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
   t.after(() => stop())
   await tool('remember', { text: 'Likes tea' }, 'b2')
@@ -600,7 +748,7 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   // The provider's words are not kept, only that a provider failed and which one.
   assert.equal(failed.error, 'deepseek/flash: provider error; deepseek/v4: provider error')
   assert.equal(failed.summarizing, false)
-  assert.equal(requests.length, 2)
+  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/flash@16384'])
 
   assert.equal((await call('update-bot', { id: 'b2', model: 'deepseek/flash' })).ok, true)
   replies.push('## Overview\nYou like tea.')
@@ -609,7 +757,7 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   await summarized(call)
   const done = (await call('memory-view', { botId: 'b2' })).value
   assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
-  assert.deepEqual(routes(requests).slice(2), ['deepseek/flash@2048'])
+  assert.deepEqual(routes(requests).slice(2), ['deepseek/flash@16384'])
 })
 
 test('a summary that failed on both models is tried again once the background model changes', async (t) => {
@@ -649,7 +797,7 @@ test('"ask or update" answers from the entries and changes them through the same
   const { tool, call, read, journal, requests, stop } = start({ replies })
   t.after(() => stop())
   await tool('remember', { text: 'Likes tea' }, 'b2')
-  await tool('remember', { text: 'Ship on Friday', scope: 'team' }, 'm1')
+  await tool('remember', { text: 'Ship on Friday', scope: 'team', always: true }, 'm1')
   replies.push(JSON.stringify({
     reply: 'Done.',
     changes: [
@@ -670,7 +818,7 @@ test('"ask or update" answers from the entries and changes them through the same
   assert.match(answer.changes[4].error, /looks like a key/)
   assert.equal(answer.changes[5].error, 'There is no entry 9.')
   assert.deepEqual(answer.view.entries.map(entry => entry.text), ['Likes green tea', 'Lives in Hangzhou', 'Team meets on Monday'])
-  assert.match(read('bots', 'b2', 'MEMORY.md'), /- Likes green tea \[source: memory panel; by: user; added: /)
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /- Likes green tea \[id: [0-9a-f]{4}; source: memory panel; by: user; added: /)
   assert.ok(journal().slice(-4).every(record => record.actor === 'user'))
 
   const forgot = (await call('memory-forget', { botId: 'b2', scope: 'team', topic: null, text: 'Team meets on Monday' })).value
@@ -746,7 +894,7 @@ test('when a turn ends, the memory review keeps what the user said, through the 
   assert.equal(requests[0].messages[0].content[0].text, [
     'The Bot: Writer, 写作.',
     '',
-    'MEMORY.md has 81 of 4000 characters (own) and 0 of 4000 (team).',
+    'MEMORY.md has 18 of 8000 characters (own) and 0 of 4000 (team).',
     '',
     'Its memory now (own: this Bot\'s; team: shared by every Bot):',
     '[1] (own) The user writes Go',
@@ -762,7 +910,7 @@ test('when a turn ends, the memory review keeps what the user said, through the 
   assert.deepEqual(entries.map(entry => entry.text), ['The user writes Rust', 'The user likes a plain style, mostly black and white', 'Everyone should keep it plain'])
   assert.equal(entries[1].meta.source, 'part 1 #20')
   assert.deepEqual(journal().slice(1).map(record => [record.op, record.actorName, record.auto]), [
-    ['add', 'Writer', true], ['add', 'Writer', true], ['replace', 'Writer', true],
+    ['replace', 'Writer', true], ['add', 'Writer', true], ['add', 'Writer', true],
   ])
   // The review's tokens count as the Bot's memory use, not as "Other" and not as
   // compaction: the usage tag wins over the auxiliary purpose.
@@ -772,7 +920,7 @@ test('when a turn ends, the memory review keeps what the user said, through the 
   const usage = (await call('usage', { timeZone: 'UTC' })).value
   assert.deepEqual(usage.rows.map(row => [usage.owners[row[1]].name, usage.kinds[row[3]], row[4] + row[7]]), [['Writer', 'memory', 42]])
   const state = (await call('state', {})).value
-  assert.deepEqual([state.memoryNews.b2.op, state.memoryNews.b2.text], ['replace', 'The user writes Rust'])
+  assert.deepEqual([state.memoryNews.b2.op, state.memoryNews.b2.text], ['add', 'Everyone should keep it plain'])
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 21 })
 
   // Nothing new, or nothing from the user: no model call, and the place moves on.
@@ -795,7 +943,7 @@ test('when a turn ends, the memory review keeps what the user said, through the 
   // Changes the user makes in the memory panel are no news.
   replies.push(JSON.stringify({ reply: 'Done.', changes: [{ op: 'add', text: 'Likes tea' }] }))
   await call('memory-ask', { botId: 'b2', text: 'I like tea' })
-  assert.equal((await call('state', {})).value.memoryNews.b2.text, 'The user writes Rust')
+  assert.equal((await call('state', {})).value.memoryNews.b2.text, 'Everyone should keep it plain')
 })
 
 test('a group\'s review keeps what is said there in the group memory, read once for all its members', async (t) => {
@@ -811,12 +959,31 @@ test('a group\'s review keeps what is said there in the group memory, read once 
   assert.doesNotMatch(requests[0].system, /"team": true/)
   assert.equal(requests[0].sessionId, 'r1')
   const text = requests[0].messages[0].content[0].text
-  assert.match(text, /^The group chat: "Launch", with the user and Writer, Coder \(admin\)\.\n\nMEMORY\.md has 0 of 4000 characters \(group\) and 0 of 4000 \(team\)\.\n\nIts memory now \(group: shared by the members of this group; team: shared by every Bot\):\n\(none yet\)\n/)
+  assert.match(text, /^The group chat: "Launch", with the user and Writer, Coder \(admin\)\.\n\nMEMORY\.md has 0 of 12000 characters \(group\) and 0 of 4000 \(team\)\.\n\nIts memory now \(group: shared by the members of this group; team: shared by every Bot\):\n\(none yet\)\n/)
   assert.match(text, /New in the group chat "Launch", oldest first:\nUser: Keep everything you send me under one page\nCoder: Will do\.\n\nWrite every new or changed entry in English\.$/)
-  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The user wants everything under one page \[source: group "Launch" \d{2}-\d{2} \d{2}:\d{2}; added: /)
+  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The user wants everything under one page \[id: [0-9a-f]{4}; source: group "Launch" #\d+; added: /)
   for (const elsewhere of [['team'], ['bots', 'b2'], ['bots', 'b3']]) assert.equal(existsSync(join(home, 'memory', ...elsewhere, 'MEMORY.md')), false, elsewhere.join('/'))
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'group:r1': 3 })
   assert.equal((await call('state', {})).value.memoryNews.r1.op, 'add')
+})
+
+test('a group review that gets no list of changes is not re-armed by every member\'s idle', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  twoMembers(home)
+  const { ctx, call, read, requests, warnings, stop } = start({ home, replies: ['Let me think about that out loud.'], config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'g3' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  // The batch is marked read even though nothing could be saved: the next member
+  // to go idle finds nothing new and starts no model call.
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'group:r1': 3 })
+  assert.ok(warnings.some(line => line.includes('no list of changes')), warnings.join('\n'))
+  ctx.emit('agent/status', { agent: { id: 'g2' }, status: 'idle' })
+  ctx.emit('agent/status', { agent: { id: 'g3' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
 })
 
 test('a first group review reads back to the user\'s line past a round of replies', async (t) => {
@@ -834,22 +1001,21 @@ test('a first group review reads back to the user\'s line past a round of replie
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'group:r1': 7 })
 })
 
-test('an answer that is no list of changes keeps the review\'s place, and the next one reads the turn again', async (t) => {
+test('an answer that is no list of changes is said and passed over, never read again', async (t) => {
   const replies = ['Nothing worth keeping here.', JSON.stringify({ changes: [{ op: 'add', text: 'The user wants this remembered' }] })]
-  const { ctx, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  const { ctx, call, read, requests, warnings, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
   t.after(() => stop())
   await call('state', {})
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
   assert.equal(requests.length, 1)
-  // The first review fixed where it starts, just before the user's line.
-  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 9 })
+  assert.throws(() => read('bots', 'b2', 'MEMORY.md'), { code: 'ENOENT' })
+  // The miss is said, and the batch is marked read: a later turn does not read it again.
+  assert.ok(warnings.some(line => line.includes('no list of changes')), warnings.join('\n'))
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
-  assert.equal(requests.length, 2)
-  assert.equal(requests[1].messages[0].content[0].text, requests[0].messages[0].content[0].text)
-  assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants this remembered \[source: part 1 #10;/)
-  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  assert.equal(requests.length, 1)
 })
 
 test('an answer the review cannot use is asked for once more, then the lines are passed with one warning', async (t) => {
@@ -1317,6 +1483,49 @@ test('a model call that fails keeps the review\'s place for as long as it fails'
   assert.equal(requests.length, 4)
   assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  const dropped = warnings.filter(line => line.includes('left out a change'))
+  assert.equal(dropped.length, 5, warnings.join('\n'))
+  assert.ok(dropped.some(line => line.includes('entry 7, which is not listed')))
+  assert.ok(dropped.some(line => line.includes('entry 9, which is not listed')))
+  assert.ok(dropped.some(line => line.includes('at most 300 characters') && line.includes('a long story')))
+  assert.ok(dropped.some(line => line.includes('the topic "C++", which cannot be a topic name')))
+  assert.ok(dropped.some(line => line.includes('looks like a key, token, password, or ID number')))
+  assert.ok(!dropped.some(line => line.includes('hunter2')), warnings.join('\n'))
+  // The same lines are not read again: nothing was retried.
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+})
+
+test('a malformed change whose secret sits before the words that give it away is not written to the log', async (t) => {
+  const text = 'This is a note about the staging system. '.repeat(3) + 'I use hunter2 as my password'
+  const replies = [JSON.stringify({ changes: [{ op: 'edit', text }] })]
+  const { ctx, call, requests, warnings, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  assert.ok(warnings.some(line => line.includes('left out a change') && line.includes('looks like a key, token, password, or ID number')), warnings.join('\n'))
+  assert.ok(!warnings.some(line => line.includes('hunter2')), warnings.join('\n'))
+})
+
+test('a review saves the well-formed changes of a partly-malformed answer, and says the rest', async (t) => {
+  const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user likes tea' }, { op: 'add' }] })]
+  const { ctx, call, read, requests, warnings, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  // The malformed change did not take the answer down: the well-formed one was
+  // saved, the malformed one was said, and the batch is marked read.
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea'])
+  assert.ok(warnings.some(line => line.includes('left out a change') && line.includes('not a well-formed change') && line.includes('{"op":"add"}')), warnings.join('\n'))
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
 })
 
 test('a write that fails keeps the review\'s place, and the next review finishes it', async (t) => {
@@ -1364,7 +1573,7 @@ test('a backlog past the text limit is reviewed in passes, oldest first', async 
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 27 })
 })
 
-test('an answer past the change limit is applied in part, and the same lines are read once more', async (t) => {
+test('an answer past the change limit is kept whole, and the same lines are read once more', async (t) => {
   const many = Array.from({ length: 9 }, (_, at) => ({ op: 'add', text: `The user likes thing ${at + 1}` }))
   const replies = [JSON.stringify({ changes: many }), JSON.stringify({ changes: [many[8]] })]
   const { ctx, call, read, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })
@@ -1372,6 +1581,9 @@ test('an answer past the change limit is applied in part, and the same lines are
   await call('state', {})
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
   await reviewed(call)
+  // All nine changes of the first answer were kept, and a full answer still
+  // re-read the same lines once: the repeat of an entry it holds changed
+  // nothing, and the passes ended there.
   assert.equal(requests.length, 2)
   assert.match(requests[0].system, /At most 8 changes in one answer/)
   assert.match(requests[1].messages[0].content[0].text, /\[8\] \(own\) The user likes thing 8\n/)
@@ -1395,7 +1607,29 @@ test('an answer that reaches the change limit exactly is followed by another pas
 test('a full MEMORY.md leaves out the add with one warning and passes the lines, and an add with a topic lands there', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
   mkdirSync(join(home, 'memory', 'bots', 'b2'), { recursive: true })
-  const filler = Array.from({ length: 13 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(280)}`)
+  writeFileSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), '# Memory\n\n## Index\n')
+  // Seven changes land; an eighth reaches the limit only by counting what was set aside.
+  const replies = [JSON.stringify({
+    changes: [
+      ...Array.from({ length: 7 }, (_, at) => ({ op: 'add', text: `The user likes thing ${at + 1}` })),
+      { op: 'add' },
+    ],
+  })]
+  const { ctx, call, read, requests, warnings, stop } = start({ home, replies, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1, 'a change set aside made the review read the same lines again')
+  assert.equal(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.length, 7)
+  assert.ok(warnings.some(line => line.includes('left out a change') && line.includes('not a well-formed change')), warnings.join('\n'))
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+})
+
+test('a full MEMORY.md takes a new entry and moves its oldest to a topic', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  mkdirSync(join(home, 'memory', 'bots', 'b2'), { recursive: true })
+  const filler = Array.from({ length: 27 }, (_, at) => `- Filler fact number ${at + 1} ${'y'.repeat(280)} [added: 2026-01-${String(at + 1).padStart(2, '0')}]`)
   writeFileSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), `# Memory\n\n${filler.join('\n')}\n\n## Index\n`)
   const history = { b2: [...ownChat] }
   const replies = [
@@ -1469,13 +1703,17 @@ test('the members of a group read its memory in their Sessions there, and no Bot
   ctx.emit('agent/status', { agent: { id: 'g3' }, status: 'idle' })
   await reviewed(call)
   assert.equal(requests.length, 1)
-  for (const member of ['g2', 'g3']) {
-    assert.match(section(member), /\n\n## Group memory, shared by the members of this group chat\nOnly the members of this group read it[^\n]*\n\n- The user wants everything under one page \[source: group "Launch"[^\n]*\]$/)
+  for (const [member, bot] of [['g2', 'b2'], ['g3', 'b3']]) {
+    // The prompt is the Bot's own, so the provider's cached prefix holds in both; the
+    // group's memory comes in a snapshot message before the first step.
+    assert.equal(section(member), section(bot))
+    assert.match(textOf(await groupMemoryOf(ctx, member)), /^## Group memory, shared by the members of this group chat\nOnly the members of this group read it[^\n]*\n\n- The user wants everything under one page \[[0-9a-f]{4} · \d\d-\d\d\]$/)
     assert.match(await tool('recall', { query: 'page' }, member), /^Entries with "page" in your memory, the group memory, and the team memory:\n\[group · MEMORY\.md\] The user wants everything under one page/)
   }
   // Not in a member's own chat, nor for a Bot outside the group, a Main Bot included.
   for (const elsewhere of ['b2', 'b3', 'b4', 'm1']) {
     assert.doesNotMatch(section(elsewhere), /one page|Group memory/, elsewhere)
+    assert.equal(await groupMemoryOf(ctx, elsewhere), undefined, elsewhere)
     assert.match(await tool('recall', { query: 'page' }, elsewhere), /^Nothing in your memory and the team memory mentions "page"/, elsewhere)
     assert.match(await tool('recall', { scope: 'group' }, elsewhere), /^There is no group memory here/, elsewhere)
   }
@@ -1484,14 +1722,14 @@ test('the members of a group read its memory in their Sessions there, and no Bot
 test('in a group, remember and forget write the group memory unless told otherwise, for any member', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
   twoMembers(home)
-  const { tool, call, read, journal, stop } = start({ home })
+  const { ctx, tool, call, read, journal, stop } = start({ home })
   t.after(() => stop())
-  assert.match(await tool('remember', { text: 'Builds go in the out folder' }, 'g2'), /^Saved to the group memory, in MEMORY\.md \(MEMORY\.md: \d+ of 4000 characters\)\. Every member sees it in its next conversation in this group; recall finds it now\.$/)
-  assert.match(read('groups', 'r1', 'MEMORY.md'), /- Builds go in the out folder \[source: group "Launch" \d{2}-\d{2} \d{2}:\d{2}; by: Writer; added: /)
+  assert.match(await tool('remember', { text: 'Builds go in the out folder' }, 'g2'), /^Saved to the group memory, in MEMORY\.md \(MEMORY\.md: \d+ of 12000 characters\)\. The other members see it at their next step in this group; recall finds it now\.$/)
+  assert.match(read('groups', 'r1', 'MEMORY.md'), /- Builds go in the out folder \[id: [0-9a-f]{4}; source: group "Launch" #\d+; by: Writer; added: /)
   assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md')), false)
   // "own" keeps it for the Bot itself, in all its conversations.
   assert.match(await tool('remember', { text: 'I review drafts twice', scope: 'own' }, 'g2'), /^Saved to your memory/)
-  assert.match(read('bots', 'b2', 'MEMORY.md'), /- I review drafts twice \[source: group "Launch"/)
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /- I review drafts twice \[id: [0-9a-f]{4}; source: group "Launch"/)
   // Another member changes the same memory.
   assert.match(await tool('remember', { text: 'Builds go in the dist folder', replace: 'out folder' }, 'g3'), /"Builds go in the out folder" is now "Builds go in the dist folder"/)
   assert.match(await tool('forget', { entry: 'dist folder' }, 'g3'), /^Removed from the group memory/)
@@ -1505,15 +1743,35 @@ test('in a group, remember and forget write the group memory unless told otherwi
   assert.equal((await call('update-room', { id: 'r1', remove: ['b2'] })).ok, true)
   await assert.rejects(tool('remember', { text: 'Still here' }, 'g2'), /Only Bots on the team keep a memory\./)
   await assert.rejects(tool('forget', { entry: 'Friday' }, 'g2'), /Only Bots on the team keep a memory\./)
+  // Nor does it read it: its Session there gets no snapshot of the group's memory.
+  assert.equal(await groupMemoryOf(ctx, 'g2'), undefined)
+  assert.ok(await groupMemoryOf(ctx, 'g3'))
   assert.deepEqual(parseMemory(read('groups', 'r1', 'MEMORY.md')).entries.map(entry => entry.text), ['Ship on Friday'])
 })
 
-test('a group Session frozen before groups kept a memory is frozen again, with it', async (t) => {
-  const { tool, section, home, stop } = start()
+test('a group Session gets its group\'s memory as a message once, and again after a checkpoint condensed it', async (t) => {
+  const { ctx, tool, section, home, stop } = start()
   t.after(() => stop())
   await tool('remember', { text: 'Ship on Friday' }, 'g3')
   writeFileSync(join(home, 'memory', 'snapshots', 'g3.md'), section('b3'))
-  assert.match(section('g3'), /## Group memory, shared by the members of this group chat\n[^\n]*\n\n- Ship on Friday \[/)
+  assert.equal(section('g3'), section('b3'))
+  const first = await groupMemoryOf(ctx, 'g3')
+  assert.match(textOf(first), /^## Group memory, shared by the members of this group chat\n[^\n]*\n\n- Ship on Friday \[/)
+  // Still in the history: not put in again.
+  assert.equal(await groupMemoryOf(ctx, 'g3', [first]), undefined)
+  // Condensed away by a checkpoint: it comes again, as the memory is now.
+  await tool('remember', { text: 'Demo on Monday' }, 'g3')
+  assert.match(textOf(await groupMemoryOf(ctx, 'g3', [])), /- Ship on Friday \[[^\n]*\n- Demo on Monday \[/)
+})
+
+test('a group Session frozen with its group\'s memory in its prompt keeps it there, with no message', async (t) => {
+  const { ctx, tool, section, home, stop } = start()
+  t.after(() => stop())
+  await tool('remember', { text: 'Ship on Friday' }, 'g3')
+  const frozen = `${section('b3')}\n\n## Group memory, shared by the members of this group chat\n- Ship on Friday`
+  writeFileSync(join(home, 'memory', 'snapshots', 'g3.md'), frozen)
+  assert.equal(section('g3'), frozen)
+  assert.equal(await groupMemoryOf(ctx, 'g3'), undefined)
 })
 
 test('deleting a group moves its memory to the archive, with its members\' snapshots gone', async (t) => {
@@ -1553,7 +1811,7 @@ test('a group\'s memory panel shows only the group memory, and what the user cha
   assert.doesNotMatch(requests[1].system, /"team"/)
   assert.match(requests[1].messages[0].content[0].text, /^Entries of the group chat "Launch" \(group: shared by its members\):\n\[1\] \(group\) Ship on Friday\n/)
   assert.deepEqual(answer.changes.map(change => [change.op, change.scope, change.ok]), [['add', 'group', true], ['remove', 'group', true]])
-  assert.match(read('groups', 'r1', 'MEMORY.md'), /- Demo on Monday \[source: memory panel; by: user; added: /)
+  assert.match(read('groups', 'r1', 'MEMORY.md'), /- Demo on Monday \[id: [0-9a-f]{4}; source: memory panel; by: user; added: /)
   assert.doesNotMatch(read('team', 'MEMORY.md'), /Demo/)
   const forgot = (await call('memory-forget', { roomId: 'r1', scope: 'group', topic: null, text: 'Demo on Monday' })).value
   assert.deepEqual(forgot.entries, [])
@@ -1567,7 +1825,7 @@ const postToGroup = async (ctx, texts) => {
     const event = { type: 'user/message', data: { source: { kind: 'bot', role: 'post', senderSessionId: 'b3', senderName: 'Coder' }, content: [{ type: 'text', text }] } }
     for (const listener of ctx.listeners.get('session/event')) listener({ id: 'r1' }, event)
   }
-  await ctx.registeredTools.get('group_relay').execute({}, { agent: { id: 'r1' }, callId: 'relay', signal: AbortSignal.abort() })
+  await rt.teamTools.find(d => d.name === 'group_relay').execute({}, { agent: { id: 'r1' }, callId: 'relay', signal: AbortSignal.abort() })
 }
 
 test('a queued review keeps the group lines that leave the log while it waits', async (t) => {
@@ -1607,7 +1865,7 @@ test('what is said after a member leaves is still reviewed, for the group', asyn
   const text = requests[0].messages[0].content[0].text
   assert.match(text, /^The group chat: "Launch", with the user and Coder \(admin\), Temp\./)
   assert.match(text, /\nUser: Keep everything you send me under one page\nCoder: Will do\.\n[\s\S]*The launch moved to Friday/)
-  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The launch moved to Friday \[source: group "Launch"/)
+  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The launch moved to Friday \[id: [0-9a-f]{4}; source: group "Launch"/)
   assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md')), false)
 })
 
@@ -1639,7 +1897,7 @@ test('a turn that ends after its member left the group is still reviewed, for th
   await reviewed(call)
   assert.equal(requests.length, 1)
   assert.match(requests[0].messages[0].content[0].text, /^The group chat: "Launch"[\s\S]*\nUser: Keep everything you send me under one page\n/)
-  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The user wants one page \[source: group "Launch"/)
+  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The user wants one page \[id: [0-9a-f]{4}; source: group "Launch"/)
   assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md')), false)
 })
 
@@ -1665,7 +1923,7 @@ test('a keeper out of the group during the review keeps the place, and the next 
   await reviewed(call)
   assert.equal(requests.length, 2)
   assert.match(requests[1].messages[0].content[0].text, /\nUser: Keep everything you send me under one page\n/)
-  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The user wants everything under one page \[source: group "Launch"/)
+  assert.match(read('groups', 'r1', 'MEMORY.md'), /- The user wants everything under one page \[id: [0-9a-f]{4}; source: group "Launch"/)
   assert.deepEqual(JSON.parse(read('reviewed.json')), { 'group:r1': 3 })
 })
 
@@ -1767,14 +2025,14 @@ test('a turn whose Session moves to a fresh part before its review is still revi
   await call('state', {})
   await reviewed(call)
   assert.equal(requests.length, 1)
-  assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants short answers \[source: part 1 #/)
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants short answers \[id: [0-9a-f]{4}; source: part 1 #/)
   assert.deepEqual(Object.keys(JSON.parse(read('reviewed.json'))), ['chat:b2'])
 })
 
 test('config.memoryReview false leaves memory to the Bots\' own remember calls', async (t) => {
   const { ctx, call, section, requests, stop } = start({ config: { memoryReview: false, memoryReviewDelayMs: 0 } })
   t.after(() => stop())
-  assert.equal(ctx.calls.filter(entry => entry === 'on agent/status').length, 3)
+  assert.equal(ctx.calls.filter(entry => entry === 'on agent/status').length, 4)
   await call('state', {})
   assert.match(section('b2'), /Call it in that same turn, before you reply/)
   ctx.emit('agent/status', { agent: { id: 'b2' }, status: 'idle' })

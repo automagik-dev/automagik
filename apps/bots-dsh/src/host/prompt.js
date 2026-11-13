@@ -74,5 +74,5 @@ export function install(rt) {
     order: 640,
     interpolate: false,
     text: context => promptFor(context?.agent?.id),
-  }), 'ds-bot: identity section')
+  }), 'omni-ui: identity section')
 }
