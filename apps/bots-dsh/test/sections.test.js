@@ -38,9 +38,9 @@ runInNewContext(outputFiles[0].text, {
   exports: mod.exports,
   require: name => (name === 'react' ? react : name === 'react-dom' ? { createPortal: node => node } : {}),
   window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} },
-  document: { body: {}, documentElement: { hasAttribute: () => false }, addEventListener() {}, removeEventListener() {} },
+  document: { body: { hasAttribute: () => false }, documentElement: { hasAttribute: () => false }, addEventListener() {}, removeEventListener() {} },
 })
-const { ContextMenu, TeamSidebar } = mod.exports
+const { ContextMenu } = mod.exports
 
 function start(saved) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-sections-'))
@@ -291,38 +291,6 @@ test('section-add menu offers both creating a new Bot/group in the section and a
   buttons[3].props.onClick()
   assert.deepEqual(JSON.parse(JSON.stringify(flagged)), [['writer', { sectionId: null }], ['editor', { sectionId: 'sec-1' }]])
 
-  // Collapsed section in TeamSidebar keeps the active conversation peeking out
-  // once, and marks the folded body inert + aria-hidden.
-  const sidebarTree = TeamSidebar({
-    wide: true,
-    actions: { ...actions, openSession: id => id, openAgent: id => id, openAgentSession: id => id, newAgentSession: id => id },
-    useRoster: pick => pick(roster),
-    useUi: pick => pick({ unread: {} }),
-    useRegistry: pick => pick({}),
-    useSessions: pick => pick({ ids: ['writer'], byId: { writer: { id: 'writer', retainedBy: { mainView: 1 } } } }),
-    useSessionStatus: pick => pick(new Map()),
-    useSessionRetainInfo: (id, pick) => pick(id === 'writer' ? { retainedBy: { mainView: 1 } } : {}),
-    useActivity: pick => pick({}),
-    useWork: pick => pick({}),
-    useUpdate: () => ({}),
-  })
-  let peekFound = false
-  let bodyInert = false
-  let writerRows = 0
-  const walkSidebar = (node) => {
-    if (Array.isArray(node)) { node.forEach(walkSidebar); return }
-    if (!node || typeof node !== 'object') return
-    if (typeof node.type === 'function' && node.type !== react.Fragment) {
-      walkSidebar(node.type(node.props ?? {}))
-      return
-    }
-    if (node.props?.className === 'bt-sec-peek') peekFound = true
-    if (node.props?.className === 'bt-sec-body' && node.props?.inert === true && node.props?.['aria-hidden'] === true) bodyInert = true
-    if (node.props?.['data-bot-id'] === 'writer') writerRows += 1
-    walkSidebar(node.props?.children)
-  }
-  walkSidebar(sidebarTree)
-  assert.equal(peekFound, true)
-  assert.equal(bodyInert, true)
-  assert.equal(writerRows, 1)
+  // Upstream goes on to check its sidebar's folded section here. Automagik's own bar does not draw sections
+  // yet (context-menu.js SECTIONS_IN_BAR), so that part is left out until it does.
 })

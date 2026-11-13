@@ -30335,9 +30335,9 @@ function ApprovalCard({ approval, bot, actions }) {
     approval.detail?.text ? (0, import_react81.createElement)("div", { className: "bt-mw-text" }, approval.detail.text) : null,
     approval.reason ? (0, import_react81.createElement)("div", { className: "bt-mw-reason" }, approval.reason) : null,
     approval.detail?.code ? (0, import_react81.createElement)("code", { className: "bt-mw-code", title: approval.detail.code }, approval.detail.code) : null,
-    // Own-chat approvals are answerable for IM and the phone app; here the Bot's
-    // own DSH card stays the place to answer, so the row still opens that chat.
-    approval.answerable && approval.roomId !== void 0 ? (0, import_react81.createElement)(
+    // An approval in the Bot's own chat has DSH's card there, which stays the place to answer it, so the
+    // row opens that chat. A group's approval and a subagent's have no card of their own: they are answered here.
+    approval.answerable && (approval.roomId !== void 0 || approval.child === true) ? (0, import_react81.createElement)(
       "div",
       { className: "bt-mw-actions" },
       (0, import_react81.createElement)("button", { type: "button", className: "bt-q-btn", disabled: busy, onClick: () => answer("reject") }, t("Reject")),
