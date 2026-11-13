@@ -691,6 +691,35 @@ test("relinkCli: the am link follows the pack's entry the same way, and a link e
   assert.equal(readFileSync(link, "utf8"), "mine\n");
 });
 
+test("relinkCli: a pack the install record does not list gets no am link", (t) => {
+  const { home, mods } = appHome("0.4.0");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const binDir = join(home, "local-bin");
+  mkdirSync(binDir);
+  const bin = join(mods, "am-sidebar", "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "automagik-herdr"), "#!/bin/sh\n");
+  rmSync(join(home, "automagik-herdr", "installed-by-install.sh"));
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  assert.equal(existsSync(join(binDir, "am")), false);
+});
+
+test("relinkCli: an install record that exists but does not list the pack gets no am link (M3)", (t) => {
+  const { home, mods } = appHome("0.4.0");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const binDir = join(home, "local-bin");
+  mkdirSync(binDir);
+  const bin = join(mods, "am-sidebar", "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "automagik-herdr"), "#!/bin/sh\n");
+  const record = join(home, "automagik-herdr", "installed-by-install.sh");
+  for (const list of ["am-quota,am-hooks", ""]) {
+    writeFileSync(record, `version=0.4.0\nmods=${list}\nbefore=none\n`);
+    assert.equal(relinkCli({ modsDir: mods, binDir }), null, `mods=${list}`);
+    assert.equal(existsSync(join(binDir, "am")), false, `mods=${list}`);
+  }
+});
+
 test("relinkCli: our link follows the pack's entry (the wrapper, or the .mjs before it); any other is left", (t) => {
   const { home, mods } = appHome("0.4.0");
   t.after(() => rmSync(home, { recursive: true, force: true }));
