@@ -84,14 +84,15 @@ Automagik lockup, one under the other. The package's rule, which the builder fol
   ```
 
 **Who the host is (issue 11c): whoever's logo stands in that page's header.** Every page of
-this site wears Automagik's header, the product pages and the stand-in `/arca/` included, so
+this site wears Automagik's header, the product pages included, so
 Automagik is the host on all of them and each product stays a row in Products. A product
 moves to the top block only on a page in its own world, with its own logo in the header.
 
 **Which Arca logo (issue 11c): the ark.** Arca's logo is the ark with "arca", in one colour
 (it takes the text colour and is never coloured): `arca-logo-b.svg`. The arch is Arca's
-earlier logo, and no other site should use it. So the same file is also the heading of this
-site's stand-in page for Arca (`arcaLogo` in `scripts/build-pages.mjs`).
+earlier logo, and no other site should use it. The file is Arca's row in the drawer
+(`arcaLogo` in `scripts/build-pages.mjs`). It was also the heading of the stand-in page
+this site kept at `/arca/`; that page is gone since Arca's own page is live there.
 
 **The ark alone: `arca-ark-icon.svg`.** Handed over after issue 11c for the two places
 where this site shows Arca's picture beside its name, the Products menu and the home card

@@ -219,12 +219,15 @@ try {
     for (const href of new Set(links)) {
       const url = new URL(href, origin)
       if (url.origin !== origin) { assert.equal(url.protocol, 'https:', href); continue }
+      // Arca's page is Arca's own, served by Arca's Worker at this one address. This site
+      // links to it and carries no file there, so nothing of ours is published over it.
+      if (url.pathname.startsWith('/arca')) { assert.equal(href, '/arca/', href); assert.equal((await fetch(url)).status, 404, 'This site carries no page at /arca/'); continue }
       const response = await fetch(url)
       assert.equal(response.status, 200, `menu link answers 200: ${href}`)
       if (url.hash) assert.ok((await response.text()).includes(`id="${url.hash.slice(1)}"`), `menu link target exists: ${href}`)
     }
   }
-  for (const colorScheme of ['light', 'dark']) for (const route of ['/', '/genie/', '/arca/']) {
+  for (const colorScheme of ['light', 'dark']) for (const route of ['/', '/genie/', '/mykes/']) {
     const label = `${route} ${colorScheme}`, slug = route === '/' ? 'home' : route.split('/')[1]
     const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
     try {
@@ -279,12 +282,6 @@ try {
       if (route === '/') assert.deepEqual(here, { button: null, current: null, crumb: null })
       else assert.ok(here.button && here.button === here.crumb && here.current === route, `The header shows the active page: ${label} ${JSON.stringify(here)}`)
       await linkCheck(page)
-      if (route === '/arca/') {
-        // Get Arca is the install command as text: one click selects the whole line, and
-        // nothing on the page links to the installer or to Arca's repository.
-        const get = await page.evaluate(() => { const code = document.querySelector('.install-line code'); return { text: code.textContent, select: getComputedStyle(code).userSelect, links: [...document.links].map(link => link.href).filter(href => /get\.automagik\.si|automagik-si\/arca/.test(href)) } })
-        assert.deepEqual(get, { text: 'curl -fsSL https://get.automagik.si/arca | sh', select: 'all', links: [] }, `The install line is text to copy: ${label}`)
-      }
       await button('products').click(); await page.locator('#menu-products .menu-item[href="/omni/"]').click()
       await page.waitForURL(origin + '/omni/')
       assert.equal(await page.locator('.menu-button[data-here] .menu-here').evaluate(node => node.lastChild.textContent), 'Omni')
@@ -913,7 +910,7 @@ try {
         if (route === '/') assert.ok(seen.timed > 0, `The home's stage moves on its own: ${label}`)
         assert.equal(await page.evaluate(() => window.__shift), 0, `No layout shift with motion: ${label}`)
         // Arca's logo is never animated.
-        assert.deepEqual(await page.evaluate(() => document.getAnimations().map(animation => animation.effect.target).filter(element => element.closest?.('.arca-ark, .arca-logo')).length), 0, `Arca's logo stays still: ${label}`)
+        assert.deepEqual(await page.evaluate(() => document.getAnimations().map(animation => animation.effect.target).filter(element => element.closest?.('.arca-ark, .fam-logo')).length), 0, `Arca's logo stays still: ${label}`)
       }
       // Page to page: the browser's cross-document transition runs to its end (a name used
       // twice on a page would skip it), and the character named on both pages is one of a kind.

@@ -5,7 +5,9 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { waitlistForm, privacyNote } from '../waitlist/lib/ui.js'
 
-export const routes = ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
+// The pages this site builds. /arca/ is not one of them: that address is Arca's own page,
+// served by Arca's Worker (RFC 0027). This site links to it and carries no file there.
+export const routes = ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/mykes/']
 const repo = 'https://github.com/automagik-si/automagik'
 const mac = `${repo}/releases/latest/download/Automagik-Mac.dmg`
 const linux = `${repo}/releases/latest/download/Automagik-Linux.deb`
@@ -25,18 +27,13 @@ export const weUnfold = {
   partOf: 'Automagik is part of we unfold, the home of the Open Intelligence movement.',
   openIntelligence: 'Open Intelligence: a future more people can understand, question, and shape.',
 }
-// ARCA: a stand-in page until Arca's own site is served at /arca/. Its one line is the
-// owner's own (2026-11-12), used exactly as given wherever Arca is described. Get Arca opens
-// this page, where the install command is text to copy: the installer's address answers
-// with a shell script, so nothing links to it.
-export const arca = {
-  line: 'Be your own cloud. Infrastructure for AI agents.',
-  install: 'curl -fsSL https://get.automagik.si/arca | sh',
-  needs: 'Today it needs a Linux machine (x86_64) with Incus, and a person comfortable with a terminal.',
-}
+// ARCA: its page at /arca/ is Arca's own, not built here. Its one line is the owner's own
+// (2026-11-12), used exactly as given wherever Arca is described. Get Arca opens Arca's
+// page; the installer's address answers with a shell script, so nothing here links to it.
+export const arca = { line: 'Be your own cloud. Infrastructure for AI agents.' }
 // ARCA'S LOGO is the ark, in one colour, the text colour, never coloured (the owner's decision;
-// the family package's issue 11c). With its word it is the heading of the stand-in page and
-// Arca's row in the family drawer (arcaLogo, below). Alone it is the small picture beside
+// the family package's issue 11c). With its word it is Arca's row in the family drawer
+// (arcaLogo, below). Alone it is the small picture beside
 // the name "Arca" in the Products menu and on the home card: the package's
 // arca-ark-icon.svg, written into the page as it is, so it takes the text colour. The name
 // stands beside it, so the picture is hidden from assistive technology. The arch was Arca's
@@ -441,14 +438,11 @@ ${usedRow()}
 
   const coming = name => `<section class="hero coming"><div class="wrap"><div class="coming-card">${constellation()}<div class="hero-heading center">${triskle('coming-mark')}${heading('An Automagik building block', name, 'Coming soon.')}</div></div></div></section>${more('/mykes/')}`
 
-  // Arca: one stand-in page until Arca's own site is served at this address.
-  const arcaPage = `<section class="hero coming"><div class="wrap"><div class="coming-card">${constellation()}<div class="hero-heading center"><p class="eyebrow">An Automagik building block</p><h1 class="arca-logo">${arcaLogo}</h1><p class="intro">${arca.line}</p><div class="install-line"><h2 id="get">Get Arca</h2><pre><code>${arca.install}</code></pre><p>${arca.needs}</p></div><div class="actions center"><a class="button secondary" href="/#blocks">All products ${arrow}</a></div></div></div></div></section>${more('/arca/')}`
-
   return new Map([
     ['/', frame('/', 'Open building blocks of superintelligence', home)],
     ['/desktop/', frame('/desktop/', 'Desktop', desktop)], ['/mobile/', frame('/mobile/', 'Mobile', mobile)],
     ['/omni/', frame('/omni/', 'Omni', omni)], ['/genie/', frame('/genie/', 'Genie', genie)],
-    ['/cloud/', frame('/cloud/', 'Cloud', cloud)], ['/arca/', frame('/arca/', 'Arca', arcaPage)], ['/mykes/', frame('/mykes/', 'Mykes', coming('Mykes'))],
+    ['/cloud/', frame('/cloud/', 'Cloud', cloud)], ['/mykes/', frame('/mykes/', 'Mykes', coming('Mykes'))],
   ])
 }
 export function rootFiles() {
@@ -458,7 +452,7 @@ export function rootFiles() {
     ['robots.txt', 'User-agent: *\nAllow: /\nAllow: /arca\nSitemap: https://automagik.si/sitemap.xml\n'],
     ['sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${routes.filter(route => route !== '/arca/').map(route => `<url><loc>https://automagik.si${route}</loc></url>`).join('\n')}
+${routes.map(route => `<url><loc>https://automagik.si${route}</loc></url>`).join('\n')}
 ${arcaSitemap}
 </urlset>
 `],

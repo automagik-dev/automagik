@@ -1,8 +1,8 @@
 # automagik.si
 
 RFC 0027, revised by the owner on 2026-11-11: the umbrella home plus Desktop, Mobile,
-Omni, Genie, Cloud and Mykes pages, plus one stand-in page for Arca until Arca's own site is
-served at `/arca/`. The app's current default Stage theme supplies
+Omni, Genie, Cloud and Mykes pages. Arca's page at `/arca/` is Arca's own, served by Arca's
+Worker: this site links to it and builds no page there. The app's current default Stage theme supplies
 the colours, type and component treatment. Every product screen is a provenance-backed
 capture; brand/font licences are in `assets/brand/LICENSES.md`.
 
@@ -19,10 +19,12 @@ own (see "The family drawer"); nothing else on a page runs script. The home
 has one small film slot: a real still with one quiet line until the film exists. Cloud is coming soon and carries intent, consent and removal
 forms, with email or inbound-first WhatsApp confirmation. No launch or marketing email.
 The meter is not a product or page. Herdr and DSH are Desktop installation channels.
-Pages carries exactly one Arca page, the stand-in at `/arca/` (name, one line, Get Arca as
-the install command to copy, the way back), and nothing under it; Arca's own site takes that
-address over later. The installer's address answers with a shell script, so no link points
-at it; Get Arca on the home page and in the menus opens `/arca/`.
+Pages carries no Arca page: no file at `/arca/` and nothing under it. Arca's own page is
+live at that address since 2026-11-13, and the stand-in this site kept there until then is
+removed, as RFC 0027 says. The deploy uploads this folder as it is, so a file at `arca/`
+would be published beside Arca's page: `landing.test.mjs` holds that there is none. The
+installer's address answers with a shell script, so no link points at it; Get Arca on the
+home page and in the menus opens `/arca/`.
 
 ## Navigation
 
@@ -208,8 +210,7 @@ handed over in the family package's issue 11c). Both files are byte copies from 
 package, in `assets/family/`, written into the page as they are so they take the text
 colour:
 
-- `arca-logo-b.svg`, the ark with its word: the heading of the stand-in page `/arca/` and
-  Arca's row in the family drawer.
+- `arca-logo-b.svg`, the ark with its word: Arca's row in the family drawer.
 - `arca-ark-icon.svg`, the ark alone: the picture beside the name "Arca" in the Products
   menu (centred in the menu's own square) and on the home card. The name stands beside it,
   so the picture is hidden from assistive technology.
@@ -354,8 +355,8 @@ HTML. The owner allows all crawlers, including AI training crawlers: `User-agent
 `Allow: /`, and explicit `Allow: /arca`. Search engines and AI crawlers may index every page.
 
 The root sitemap and assistant index include Arca's supplied lines verbatim. The home card,
-the Products menu, the drawer's list and the footer link to `/arca/` in the same tab. Until Arca's own site is
-deployed, Pages serves the one stand-in page there. For Arca's site, the owner configures Worker routes **exactly**
+the Products menu, the drawer's list and the footer link to `/arca/` in the same tab. Arca's own page is live
+there (2026-11-13), and Pages carries no file at that address. For Arca's site, the owner configures Worker routes **exactly**
 `automagik.si/arca` and `automagik.si/arca/*`. A zone Single Redirect matches hostname equal
 to `automagik.si` AND URI path equal to `/arca`, returning 301 to
 `https://automagik.si/arca/` with the query preserved. Do not match the path alone:

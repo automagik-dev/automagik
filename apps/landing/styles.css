@@ -430,18 +430,10 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 /* Coming soon */
 .coming{padding-block:clamp(40px,6vw,88px) clamp(24px,3vw,40px)}
 .coming-card{position:relative;isolation:isolate;overflow:clip;border-radius:36px;background:var(--st-stage);padding:clamp(48px,8vw,112px) clamp(20px,4vw,48px)}
-.install-line{margin:32px auto 0;max-width:min(100%,560px);text-align:center}
-.install-line pre{display:inline-block;max-width:100%;margin:0;padding:14px 20px;border-radius:14px;background:var(--code-bg);text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}
-.install-line code{padding:0;border:0;background:none;color:#f3e9dd;font-size:.92rem;user-select:all;-webkit-user-select:all}
-.install-line code::before{content:"$ ";color:#8fe3f3;user-select:none;-webkit-user-select:none}
-.install-line p{margin-top:14px;color:var(--muted);font-size:.95rem}
-.install-line h2{margin-bottom:14px;font:var(--weight-title) .74rem/1.4 var(--head);letter-spacing:.18em;text-transform:uppercase;color:var(--eyebrow,var(--ring))}
-.install-line+.actions{margin-top:26px}
-/* Arca's logo is the ark, in the text colour, never coloured. With its word it is the
-   heading of the stand-in page. Alone it is the picture beside the name in the Products
-   menu (in the menu's own square, like every entry's picture) and on the home card. The
-   ark is wider than tall: it is drawn whole, centred in its square. */
-h1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);margin:8px auto 0}
+/* Arca's logo is the ark, in the text colour, never coloured. Alone it is the picture
+   beside the name in the Products menu (in the menu's own square, like every entry's
+   picture) and on the home card. The ark is wider than tall: it is drawn whole, centred in
+   its square. (With its word it is Arca's row in the family drawer, drawn by the piece.) */
 .arca-ark{display:block;flex:none;color:var(--text)}
 .arca-ark svg{display:block;width:100%;height:auto}
 .menu-icon .arca-ark{width:28px}
@@ -583,8 +575,6 @@ h1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);m
 }
 @media (max-width:480px){
   .top-cta{display:none}
-  .install-line pre{padding:12px 14px}
-  .install-line code{font-size:clamp(.72rem,3.6vw,.8rem)}
 }
 @media (max-width:360px){
   .brand{--mark:23px}
@@ -654,8 +644,8 @@ h1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);m
     .sheet:popover-open::backdrop{opacity:0}
     .menu-card{opacity:0;translate:0 -10px}
   }
-  /* A page arrives: the heading's lines rise in turn, then its picture. Arca's logo is never moved. */
-  .hero-heading>:not(.arca-logo){animation:rise-in .7s cubic-bezier(.2,.7,.2,1) backwards}
+  /* A page arrives: the heading's lines rise in turn, then its picture. */
+  .hero-heading>*{animation:rise-in .7s cubic-bezier(.2,.7,.2,1) backwards}
   .hero-heading>:nth-child(2){animation-delay:.07s}
   .hero-heading>:nth-child(3){animation-delay:.14s}
   .hero-heading>:nth-child(4){animation-delay:.21s}

@@ -30,6 +30,9 @@ const allowed = new Set([repo, docs, ...downloads, ...routes.map(route => `https
 // Text as a reader gets it: inline tags vanish, block tags become a space.
 const plain = html => html.replace(/<\/?(?:a|span|strong)\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 const productOrder = ['/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
+// Arca's page is Arca's own, served by Arca's Worker at this address (RFC 0027): a product in
+// every list here, linked in the same tab, and never a page this site builds.
+const arcaPath = '/arca/'
 const local = path => {
   const full = resolve(root, path.replace(/^\//, ''))
   assert.ok(full.startsWith(root + sep) || full === root.slice(0, -1), path)
@@ -39,7 +42,7 @@ const local = path => {
 // The one script a page carries: the family drawer's own, a file of this site, deferred.
 const familyScript = '<script src="/assets/family/family.js" defer></script>'
 test('approved umbrella map, one h1 per page, generated sources current, one script: the family drawer\'s', () => {
-  assert.deepEqual(routes, ['/', ...productOrder])
+  assert.deepEqual(routes, ['/', ...productOrder.filter(route => route !== arcaPath)])
   for (const route of routes) {
     const html = htmlAt(route)
     assert.equal(html, generated.get(route), `Regenerate ${route}`)
@@ -141,7 +144,9 @@ test('every href/action points locally or to an exact reviewed destination', () 
         const url = new URL(href, `https://automagik.si${route}`)
         if (routes.includes(url.pathname)) {
           if (url.hash) assert.ok(htmlAt(url.pathname).includes(`id="${url.hash.slice(1)}"`), href)
-        } else local(url.pathname)
+        // Arca's page is not a file here: the one address, as written, and no place inside it.
+        } else if (url.pathname.startsWith('/arca')) assert.equal(href, arcaPath, `${route}: ${href}`)
+        else local(url.pathname)
       }
     }
     for (const [, action] of html.matchAll(/\saction="([^"]+)"/g)) assert.equal(action, '/api/waitlist')
@@ -437,7 +442,7 @@ test('the title face is the brand\'s: Fredoka from docs/brand, at its three weig
   assert.deepEqual(theme.match(/--bt-head-font:[^;]+;/g), ['--bt-head-font:Fredoka,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;'])
   assert.ok(css.includes('--head:var(--bt-head-font);'))
   // Nothing set in the title face carries a weight of its own: a heavier Fredoka is heavier than the logo.
-  assert.equal(css.match(/font:[^;}]*var\(--head\)/g).length, 38)
+  assert.equal(css.match(/font:[^;}]*var\(--head\)/g).length, 37)
   assert.deepEqual(css.match(/font:[^;}]*var\(--head\)/g).filter(rule => !/^font:var\(--weight-(?:title|strong|label)\) /.test(rule)), [])
   assert.ok(css.includes('\nh1{font-weight:var(--weight-title);font-size:clamp(2.6rem,1.4rem + 4.2vw,4.6rem);line-height:1.02;letter-spacing:-.02em}\n'))
   assert.ok(css.includes('\nh2{font-weight:var(--weight-title);font-size:clamp(1.85rem,1.15rem + 2.3vw,3.05rem);line-height:1.08;letter-spacing:-.016em}\n'))
@@ -489,11 +494,9 @@ test('motion: only for visitors who allow it, only transform and opacity, and ne
   for (const [, list] of css.matchAll(/transition:([^;}]+)/g)) {
     for (const part of list.replace(/\([^)]*\)/g, '').split(',')) assert.match(part.trim(), /^(?:opacity|translate|scale|rotate|transform|box-shadow|border-color|background|color|none)\b/, `transition: ${part}`)
   }
-  // Arca's rule: its logo is never animated here. No motion rule names it, and the heading's
-  // entrance skips it (the stand-in's heading is the logo).
-  assert.ok(motion.includes('.hero-heading>:not(.arca-logo){animation:'))
-  assert.equal(motion.split('arca-logo').length, 2)
-  assert.doesNotMatch(motion, /arca-mark|arca-ark/)
+  // Arca's rule: its logo is never animated here. No motion rule names it.
+  assert.ok(motion.includes('.hero-heading>*{animation:'))
+  assert.doesNotMatch(motion, /arca/)
 })
 
 test('all landing files pass privacy; no tracking or preview URL is committed', () => {
@@ -511,30 +514,38 @@ test('all landing files pass privacy; no tracking or preview URL is committed', 
 })
 
 
-test('Arca has exactly one stand-in page here; home links to its same-tab canonical path', () => {
-  // Arca's own site takes this address over later. Until then Pages carries this one page
-  // and nothing under it; the root discovery files keep Arca's own lines (next test).
-  assert.deepEqual(readdirSync(resolve(root, 'arca')), ['index.html'])
-  assert.deepEqual(routes.filter(route => route.startsWith('/arca')), ['/arca/'])
-  const page = htmlAt('/arca/')
-  // The heading is Arca's logo, which carries its name, then the owner's line.
-  assert.ok(page.includes(`<p class="eyebrow">An Automagik building block</p><h1 class="arca-logo">${arcaLogo}</h1><p class="intro">${arca.line}</p>`))
+test('Arca\'s page is Arca\'s own: Pages carries no /arca page and nothing under it, and the site links to its same-tab address', () => {
+  // NO PAGE HERE. Arca's Worker serves automagik.si/arca and everything under it (RFC 0027),
+  // and this site's deploy uploads its folder as it is: a file at arca/ would be published
+  // beside Arca's page. So there is no arca folder, no /arca route and no built page.
+  assert.equal(existsSync(resolve(root, 'arca')), false, 'this site carries no file at /arca/')
+  assert.deepEqual(routes.filter(route => route.startsWith('/arca')), [])
+  assert.deepEqual([...generated.keys()].filter(route => route.startsWith('/arca')), [])
+  assert.doesNotMatch(read('scripts/build-pages.mjs'), /arcaPage|install-line|get\.automagik\.si/)
+  assert.doesNotMatch(read('styles.css'), /install-line|arca-logo/)
   assert.match(arcaLogo, / role="img" aria-label="arca">/)
-  // The owner's own line, exactly, wherever Arca is described: the page, the home block,
-  // and the Products menu on every page.
-  assert.equal(arca.line, 'Be your own cloud. Infrastructure for AI agents.')
+  // The owner's own line, exactly, wherever Arca is described: the home block, the drawer's
+  // row and the Products menu on every page.
+  assert.deepEqual(arca, { line: 'Be your own cloud. Infrastructure for AI agents.' })
   for (const [route, html] of generated) {
     const said = [...html.matchAll(/<strong>Arca<\/strong><span>([^<]*)<\/span>/g)].map(match => match[1])
     assert.deepEqual(said, [arca.line], `${route}: the menu says Arca's line`)
   }
-  // Get Arca opens this page, where the install command is text to copy. The installer's
-  // address answers with a shell script, so no link anywhere points at it.
-  assert.equal(arca.install, 'curl -fsSL https://get.automagik.si/arca | sh')
-  assert.equal(arca.needs, 'Today it needs a Linux machine (x86_64) with Incus, and a person comfortable with a terminal.')
-  assert.ok(page.includes(`<div class="install-line"><h2 id="get">Get Arca</h2><pre><code>${arca.install}</code></pre><p>${arca.needs}</p></div>`))
-  for (const [route, html] of generated) assert.doesNotMatch(html, /href="[^"]*(?:get\.automagik\.si|automagik-si\/arca)/, `${route}: neither the installer nor Arca's repository is a link`)
-  assert.match(page, /<a class="button secondary" href="\/#blocks">All products /)
-  assert.doesNotMatch(page, /Coming soon\.<\/p><p class="lede">/)
+  // THE SITE LINKS TO IT, in the same tab, by the one address: the Products menu, the
+  // drawer's row and the footer on every page, the home card, and the product pages' way to
+  // the next or the earlier product. Nothing links to a place under it, to the installer or
+  // to Arca's repository.
+  for (const [route, html] of generated) {
+    const links = [...html.matchAll(/<a\b[^>]*href="(\/arca[^"]*)"[^>]*>/g)]
+    for (const [link, href] of links) { assert.equal(href, arcaPath, route); assert.doesNotMatch(link, /target=|aria-current/, route) }
+    const footer = html.slice(html.indexOf('<footer'), html.indexOf('</footer>'))
+    assert.match(html, /<a class="menu-item" href="\/arca\/"/, `${route}: the Products menu links to Arca's page`)
+    assert.match(html, /<a class="fam-item is-logo" href="\/arca\/"/, `${route}: the drawer's row links to Arca's page`)
+    assert.ok(footer.includes('<a href="/arca/">Arca</a>'), `${route}: the footer links to Arca's page`)
+    const beside = ['/cloud/', '/mykes/'].includes(route) ? 1 : 0
+    assert.equal(links.length, 3 + beside + (route === '/' ? 1 : 0), `${route}: ${links.map(([, href]) => href)}`)
+    assert.doesNotMatch(html, /href="[^"]*(?:get\.automagik\.si|automagik-si\/arca)/, `${route}: neither the installer nor Arca's repository is a link`)
+  }
   const card = htmlAt('/').match(/<article class="product-card" data-block="arca">[\s\S]*?<\/article>/)?.[0]
   assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span>`))
   // The card says only Arca's name and the owner's line: no tag of guessed wording.
@@ -549,7 +560,6 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
     for (const [item] of html.matchAll(/<a class="menu-item" href="\/arca\/"[\s\S]*?<\/a>/g)) assert.doesNotMatch(item, /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/, route)
     assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-end">'), html.indexOf('</footer>')), /arca-ark|<img/, route)
   }
-  assert.doesNotMatch(page.match(/<main[\s\S]*<\/main>/)[0].split('class="more ')[0], /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/)
   for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
   // The root sitemap lists Arca only through Arca's own supplied line.
   assert.equal(read('sitemap.xml').split('https://automagik.si/arca/</loc>').length, 2)
@@ -700,7 +710,7 @@ test('the family drawer: the piece and its art are byte copies of the package, a
 test('the family drawer on every page: the piece\'s markup with Automagik in the top block, three words and no mark beside them', () => {
   // Arca's row, written here from the piece's own Arca item (its top block's link): a logo
   // row without "You are here", holding the package's logo file.
-  const arcaRow = current => `<a class="fam-item is-logo" href="/arca/"${current ? ' aria-current="page"' : ''} data-family-product="Arca" data-family-line="${arca.line}"><span class="fam-words"><span class="fam-logo">${read('assets/family/arca-logo-b.svg').trim()}</span><span>${arca.line}</span></span></a>`
+  const arcaRow = `<a class="fam-item is-logo" href="/arca/" data-family-product="Arca" data-family-line="${arca.line}"><span class="fam-words"><span class="fam-logo">${read('assets/family/arca-logo-b.svg').trim()}</span><span>${arca.line}</span></span></a>`
   const piece = uncommented(read('assets/family/family.html')), pieceButton = uncommented(read('assets/family/header-button.html')).split('\n')[0]
   const slots = Object.fromEntries(Object.entries(familyArt).map(([slot, file]) => [`/assets/family/${file}`, slot]))
   // The button is the piece's own; only its script-off address is this site's.
@@ -742,7 +752,7 @@ test('the family drawer on every page: the piece\'s markup with Automagik in the
     // 3. The pictures: each address back to its slot.
     for (const [file, slot] of Object.entries(slots)) back = back.replaceAll(file, slot)
     // 4. Arca's row leaves Products: it is the piece's own Arca item, which goes back to the top block below.
-    undo(`<ul class="fam-list">\n    <li>${arcaRow(false)}</li>\n`, '<ul class="fam-list">\n')
+    undo(`<ul class="fam-list">\n    <li>${arcaRow}</li>\n`, '<ul class="fam-list">\n')
     // 5. The top block: Automagik, its lockup (the piece's own lockup markup, named) and its line.
     const lockup = piece.match(/<span class="fam-lockup"><picture class="fam-lock-cream">.*?<\/picture><picture class="fam-lock-ink">.*?<\/picture><\/span>/)[0]
     undo(`<span class="fam-logo">${lockup.replaceAll('alt=""', 'alt="Automagik"')}</span>`, '<span class="fam-logo">__FAM_ARCA__</span>')
@@ -823,7 +833,7 @@ test('the family drawer, the host is Automagik: its lockup once, Desktop and Mob
     assert.deepEqual(names, ['Arca', 'Omni', 'Genie', 'Mykes'], `${route}: Arca is the first of the products`)
     const first = menu.match(/<ul class="fam-list">\n\s*<li>(.*)<\/li>\n/)[1]
     assert.ok(first.startsWith('<a class="fam-item is-logo" href="/arca/"') && first.includes(`<span class="fam-logo">${read('assets/family/arca-logo-b.svg').trim()}</span><span>${arca.line}</span>`), `${route}: Arca's row is its logo and its line`)
-    assert.equal(first.includes(' aria-current="page"'), route === '/arca/', route)
+    assert.ok(!first.includes(' aria-current'), `${route}: Arca's page is never the page being read here`)
     assert.equal(menu.split('<svg').length, 2, `${route}: the ark is the menu's one drawing`)
     // NEVER REPEATED LOWER DOWN: each thing has one place in the menu, and the page list
     // holds only pages with no row or button of their own.
@@ -949,8 +959,8 @@ test('navigation: menus, footer sitemap, breadcrumb and previous/next on every p
 // ARCA'S LOGO IS THE ARK (the family package's issue 11c): the ark, in one colour, the text
 // colour, never coloured; with "arca" as the logo, alone as the small picture. The arch is
 // Arca's earlier logo and no other site should use it. So this site shows no arch: the
-// stand-in page's heading is the ark logo, the Products menu and the home card show the
-// ark alone, all three the package's files as they are, and the arch's files are gone.
+// drawer's row is the ark logo, the Products menu and the home card show the ark alone,
+// all the package's files as they are, and the arch's files are gone.
 test('Arca is shown by the ark, the package\'s files, and the site shows no arch', () => {
   // NO ARCH: not in a page, not in the stylesheet, not in the builder, not as a file.
   for (const [route, html] of generated) assert.doesNotMatch(html, /arca-mark|arca-icon|assets\/brand\/arca\//, `${route} shows no arch`)
@@ -959,16 +969,14 @@ test('Arca is shown by the ark, the package\'s files, and the site shows no arch
   assert.doesNotMatch(read('scripts/build-pages.mjs'), /arca-mark|arca-icon|arcaMark/)
   assert.equal(existsSync(resolve(root, 'assets/brand/arca')), false, 'the arch\'s files are not in this site')
 
-  // THE STAND-IN PAGE'S HEADING is the ark logo: the package's file, byte for byte, written
-  // into the page once in the content (and once more in the drawer's row), in the text colour.
-  const page = htmlAt('/arca/'), main = page.match(/<main[\s\S]*<\/main>/)[0]
+  // THE ARK WITH ITS WORD is the package's file, byte for byte, written once into every
+  // page: the drawer's row. No page's content holds it (Arca's own page is not built here).
   const logo = read('assets/family/arca-logo-b.svg')
   assert.equal(arcaLogo, logo.trim())
-  assert.equal(main.split(arcaLogo).length, 2, 'the heading holds the package\'s ark logo')
-  assert.equal(main.split('<h1').length, 2)
-  assert.ok(main.includes(`<h1 class="arca-logo">${arcaLogo}</h1>`))
-  assert.equal(page.split(arcaLogo).length, 3)
-  assert.ok(css.includes('\nh1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);margin:8px auto 0}\n'))
+  for (const [route, html] of generated) {
+    assert.equal(html.split(arcaLogo).length, 2, route)
+    assert.ok(!html.match(/<main[\s\S]*<\/main>/)[0].includes(arcaLogo), route)
+  }
 
   // THE PRODUCTS MENU AND THE HOME CARD show the ark alone: the package's file, byte for
   // byte, in a holder that hides it from assistive technology (the name stands beside it).
@@ -987,7 +995,7 @@ test('Arca is shown by the ark, the package\'s files, and the site shows no arch
   // ONE COLOUR, THE TEXT COLOUR, NEVER COLOURED: neither file names a colour, and no rule
   // here tints, filters or moves either drawing.
   for (const file of [logo, ark]) { assert.match(file, / fill="currentColor" /); assert.doesNotMatch(file, /#[0-9a-f]{3,8}\b|rgb|gradient|style=|<script|<image|href=/i) }
-  assert.doesNotMatch(css.replace('.hero-heading>:not(.arca-logo){animation:', '').replace('.arca-ark{display:block;flex:none;color:var(--text)}', ''), /arca-(?:logo|ark)[^{]*\{[^}]*(?:fill|color|filter|animation|transition|transform)/)
+  assert.doesNotMatch(css.replace('.arca-ark{display:block;flex:none;color:var(--text)}', ''), /arca-(?:logo|ark)[^{]*\{[^}]*(?:fill|color|filter|animation|transition|transform)/)
 })
 
 test('root discovery files allow every crawler including training and preserve Arca lines', () => {
