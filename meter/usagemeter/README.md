@@ -734,7 +734,7 @@ usagemeter repair --store STORE_DIR --against ORACLE_DIR --apply --copy FILE --c
 - `--store` is always given: the repair never defaults to the state directory, so it never
   opens a store no flag named. Without it the command is a usage error (exit 2). The plan's
   first line names the store.
-- The range is 2026-11-07..2026-11-10 unless `--from` / `--until` change it. A short cell
+- The range is 2026-11-07..2026-11-10 unless `--from` / `--until` change it (a date or an hour bound, below). A short cell
   outside it is reported, never repaired.
 - The default is a dry run over two read-only opens: nothing is written. It prints, per harness,
   day and column, the tokens before, after and the change, with events; a TOTAL; `unresolved`
@@ -742,6 +742,31 @@ usagemeter repair --store STORE_DIR --against ORACLE_DIR --apply --copy FILE --c
   alone and listed with their reason); `kept` (cells where the store holds more than
   the oracle: never subtracted); and `conservation: PASS` or `FAIL` with its reasons. `--json`
   prints the same as one record.
+- `--coarse` matches on (harness, hour, model, precision) only, the store's rows summed across
+  machine, repo and branch: an oracle built from frozen logs in a scratch home carries another
+  machine id and fills repo and branch differently, so the exact key matches nothing. Without
+  the option the exact key stays; nothing switches by itself. With it, a short group never
+  changes an existing row: its per-column shortfall (`max(0, oracle - store)`) becomes ONE NEW
+  row with the group's harness, hour, model and precision, machine empty, branch empty, events 0,
+  no actor state and no bot (before evidence), and only the added tokens. Its repo is the one
+  repo that is short in the group (per repo, oracle minus store over the seven columns: exactly
+  one above 0 and none below) in the store's naming; otherwise it is empty.
+  `--repo-alias OLD=NEW` (repeatable, `--coarse` only; OLD ending in `/` is a prefix) makes two
+  names one repo (the oracle's `host/org-a/x` and the store's `host/org-b/x`); aliases are
+  printed in the plan header. The new row is stored with `machine = ''` (the column is `NOT
+  NULL`, and sync always writes a machine, so no sync row can collide with it), `repo` and
+  `branch` NULL where empty, and an id starting `repair1126:` (sync ids are 32 hex digits). A
+  later sync never matches it: adoption and re-keying look rows up by a full key with a machine,
+  and `freeze_unbacked` only reads rows that have an actor state. A rerun finds nothing to do
+  (exit 3): the new rows are in the group sums. The plan header and JSON name the match used and
+  the row counts; every top-up lists its labels (a new row: machine empty, its repo or none,
+  branch empty, precision), the tokens per column and its group's store row count; the per-
+  harness, per-day added tokens, the new rows created and the existing rows changed (0) are
+  printed.
+- `--from` and `--until` take a date (`--until` counts the whole day) or an RFC 3339 UTC time
+  exactly on the hour (`2026-11-10T14:00:00Z`); the end is excluded. A time not on the hour is a
+  usage error. Hours past the bound are left out of every write and every check; the plan header
+  and JSON print the exact bounds.
 - Per group (hour, model, machine, repo, branch, precision, summed over actor state),
   `after = max(before, oracle)` per column. Events never change: a group whose events differ
   fails the run. The top-up goes to the group's evidence-free row (before evidence), so no
@@ -756,8 +781,9 @@ usagemeter repair --store STORE_DIR --against ORACLE_DIR --apply --copy FILE --c
 - `--apply` is refused without a copy. Take the sync lock's quiet moment, make the copy with
   `sqlite3 meter.db "VACUUM INTO 'copy.db'"` (or any consistent copy), `sha256sum` it, and pass
   `--copy copy.db --confirm-copy <that sha256>`. The copy must be a separate file: a symbolic
-  link, a hard link or any spelling of the store itself is refused. A refused apply leaves
-  the store's folder as it was (no lock file left behind that was not there before). The command checks the file's sha256, its
+  link, a hard link or any spelling of the store itself is refused. Every refusal that needs no
+  lock (the copy, its sha256, its counts, the schema) comes before the lock is taken and creates
+  nothing in the store's folder; the lock file, once created, is never removed. The command checks the file's sha256, its
   `quick_check`, and that it holds as many rollup rows and tokens as the store (after a partly
   done run, the store may hold more). It then takes the sync lock, refuses a newer schema, and
   writes one transaction per day. Each day checks its own conservation inside the transaction and
