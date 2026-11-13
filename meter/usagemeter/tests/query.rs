@@ -4718,13 +4718,24 @@ fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_i
         "",
         0,
     );
+    // The same shape after evidence_from, where a state-none row must still read as before evidence.
+    put_hourly(
+        &s,
+        CLAUDE_MODEL,
+        Some(REPO),
+        None,
+        "2026-11-08T12:00:00Z",
+        [1_000_000, 0, 0, 0, 0],
+        "",
+        0,
+    );
     // An evidence-backed ordinary row (a second hour of normal usage) and a NULL-repo row.
     put_hourly(
         &s,
         CLAUDE_MODEL,
         None,
         None,
-        "2026-11-05T09:00:00Z",
+        "2026-11-08T12:00:00Z",
         [5_000_000, 0, 0, 0, 0],
         "",
         0,
@@ -4733,8 +4744,8 @@ fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_i
     for (b, a) in base.iter().zip(&after) {
         let (bu, bb) = figures(b);
         let (au, ab) = figures(a);
-        assert_eq!(au - bu, 164_619_743, "{a}");
-        assert_eq!(ab - bb, 164_619_743, "{a}");
+        assert_eq!(au - bu, 165_619_743, "{a}");
+        assert_eq!(ab - bb, 165_619_743, "{a}");
         assert_eq!(
             rows_without_coverage(a),
             rows_without_coverage(b),
@@ -4750,7 +4761,7 @@ fn a_repair_shaped_row_moves_the_window_and_the_whole_hour_interval_by_exactly_i
     );
     assert_eq!(
         figures(&int_after).0 - figures(&int_base).0,
-        164_619_743,
+        165_619_743,
         "the interval agrees: {int_after}"
     );
 }
