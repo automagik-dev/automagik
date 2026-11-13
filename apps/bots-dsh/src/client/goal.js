@@ -320,8 +320,10 @@ html body .bt-island:not([data-open]) .bt-goal-bar{border-radius:0 0 var(--bt-is
 .bt-island .bt-pill:active{transform:none}
 /* The swap area holds the goal title and the group name in one cell, so hover
    only swaps the text and never resizes the pill. */
-.bt-pill-swap{flex:1 1 auto;min-width:0;display:grid;justify-items:start;text-align:left}
-.bt-pill-swap>*{grid-area:1/1;min-width:0;transition:opacity .18s ease,filter .18s ease}
+/* A start-aligned cell is as wide as its text wants; the column and the cell are held to the
+   swap area, so a long title or name ends in an ellipsis before the stage counter. */
+.bt-pill-swap{flex:1 1 auto;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);justify-items:start;text-align:left}
+.bt-pill-swap>*{grid-area:1/1;min-width:0;max-width:100%;transition:opacity .18s ease,filter .18s ease}
 .bt-pill-goal{display:flex;align-items:center;gap:6px;min-width:0}
 .bt-pill-swap>.bt-pill-name{opacity:0;filter:blur(4px)}
 .bt-pill:hover .bt-pill-swap>.bt-pill-goal,.bt-pill:focus-visible .bt-pill-swap>.bt-pill-goal,.bt-pill[data-expanded=true] .bt-pill-swap>.bt-pill-goal{opacity:0;filter:blur(4px)}

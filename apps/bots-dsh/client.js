@@ -3933,16 +3933,16 @@ var INKS = {
   tangerine: ["#FF6900", "#FF8A2E"],
   cobalt: ["#082DFF", "#5C78FF"],
   black: ["#000000", "#FFFFFF"],
-  brown: ["#9A6B44", "#7C5332"],
+  brown: ["#A27952", "#855C36"],
   red: ["#FF3E51", "#E02135"],
-  orange: ["#FF6B1A", "#FF5E00"],
-  yellow: ["#FFB020", "#F59E0B"],
-  green: ["#10B981", "#059669"],
-  cyan: ["#06B6D4", "#0891B2"],
-  blue: ["#2563EB", "#3B82F6"],
-  violet: ["#8B5CF6", "#7C3AED"],
-  magenta: ["#F43F85", "#E11D74"],
-  gray: ["#8A8F98", "#6E737B"],
+  orange: ["#FF781C", "#FF6700"],
+  yellow: ["#FFAF38", "#FF9800"],
+  green: ["#00C972", "#009957"],
+  cyan: ["#1CC3B0", "#00A592"],
+  blue: ["#2A92FE", "#0E74E0"],
+  violet: ["#A97EFE", "#804EE0"],
+  magenta: ["#FF5EB1", "#E02A88"],
+  gray: ["#959595", "#777777"],
   aurora: ["#00B8D4", "#2EE6E0"]
 };
 var GRADIENTS = { aurora: [[0, "#A4FFB0"], [0.42, "#00F0E4"], [1, "#2E9EF7"]] };
@@ -3980,7 +3980,7 @@ var CHARACTERS = {
   gem: { body: "M57 9.3l2.9-.4 14.9 3.5 19.6 14.1 1 1.4 .6 1.6-.5 2.6-27.1 56.5-1.6 1.8-2.1 .7-15.9-3.4-42.9-30.7-1.3-1.6-.6-1.6 .5-2.6 12-25.2 1.1-1.5 1.5-1z", shade: "M75.7 14.6l.1-.4 .6 .2 16.9 12.3 1.1 .7 .5-.2 .5 .7 .6 2.6-.5 1.6-26.4 55.1-1.2 2.1-1.1 1.1-1.6 .6-2.1 0-14.3-3.3-42.8-30.7 1.5-.2 11.6 2.5 2.2-.7 2.8-2.6 11.9-24.9 .6-.8 38.2-14.2z", light: "M19.1 23.6l1.1-.4 .5 .5 11.7 2.2 1 .9-.2 .5-1.8 2.7-11.7 24.4-1.6 .6-13.3-2.8-.5-.5 12.1-25.4 1.2-1.7z", eyes: [[51.4, 42.9, 6.7, 17.7, -10], [66.1, 37.4, 6.7, 17.7, -10]] }
 };
 var PICKER_SHAPES = Object.keys(CHARACTERS);
-var PICKER_COLUMNS = 5;
+var PICKER_COLUMNS = 6;
 var DEFAULT_SHAPES = ["star", "moon", "gumdrop", "peanut", "bunny", "kitty", "acorn"];
 var FALLBACK_SHAPE = "gumdrop";
 var MAIN_LOOK = Object.freeze({ shape: "octopus", color: "deepseek" });
@@ -4022,7 +4022,8 @@ var SHAPES = {};
 for (const [id, character] of Object.entries(CHARACTERS)) {
   const layers = [
     ...(character.paints ?? []).map(([d, fill2, opacity]) => `<path d="${d}" fill="${fill2}" fill-opacity="${opacity}"/>`),
-    `<path d="${character.shade}" fill="#000" fill-opacity=".07"/>`
+    `<path d="${character.shade}" fill="#000" fill-opacity=".14"/>`,
+    `<path d="${character.light}" fill="#fff" fill-opacity=".16"/>`
   ].join("");
   SHAPES[id] = { label: character.label ?? id[0].toUpperCase() + id.slice(1), size: 100, path: character.body, layers, eyes: character.eyes };
 }
@@ -8140,8 +8141,10 @@ html body .bt-island:not([data-open]) .bt-goal-bar{border-radius:0 0 var(--bt-is
 .bt-island .bt-pill:active{transform:none}
 /* The swap area holds the goal title and the group name in one cell, so hover
    only swaps the text and never resizes the pill. */
-.bt-pill-swap{flex:1 1 auto;min-width:0;display:grid;justify-items:start;text-align:left}
-.bt-pill-swap>*{grid-area:1/1;min-width:0;transition:opacity .18s ease,filter .18s ease}
+/* A start-aligned cell is as wide as its text wants; the column and the cell are held to the
+   swap area, so a long title or name ends in an ellipsis before the stage counter. */
+.bt-pill-swap{flex:1 1 auto;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);justify-items:start;text-align:left}
+.bt-pill-swap>*{grid-area:1/1;min-width:0;max-width:100%;transition:opacity .18s ease,filter .18s ease}
 .bt-pill-goal{display:flex;align-items:center;gap:6px;min-width:0}
 .bt-pill-swap>.bt-pill-name{opacity:0;filter:blur(4px)}
 .bt-pill:hover .bt-pill-swap>.bt-pill-goal,.bt-pill:focus-visible .bt-pill-swap>.bt-pill-goal,.bt-pill[data-expanded=true] .bt-pill-swap>.bt-pill-goal{opacity:0;filter:blur(4px)}
@@ -19447,7 +19450,7 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-avedit-reset{color:var(--bt-ink-3)}
 .bt-avedit-reset:hover{color:var(--bt-ink)}
 .bt-shapes{display:flex;flex-direction:column;gap:4px}
-.bt-shape-row{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+.bt-shape-row{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
 .bt-shape{position:relative;aspect-ratio:1;border:0;border-radius:10px;background:none;color:var(--bt-ink);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 .bt-shape:hover{background:var(--bt-hover)}
 .bt-shape .bt-ring{position:absolute;left:50%;top:50%;width:36px;height:36px;translate:-50% -50%;overflow:visible;opacity:0;scale:.82;pointer-events:none;transition:opacity .14s ease,${spring(SPRING_POP, "scale")}}
