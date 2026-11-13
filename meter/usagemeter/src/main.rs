@@ -25,7 +25,8 @@ Usage:
                       [--repo-alias <host/owner/repo>]...
   usagemeter outcomes [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
                       [--repo-alias <host/owner/repo>]...
-  usagemeter repair --against ORACLE_STATE_DIR [--from DAY] [--until DAY] [--json]
+  usagemeter repair --store STATE_DIR --against ORACLE_STATE_DIR [--from DAY] [--until DAY]
+                    [--json]
                     [--dry-run | --apply --copy FILE --confirm-copy SHA256]
   usagemeter fleet usage --json [--missing MACHINE:REASON[:MESSAGE] ...] FILE [FILE ...]
   usagemeter fleet outcomes --json [--missing MACHINE:REASON[:MESSAGE] ...] FILE [FILE ...]
@@ -61,11 +62,13 @@ query     Usage and estimated cost per branch of one repo, as the contract 1 env
                   to more than one checkout of the repo is missing with reason task_ambiguous,
                   and no checkout path is printed. A window with no task labels is an empty ok
                   answer, and the branch row stays the fallback.
-repair    Top up the store's rollup totals of 2026-11-07..10 (or --from/--until) from an oracle
-          state dir built from the frozen logs (issue 1126). A dry run is the default: both stores
-          are opened read-only and nothing is written. It never subtracts and never changes events;
-          a cell above the oracle is kept and listed; hours with no oracle rows are listed as
-          unresolved. --apply needs --copy (a VACUUM INTO copy of the store) and its sha256.
+repair    Top up the rollup totals of the store in --store (always given, never defaulted) from
+          an oracle state dir built from the frozen logs (issue 1126), 2026-11-07..10 unless
+          --from/--until narrow it. A dry run is the default: both stores are opened read-only
+          and nothing is written. It never subtracts and never changes events; a cell above the
+          oracle is kept and listed; hours with no oracle rows, and short groups with no
+          evidence-free row, are listed as unresolved. --apply needs --copy (a VACUUM INTO copy
+          of the store) and its sha256. Totals count the six counted columns (not reasoning).
           Exit status: 0 plan or applied, 1 conservation failed, 2 usage or unreadable store,
           3 nothing to repair, 12 a newer store.
 fleet     Roll up local query/outcomes JSON files; no collection, network calls or store writes.
@@ -528,12 +531,7 @@ fn main() -> ExitCode {
         }
         Some("coverage") => return cmd_coverage(&rest),
         Some("outcomes") => return cmd_outcomes(&rest),
-        Some("repair") => {
-            return match state_dirs() {
-                Ok(d) => ExitCode::from(meter::repair::cmd(&rest, &d.dir, now_ms())),
-                Err(e) => fail(&e),
-            };
-        }
+        Some("repair") => return ExitCode::from(meter::repair::cmd(&rest, now_ms())),
         Some("status") if rest.is_empty() => cmd_status(),
         Some("status") => Err("status takes no options".into()),
         Some("--version" | "-V" | "version") => {

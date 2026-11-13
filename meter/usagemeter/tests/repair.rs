@@ -84,9 +84,14 @@ impl Fx {
         Fx::put(&self.oracle, id, harness, h, v, ev, None);
     }
     fn opts(&self, extra: &[&str]) -> Opts {
-        let mut a: Vec<String> = vec!["--against".into(), self.oracle.display().to_string()];
+        let mut a: Vec<String> = vec![
+            "--store".into(),
+            self.store.display().to_string(),
+            "--against".into(),
+            self.oracle.display().to_string(),
+        ];
         a.extend(extra.iter().map(|s| s.to_string()));
-        repair::parse(&a, &self.store, NOW).unwrap()
+        repair::parse(&a, NOW).unwrap()
     }
     /// A copy of the store as `VACUUM INTO` makes it, with its sha256.
     fn copy(&self, name: &str) -> Copy {
@@ -434,10 +439,16 @@ fn apply_refused_without_the_matching_copy_and_on_a_newer_schema() {
     fx.s("a", "dsh-tui", H8, cols(CR, 100), 5);
     fx.o("a", "dsh-tui", H8, cols(CR, 160), 5);
     // No --copy / --confirm-copy at all.
-    let a: Vec<String> = ["--against", fx.oracle.to_str().unwrap(), "--apply"]
-        .map(String::from)
-        .to_vec();
-    assert!(repair::parse(&a, &fx.store, NOW).is_err());
+    let a: Vec<String> = [
+        "--store",
+        fx.store.to_str().unwrap(),
+        "--against",
+        fx.oracle.to_str().unwrap(),
+        "--apply",
+    ]
+    .map(String::from)
+    .to_vec();
+    assert!(repair::parse(&a, NOW).is_err());
     // A wrong sha256.
     let mut c = fx.copy("c.db");
     c.sha256 = "0".repeat(64);
@@ -471,10 +482,11 @@ fn cli_dry_run_exit_codes_and_json() {
     let run = |extra: &[&str]| {
         std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
             .arg("repair")
+            .arg("--store")
+            .arg(&fx.store)
             .arg("--against")
             .arg(&fx.oracle)
             .args(extra)
-            .env("METER_STATE_DIR", &fx.store)
             .output()
             .unwrap()
     };
@@ -487,6 +499,170 @@ fn cli_dry_run_exit_codes_and_json() {
     assert_eq!(run(&["--from", "2026-11-09"]).status.code(), Some(3));
     assert_eq!(run(&["--from", "nonsense"]).status.code(), Some(2));
     assert_eq!(run(&["--apply"]).status.code(), Some(2));
+    // The plan names the store.
+    assert_eq!(v["store"], fx.store.display().to_string());
+    let text = String::from_utf8(run(&[]).stdout).unwrap();
+    assert!(text.contains(&fx.store.display().to_string()), "{text}");
+    // No --store: a usage error, even with METER_STATE_DIR set to a real store.
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+        .arg("repair")
+        .arg("--against")
+        .arg(&fx.oracle)
+        .env("METER_STATE_DIR", &fx.store)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--store"));
+}
+
+#[test]
+fn the_store_is_an_explicit_argument() {
+    let a: Vec<String> = ["--against", "oracle"].map(String::from).to_vec();
+    let e = repair::parse(&a, NOW).unwrap_err();
+    assert!(e.contains("--store"), "{e}");
+}
+
+#[test]
+fn a_narrowed_apply_does_not_lock_out_the_earlier_days() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    fx.s("a", "dsh-tui", H8, cols(CR, 10), 1);
+    fx.o("a", "dsh-tui", H8, cols(CR, 25), 1);
+    fx.s("b", "dsh-tui", H9, cols(CR, 10), 1);
+    fx.o("b", "dsh-tui", H9, cols(CR, 25), 1);
+    let c = fx.copy("c.db");
+    // The later day first, as a careful operator would.
+    let d = repair::execute(&fx.apply_opts(&["--from", "2026-11-09", "--until", "2026-11-09"], &c))
+        .unwrap();
+    assert_eq!(
+        (d.code, d.applied_days),
+        (exit::OK, vec!["2026-11-09".to_string()])
+    );
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H8, CR), 10);
+    // Then the default range: the earlier day is still planned, written and reported.
+    let d = repair::execute(&fx.apply_opts(&[], &c)).unwrap();
+    assert_eq!(d.code, exit::OK);
+    assert_eq!(d.report.total_change(), 15);
+    assert_eq!(d.applied_days, vec!["2026-11-08"]);
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H8, CR), 25);
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H9, CR), 25);
+    assert_eq!(
+        repair::execute(&fx.apply_opts(&[], &c)).unwrap().code,
+        exit::NOTHING
+    );
+}
+
+#[test]
+fn a_short_group_with_no_evidence_free_row_is_unresolved_not_topped_up() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // Two attributed rows, none evidence-free: 100 + 40 against 200.
+    Fx::put(
+        &fx.store,
+        "t1",
+        "claude-code",
+        H8,
+        cols(CR, 100),
+        3,
+        Some("attributed"),
+    );
+    Fx::put(
+        &fx.store,
+        "t2",
+        "claude-code",
+        H8,
+        cols(CR, 40),
+        2,
+        Some("attributed"),
+    );
+    fx.o("o1", "claude-code", H8, cols(CR, 200), 5);
+    // And a normal short group beside it.
+    fx.s("n", "dsh-tui", H9, cols(CR, 10), 1);
+    fx.o("n", "dsh-tui", H9, cols(CR, 30), 1);
+    let d = repair::execute(&fx.opts(&[])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(d.report.total_change(), 20, "the 60 are not in the change");
+    let j = d.report.to_json(d.code);
+    assert_eq!(j["unresolved_groups"][0]["tokens"], 60);
+    assert_eq!(j["unresolved_groups"][0]["reason"], "no_evidence_free_row");
+    assert_eq!(j["targets"]["state"], "before_evidence");
+    assert!(d.report.to_text(d.code).contains("no evidence-free row"));
+    let c = fx.copy("c.db");
+    repair::execute(&fx.apply_opts(&[], &c)).unwrap();
+    // The attributed rows are as they were; the other group was topped up.
+    let all = |id: &str| -> i64 {
+        Fx::conn(&fx.store)
+            .query_row("SELECT cache_read FROM usage WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    };
+    assert_eq!((all("t1"), all("t2")), (100, 40));
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H9, CR), 30);
+    // Alone, the group is nothing to repair.
+    let fx = Fx::new();
+    Fx::put(
+        &fx.store,
+        "t1",
+        "claude-code",
+        H8,
+        cols(CR, 100),
+        3,
+        Some("attributed"),
+    );
+    fx.o("o1", "claude-code", H8, cols(CR, 200), 3);
+    assert_eq!(repair::execute(&fx.opts(&[])).unwrap().code, exit::NOTHING);
+}
+
+#[test]
+fn totals_add_the_six_counted_columns_and_never_reasoning() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    let mut s = [0; 7];
+    s[4] = 100; // output
+    s[5] = 40; // reasoning, inside output
+    let mut o = [0; 7];
+    o[4] = 150;
+    o[5] = 60;
+    fx.s("a", "claude-code", H8, s, 1);
+    fx.o("a", "claude-code", H8, o, 1);
+    // An unresolved hour holding output 10, reasoning 5: 10 tokens, not 15.
+    let mut u = [0; 7];
+    u[4] = 10;
+    u[5] = 5;
+    fx.s("u", "claude-code", H9, u, 1);
+    // Kept: the store's reasoning (30) is above the oracle's (0), its output is equal: 0 counted.
+    let mut k = [0; 7];
+    k[4] = 5;
+    k[5] = 30;
+    fx.s("k", "omp", H8, k, 1);
+    let mut k0 = [0; 7];
+    k0[4] = 5;
+    fx.o("k", "omp", H8, k0, 1);
+    // Outside the range: the oracle's reasoning is above the store's (20), output equal: 0 counted.
+    let out = "2026-11-01T10:00:00Z";
+    fx.s("x", "omp", out, cols(4, 7), 1);
+    let mut x = cols(4, 7);
+    x[5] = 20;
+    fx.o("x", "omp", out, x, 1);
+    let d = repair::execute(&fx.opts(&[])).unwrap();
+    assert_eq!(d.report.kept_tokens(), 0);
+    assert!(
+        d.report.to_json(d.code)["outside_range"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(d.report.total_change(), 50);
+    assert_eq!(d.report.total_before(), 115);
+    assert_eq!(d.report.unresolved_tokens(), 10);
+    let j = d.report.to_json(d.code);
+    assert_eq!(j["total"]["change"], 50);
+    assert_eq!(j["total"]["before"], 115);
+    // Reasoning is still a repaired column in the per-column lines.
+    let cells = j["cells"].as_array().unwrap();
+    let r = cells.iter().find(|c| c["column"] == "reasoning").unwrap();
+    assert_eq!(r["change"], 20);
 }
 
 fn common_serial() -> impl Drop {

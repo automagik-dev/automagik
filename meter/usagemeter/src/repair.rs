@@ -36,10 +36,20 @@ pub const COLS: [&str; 7] = [
     "unsplit",
 ];
 
-/// `meta` key holding the last day a repair transaction committed.
+/// `meta` key recording the last day a repair transaction committed. A record only: it never
+/// decides which day is planned (the plan is rebuilt from the live rows).
 pub const JOURNAL: &str = "repair_1126_done";
 pub const DEFAULT_FROM: &str = "2026-11-07";
 pub const DEFAULT_UNTIL: &str = "2026-11-10";
+
+/// Index of `reasoning` in [`COLS`]: part of `output`, so never added to a total (crate rule,
+/// `event.rs`).
+const REASONING: usize = 5;
+
+/// All tokens of a row: the six counted columns; `reasoning` is inside `output`.
+fn counted(v: &[i64; 7]) -> i64 {
+    v.iter().sum::<i64>() - v[REASONING]
+}
 
 pub mod exit {
     pub const OK: u8 = 0;
@@ -57,7 +67,7 @@ pub struct Copy {
 
 #[derive(Debug, Clone)]
 pub struct Opts {
-    /// The store's state directory (holds `meter.db`).
+    /// The store's state directory (holds `meter.db`), from `--store`; never defaulted.
     pub state_dir: PathBuf,
     /// The oracle's state directory.
     pub against: PathBuf,
@@ -103,8 +113,10 @@ type GKey = (
 
 #[derive(Debug, Clone)]
 struct Group {
-    target: String,
-    target_rank: (bool, i64, String),
+    /// The evidence-free row that takes a top-up; None when the group has none (every row is
+    /// attributed: a top-up there would be tokens attributed to a bot with no call behind them).
+    target: Option<String>,
+    target_rank: (i64, String),
     v: [i64; 7],
     events: i64,
 }
@@ -124,17 +136,17 @@ fn gkey(r: &Row) -> GKey {
 fn group(rows: &[Row]) -> BTreeMap<GKey, Group> {
     let mut m: BTreeMap<GKey, Group> = BTreeMap::new();
     for r in rows {
-        // The row that takes a top-up: a before-evidence row (no actor state) first, then the
-        // biggest, then the lowest id, so the choice never depends on read order.
-        let rank = (r.state.is_some(), -r.v.iter().sum::<i64>(), r.id.clone());
+        // The row that takes a top-up: only a before-evidence row (no actor state); the biggest,
+        // then the lowest id, so the choice never depends on read order.
+        let rank = (-counted(&r.v), r.id.clone());
         let g = m.entry(gkey(r)).or_insert_with(|| Group {
-            target: r.id.clone(),
-            target_rank: rank.clone(),
+            target: None,
+            target_rank: (i64::MAX, String::new()),
             v: [0; 7],
             events: 0,
         });
-        if rank < g.target_rank {
-            g.target = r.id.clone();
+        if r.state.is_none() && (g.target.is_none() || rank < g.target_rank) {
+            g.target = Some(r.id.clone());
             g.target_rank = rank;
         }
         for (a, b) in g.v.iter_mut().zip(r.v) {
@@ -184,21 +196,19 @@ pub struct Report {
     kept: BTreeMap<(String, String, usize), i64>,
     /// harness -> (groups, tokens) short outside the range: reported, never repaired.
     outside: BTreeMap<String, (usize, i64)>,
+    /// (harness, day) -> (groups, short tokens): short, but the group has no evidence-free row.
+    no_free: BTreeMap<(String, String), (usize, i64)>,
+    /// The store this plan is for (a path the person gave).
+    pub store: String,
     pub failures: Vec<String>,
 }
 
 impl Report {
     pub fn total_change(&self) -> i64 {
-        self.cells
-            .values()
-            .map(|c| c.change.iter().sum::<i64>())
-            .sum()
+        self.cells.values().map(|c| counted(&c.change)).sum()
     }
     pub fn total_before(&self) -> i64 {
-        self.cells
-            .values()
-            .map(|c| c.before.iter().sum::<i64>())
-            .sum()
+        self.cells.values().map(|c| counted(&c.before)).sum()
     }
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
@@ -207,7 +217,11 @@ impl Report {
         self.unresolved.values().map(|u| u.1).sum()
     }
     pub fn kept_tokens(&self) -> i64 {
-        self.kept.values().sum()
+        self.kept
+            .iter()
+            .filter(|((_, _, c), _)| *c != REASONING)
+            .map(|(_, t)| t)
+            .sum()
     }
 
     pub fn to_json(&self, code: u8) -> Value {
@@ -227,6 +241,7 @@ impl Report {
         let before = self.total_before();
         let change = self.total_change();
         json!({
+            "store": self.store,
             "range": {"from": self.from_day, "until": self.until_day},
             "cells": cells,
             "total": {"before": before, "after": before + change, "change": change,
@@ -237,6 +252,10 @@ impl Report {
                 "harness": h, "day": d, "column": COLS[*c], "tokens": t})).collect::<Vec<_>>(),
             "outside_range": self.outside.iter().map(|(h, (g, t))| json!({
                 "harness": h, "groups": g, "tokens": t})).collect::<Vec<_>>(),
+            "unresolved_groups": self.no_free.iter().map(|((h, d), (g, t))| json!({
+                "harness": h, "day": d, "groups": g, "tokens": t,
+                "reason": "no_evidence_free_row"})).collect::<Vec<_>>(),
+            "targets": {"state": "before_evidence", "rows": self.changes.len()},
             "conservation": {"pass": self.failures.is_empty(), "failures": self.failures},
             "exit": code,
         })
@@ -245,8 +264,9 @@ impl Report {
     pub fn to_text(&self, code: u8) -> String {
         let mut s = String::new();
         s.push_str(&format!(
-            "repair plan, {}..{} (dry run unless --apply)\n",
-            self.from_day, self.until_day
+            "repair plan for the store {}, {}..{} (dry run unless --apply)\n\
+             top-ups go to the group's before-evidence row\n",
+            self.store, self.from_day, self.until_day
         ));
         s.push_str(&format!(
             "{:<12} {:<11} {:<15} {:>16} {:>16} {:>14}  {}\n",
@@ -295,6 +315,13 @@ impl Report {
         ));
         for ((h, d, col), t) in &self.kept {
             s.push_str(&format!("  {h} {d} {}: {}\n", COLS[*col], th(*t)));
+        }
+        for ((h, d), (g, t)) in &self.no_free {
+            s.push_str(&format!(
+                "unresolved, no evidence-free row (every row attributed; not touched): {h} {d}: \
+                 {g} groups short, {} tokens\n",
+                th(*t)
+            ));
         }
         for (h, (g, t)) in &self.outside {
             s.push_str(&format!(
@@ -468,7 +495,7 @@ fn plan(
         if !oracle_hours.contains(&(k.0.clone(), k.1)) {
             let u = rep.unresolved.entry((k.0.clone(), day)).or_default();
             u.0.insert(k.1);
-            u.1 += g.v.iter().sum::<i64>();
+            u.1 += counted(&g.v);
         }
     }
 
@@ -479,7 +506,10 @@ fn plan(
         if !in_range(k.1) {
             // Outside the range: reported, never repaired.
             let before = s.map_or([0; 7], |g| g.v);
-            let short: i64 = (0..7).map(|i| (o.v[i] - before[i]).max(0)).sum();
+            let short: i64 = (0..7)
+                .filter(|i| *i != REASONING)
+                .map(|i| (o.v[i] - before[i]).max(0))
+                .sum();
             if short > 0 {
                 let e = rep.outside.entry(k.0.clone()).or_default();
                 e.0 += 1;
@@ -498,7 +528,15 @@ fn plan(
                 *rep.kept.entry((k.0.clone(), day.clone(), i)).or_default() += s.v[i] - o.v[i];
             }
         }
-        if after != s.v {
+        if after != s.v && s.target.is_none() {
+            // Short, and every row of the group is attributed: not repaired, listed.
+            let e = rep.no_free.entry((k.0.clone(), day)).or_default();
+            e.0 += 1;
+            e.1 += (0..7)
+                .filter(|i| *i != REASONING)
+                .map(|i| (o.v[i] - s.v[i]).max(0))
+                .sum::<i64>();
+        } else if after != s.v {
             if s.events != o.events {
                 events_bad += 1;
             }
@@ -506,7 +544,7 @@ fn plan(
                 harness: k.0.clone(),
                 hour: k.1,
                 day,
-                id: s.target.clone(),
+                id: s.target.clone().expect("checked above"),
                 before: s.v,
                 oracle: o.v,
                 after,
@@ -624,9 +662,13 @@ fn parse_day(s: &str) -> Result<i64, String> {
 }
 
 /// Parses the arguments after `repair`. Returns the options, or the usage error.
-pub fn parse(args: &[String], state_dir: &Path, now_ms: i64) -> Result<Opts, String> {
-    let (mut against, mut from, mut until) =
-        (None, DEFAULT_FROM.to_string(), DEFAULT_UNTIL.to_string());
+pub fn parse(args: &[String], now_ms: i64) -> Result<Opts, String> {
+    let (mut store, mut against, mut from, mut until) = (
+        None,
+        None,
+        DEFAULT_FROM.to_string(),
+        DEFAULT_UNTIL.to_string(),
+    );
     let (mut json, mut dry, mut apply) = (false, false, false);
     let (mut confirm, mut copy) = (None, None);
     let mut it = args.iter();
@@ -637,6 +679,7 @@ pub fn parse(args: &[String], state_dir: &Path, now_ms: i64) -> Result<Opts, Str
                 .ok_or_else(|| format!("{f} needs a value"))
         };
         match a.as_str() {
+            "--store" => store = Some(PathBuf::from(val("--store")?)),
             "--against" => against = Some(PathBuf::from(val("--against")?)),
             "--from" => from = val("--from")?,
             "--until" => until = val("--until")?,
@@ -651,6 +694,8 @@ pub fn parse(args: &[String], state_dir: &Path, now_ms: i64) -> Result<Opts, Str
     if dry && apply {
         return Err("repair: --dry-run and --apply exclude each other".into());
     }
+    let store =
+        store.ok_or("repair needs --store <the store's state dir>: it is never defaulted")?;
     let against = against.ok_or("repair needs --against <oracle state dir>")?;
     let from_ms = parse_day(&from)?;
     let until_ms = parse_day(&until)? + DAY_MS;
@@ -671,7 +716,7 @@ pub fn parse(args: &[String], state_dir: &Path, now_ms: i64) -> Result<Opts, Str
         None
     };
     Ok(Opts {
-        state_dir: state_dir.to_path_buf(),
+        state_dir: store,
         against,
         from_ms,
         until_ms,
@@ -730,7 +775,10 @@ fn build_plan(o: &Opts) -> Result<Result<Report, u8>, String> {
 
 pub fn execute(o: &Opts) -> Result<Done, String> {
     let report = match build_plan(o)? {
-        Ok(r) => r,
+        Ok(mut r) => {
+            r.store = o.state_dir.display().to_string();
+            r
+        }
         Err(code) => {
             return Ok(Done {
                 code,
@@ -761,6 +809,20 @@ pub fn execute(o: &Opts) -> Result<Done, String> {
         });
     }
     let days = apply(o, copy, &report, usize::MAX)?;
+    // Every day the plan has must be committed: an apply that did less is not a success.
+    let planned: BTreeSet<&str> = report.changes.iter().map(|c| c.day.as_str()).collect();
+    if days.len() != planned.len() {
+        eprintln!(
+            "meter: the plan has {} days with a change, {} were committed",
+            planned.len(),
+            days.len()
+        );
+        return Ok(Done {
+            code: exit::CONSERVATION,
+            report,
+            applied_days: days,
+        });
+    }
     Ok(Done {
         code: exit::OK,
         report,
@@ -895,9 +957,6 @@ pub fn apply(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<St
     }
     let mut committed = vec![];
     for (day, changes) in by_day {
-        if done.as_deref().is_some_and(|d| day <= d) {
-            continue;
-        }
         if committed.len() >= limit {
             break;
         }
@@ -941,16 +1000,13 @@ fn day_tx(
     }
     // The day's own conservation, on what the transaction now holds.
     let after = group(&load(tx, lo, hi, false).map_err(e)?);
-    let planned: BTreeMap<GKey, &Change> = changes
-        .iter()
-        .map(|c| {
-            let r = before
-                .iter()
-                .find(|r| r.id == c.id)
-                .expect("planned row exists");
-            (gkey(r), *c)
-        })
-        .collect();
+    let mut planned: BTreeMap<GKey, &Change> = BTreeMap::new();
+    for c in changes {
+        let r = before.iter().find(|r| r.id == c.id).ok_or_else(|| {
+            format!("{day}: the row to top up is not in the day; day rolled back")
+        })?;
+        planned.insert(gkey(r), *c);
+    }
     if after.len() != bg.len() {
         return Err(format!(
             "{day}: the set of rollup groups changed; day rolled back"
@@ -998,8 +1054,8 @@ fn day_tx(
 }
 
 /// The `repair` command: prints the plan (table or JSON) and returns the exit code.
-pub fn cmd(args: &[String], state_dir: &Path, now_ms: i64) -> u8 {
-    let o = match parse(args, state_dir, now_ms) {
+pub fn cmd(args: &[String], now_ms: i64) -> u8 {
+    let o = match parse(args, now_ms) {
         Ok(o) => o,
         Err(m) => {
             eprintln!("meter: {m}");
@@ -1012,12 +1068,16 @@ pub fn cmd(args: &[String], state_dir: &Path, now_ms: i64) -> u8 {
                 return d.code; // refused before a plan (newer schema); stderr said why
             }
             if o.json {
-                println!("{}", d.report.to_json(d.code));
+                let mut j = d.report.to_json(d.code);
+                if o.apply.is_some() {
+                    j["applied_days"] = json!(d.applied_days);
+                }
+                println!("{j}");
             } else {
                 print!("{}", d.report.to_text(d.code));
-            }
-            if !d.applied_days.is_empty() {
-                eprintln!("meter: repaired days {}", d.applied_days.join(", "));
+                if o.apply.is_some() {
+                    println!("applied days: {}", d.applied_days.join(", "));
+                }
             }
             d.code
         }

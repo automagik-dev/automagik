@@ -727,21 +727,29 @@ from the frozen logs with the existing commands (`METER_STATE_DIR` on a scratch 
 a log.
 
 ```
-usagemeter repair --against ORACLE_DIR [--from DAY] [--until DAY] [--json]
-usagemeter repair --against ORACLE_DIR --apply --copy FILE --confirm-copy SHA256
+usagemeter repair --store STORE_DIR --against ORACLE_DIR [--from DAY] [--until DAY] [--json]
+usagemeter repair --store STORE_DIR --against ORACLE_DIR --apply --copy FILE --confirm-copy SHA256
 ```
 
-- The range is 2026-11-07..2026-11-10 unless `--from` / `--until` narrow it. A short cell outside
-  it is reported, never repaired.
+- `--store` is always given: the repair never defaults to the state directory, so it never
+  opens a store no flag named. Without it the command is a usage error (exit 2). The plan's
+  first line names the store.
+- The range is 2026-11-07..2026-11-10 unless `--from` / `--until` change it. A short cell
+  outside it is reported, never repaired.
 - The default is a dry run over two read-only opens: nothing is written. It prints, per harness,
   day and column, the tokens before, after and the change, with events; a TOTAL; `unresolved`
-  (hours with rows and no oracle rows, left alone); `kept` (cells where the store holds more than
+  (hours with rows and no oracle rows, and short groups whose rows are all attributed, left
+  alone and listed with their reason); `kept` (cells where the store holds more than
   the oracle: never subtracted); and `conservation: PASS` or `FAIL` with its reasons. `--json`
   prints the same as one record.
 - Per group (hour, model, machine, repo, branch, precision, summed over actor state),
   `after = max(before, oracle)` per column. Events never change: a group whose events differ
-  fails the run. The top-up goes to the group's evidence-free row, so no hour's evidence sum
-  passes its rollup. Codex and Antigravity must change by 0.
+  fails the run. The top-up goes to the group's evidence-free row (before evidence), so no
+  hour's evidence sum passes its rollup and no token is attributed without a call behind it; a
+  short group with no evidence-free row is left alone and listed as unresolved. Every total
+  (TOTAL, unresolved, kept, outside) adds the six counted columns: `reasoning` is part of
+  `output`, repaired in its own column but never added to a total. Codex and Antigravity must
+  change by 0.
 - Exit: 0 a plan (or applied), 1 conservation failed, 2 usage or unreadable store, 3 nothing to
   repair, 12 the store is from a newer meter.
 - `--apply` is refused without a copy. Take the sync lock's quiet moment, make the copy with
@@ -750,5 +758,8 @@ usagemeter repair --against ORACLE_DIR --apply --copy FILE --confirm-copy SHA256
   `quick_check`, and that it holds as many rollup rows and tokens as the store (after a partly
   done run, the store may hold more). It then takes the sync lock, refuses a newer schema, and
   writes one transaction per day. Each day checks its own conservation inside the transaction and
-  rolls back and stops on a failure; the `meta` key `repair_1126_done` records the last day done.
-  A rerun skips done days, and a second run with nothing left exits 3 and writes nothing.
+  rolls back and stops on a failure; the `meta` key `repair_1126_done` records the last day
+  done, and decides nothing. The plan is rebuilt from the live rows on every run, so a day done
+  earlier (also by a run narrowed to one day) plans 0 and a day not done still plans. An apply
+  that commits fewer days than the plan has exits 1; a run with nothing left exits 3 and writes
+  nothing. The applied days are printed.
