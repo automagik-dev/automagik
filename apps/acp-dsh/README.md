@@ -785,3 +785,22 @@ tool name `acp_tool` are public: Sessions keep them.
 A bridge approval carries `bridgeCall: { agentAsked }`. This is false at the start of each prompt and becomes true when a CLI in its own mode asks permission. A judge may set `bridgeCall.judged = { reason }` when rejecting; the bridge reports `Auto's judge refused <tool>: <reason>.` without attributing it to the person. A mirror approval carries `mirrorCall: { title, kind, input, allowOnce }`, plus `locations` when the call has some, captured from the current permission request immediately before asking. It is plain JSON: DSH passes an approval it does not answer on to its remote approval card only as lossless JSON, so no member is ever `undefined`. A judge may set `mirrorCall.judged = { reason }` when rejecting; the call's result then reads `Auto's judge refused <title>: <reason>.` and the agent gets its own reject option. Only an offered `allow_once` permits an automatic one-shot decision. The person's answer retains the existing `allow_always` fallback.
 
 Codex review events are counted per prompt. When an own-mode prompt ends after three consecutive or ten total refusals, or immediately after a refusal without subsequent activity, an `acp-session` notice with `stop: 'refusals'` explains that replying can continue; refused steps stay refused. The turn finishes as `stop`. Strict prompts keep their existing ending.
+
+Auto and tool deny lists coexist. A list change keeps the mark, moves the permission revision,
+ends the agent sessions and drops outstanding Auto grants. DSH's executor guard refuses denied
+native/API and bridged calls whatever the judge says. Unbridged built-ins and team agents' own
+tools were never covered at Workspace either; they must use DSH's bridge for a deny to reach them.
+
+At asking levels, Automagik's never-auto list covers the existing destructive steps plus secret
+files/token commands, external messages (including plugin `sendsOutside` hooks), shared or
+ambiguous pushes and deletes outside the Bot's folder. Claude Code receives the expressible
+part as session-only ask rules. Outside-folder deletes and ambiguous push targets cannot be
+expressed as Claude wildcard rules; enforcing them needs a bridge or richer agent policy.
+See [RFC 0031's #1092 amendment](../../docs/rfcs/0031-auto-permission-level.md#amendment-2026-11-13-1092)
+for exact boundaries and negative controls.
+
+Unmet dependency: Codex in `agent` mode runs built-ins on its own reviewer's word without
+`session/request_permission` ([capture](test/fixtures/permission-payloads/README.md)). Automagik
+cannot check those steps before they run. Codex/codex-acp needs a mandatory per-session ask
+policy before its reviewer, or a blocking pre-execution request with tool, arguments and cwd.
+Until then, that reviewer is Auto's only check for Codex built-ins.
