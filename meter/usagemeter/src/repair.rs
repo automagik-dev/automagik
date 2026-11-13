@@ -250,6 +250,8 @@ pub struct Report {
     pub coarse: bool,
     pub aliases: Vec<(String, String)>,
     pub group_rows: (usize, usize, usize),
+    /// Hours whose evidence is above the rollup before the repair (the damage), reported.
+    pub damage_hours: Vec<i64>,
     /// The store this plan is for (a path the person gave).
     pub store: String,
     pub failures: Vec<String>,
@@ -326,6 +328,10 @@ impl Report {
                       "events_change": 0},
             "repo_aliases": self.aliases.iter()
                 .map(|(a, b)| json!({"old": a, "new": b})).collect::<Vec<_>>(),
+            "damage_hours_before": {
+                "count": self.damage_hours.len(),
+                "hours": self.damage_hours.iter().map(|h| format_rfc3339(*h)).collect::<Vec<_>>(),
+            },
             "new_rows_created": self.new_rows(),
             "existing_rows_changed": self.changes.len() - self.new_rows(),
             "unresolved": self.unresolved.iter().map(|((h, d), (hours, t))| json!({
@@ -419,6 +425,14 @@ impl Report {
                 .map(|c| c.change.iter().sum::<i64>())
                 .sum::<i64>()
         ));
+        s.push_str(&format!(
+            "damage_hours_before {}: hours whose evidence is above the rollup before the repair \
+             (reported, not a failure; the repair must cover them)\n",
+            self.damage_hours.len()
+        ));
+        for h in &self.damage_hours {
+            s.push_str(&format!("  {}\n", format_rfc3339(*h)));
+        }
         s.push_str(&format!(
             "new rows created: {}; existing rows changed: {}\n",
             self.new_rows(),
@@ -875,7 +889,8 @@ fn plan(
             "{oracle_only} oracle rows in range have no store row (events would change)"
         ));
     }
-    // 3. the evidence sum stays at or under the rollup, before and after.
+    // 3. the evidence sum is at or under the rollup after the repair. Evidence above the rollup
+    // BEFORE it is the damage the repair exists for: reported (`damage_hours`), not a failure.
     let mut roll: BTreeMap<i64, ([i64; 7], [i64; 7])> = BTreeMap::new();
     for (k, g) in &sg {
         if in_range(k.1) {
@@ -895,13 +910,12 @@ fn plan(
     for (hour, ev) in evidence {
         let (b, a) = roll.get(hour).copied().unwrap_or_default();
         if (0..7).any(|i| ev[i] > b[i]) {
-            rep.failures.push(format!(
-                "evidence above the rollup before the repair in hour {hour}"
-            ));
+            rep.damage_hours.push(*hour);
         }
         if (0..7).any(|i| ev[i] > a[i]) {
             rep.failures.push(format!(
-                "evidence above the rollup after the repair in hour {hour}"
+                "evidence above the rollup after the repair in hour {}",
+                format_rfc3339(*hour)
             ));
         }
     }

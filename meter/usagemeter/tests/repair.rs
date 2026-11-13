@@ -473,19 +473,43 @@ fn evidence_sum_stays_under_the_rollup() {
     ev(&fx, 90);
     let d = repair::execute(&fx.opts(&[])).unwrap();
     assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
-    // Evidence above the rollup already: the invariant is broken before the repair, so it fails.
+    // Evidence above the rollup already (the damage), and the top-up covers it: planned and
+    // applied, exit 0, the damage hour reported, 0 hours above the rollup after.
     let fx = Fx::new();
     fx.s("a", "dsh-tui", H8, cols(CR, 100), 5);
     fx.o("a", "dsh-tui", H8, cols(CR, 160), 5);
     ev(&fx, 120);
     let d = repair::execute(&fx.opts(&[])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    let j = d.report.to_json(d.code);
+    assert_eq!(j["damage_hours_before"]["count"], 1);
+    assert_eq!(j["damage_hours_before"]["hours"][0], H8);
+    assert!(d.report.to_text(d.code).contains("damage_hours_before 1"));
+    let c = fx.copy("c.db");
+    let d = repair::execute(&fx.apply_opts(&[], &c)).unwrap();
+    assert_eq!(d.code, exit::OK);
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H8, CR), 160);
+    assert_eq!(repair::execute(&fx.opts(&[])).unwrap().code, exit::NOTHING);
+    // The top-up does not cover the evidence (110 against 120): exit 1, the hour named, and an
+    // apply writes nothing.
+    let fx = Fx::new();
+    fx.s("a", "dsh-tui", H8, cols(CR, 100), 5);
+    fx.o("a", "dsh-tui", H8, cols(CR, 110), 5);
+    ev(&fx, 120);
+    let c = fx.copy("c.db");
+    let h = Fx::db_hash(&fx.store);
+    let d = repair::execute(&fx.apply_opts(&[], &c)).unwrap();
     assert_eq!(d.code, exit::CONSERVATION);
     assert!(
         d.report
             .failures
             .iter()
-            .any(|f| f.contains("evidence above"))
+            .any(|f| f.contains("after the repair") && f.contains(H8)),
+        "{:?}",
+        d.report.failures
     );
+    assert!(d.applied_days.is_empty());
+    assert_eq!(Fx::db_hash(&fx.store), h);
     let _ = HOUR_MS;
 }
 
