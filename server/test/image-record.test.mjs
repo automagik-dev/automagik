@@ -190,6 +190,24 @@ test('server-lane is created as a prerelease, never Latest, when missing', () =>
   assert.ok(calls.some((c) => c.startsWith('release upload server-lane') && c.includes('--clobber')))
 })
 
+// A release's target is a branch or a commit, never a tag: the lane's own tag does not exist yet,
+// and every sibling lane (herdr, plugin, pocket, am, meter) is created on dev.
+test('the bootstrap creates server-lane on dev, as every sibling lane does', () => {
+  const argv = []
+  const gh = fakeGh({ source: stable, calls: [] })
+  postServerLane(input(rec('3.94.0').file), (args) => {
+    argv.push(args)
+    return gh(args)
+  })
+  const creates = argv.filter((args) => args[0] === 'release' && args[1] === 'create')
+  assert.equal(creates.length, 1)
+  const [create] = creates
+  assert.deepEqual(create.slice(0, 9),
+    ['release', 'create', 'server-lane', '--repo', 'o/r', '--target', 'dev', '--prerelease', '--latest=false'])
+  assert.deepEqual([create[9], create[11], create.length], ['--title', '--notes', 13])
+  assert.ok(!create.some((arg) => /^v\d/.test(arg)))
+})
+
 test('server-lane replaces an older record, keeps a newer one, and never moves for a prerelease', () => {
   const older = rec('3.93.0')
   let calls = []

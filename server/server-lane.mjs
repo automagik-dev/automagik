@@ -1,4 +1,5 @@
-// The record job holds the server-lane concurrency group for this entire read/compare/write.
+// The server-lane job (.github/workflows/server-image.yml) holds the server-lane concurrency
+// group for this entire read/compare/write.
 // Only a confirmed 404 bootstraps the rolling release; an unreadable existing pointer stops it.
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
@@ -48,7 +49,7 @@ export function postServerLane({ repo, content, image, file }, gh = ghCommand) {
       if (next[i] > current[i]) break
     }
   } else {
-    command(['release', 'create', 'server-lane', '--repo', repo, '--target', `v${content}`,
+    command(['release', 'create', 'server-lane', '--repo', repo, '--target', 'dev',
       '--prerelease', '--latest=false', '--title', 'Automagik server lane',
       '--notes', 'server-image.json names the newest stable server image. Verify its build provenance before pulling by digest; see server/README.md.'])
   }
