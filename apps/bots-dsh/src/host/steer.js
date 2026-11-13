@@ -76,11 +76,14 @@ export function install(rt) {
     return `${body}${body.length > 0 && !body.endsWith('\n') ? '\n' : ''}${notice}`
   }
 
+  // A notice is a user message, and the redaction listeners read tool results and model
+  // requests only: a saved value in the output is replaced here, as it is in a tool result.
+  const clean = text => rt.redactSecrets?.(text) ?? text
   const noticeOf = (name, command, text) => createUserMessage({
-    content: [{ type: 'text', text }],
+    content: [{ type: 'text', text: clean(text) }],
     // Same source as DSH's job-completion notice so every chat renders it the
     // same way, and Omni's routing ignores it.
-    source: { kind: 'tool-jobs', form: 'notice', summary: boundContextSummary(`${name} ${command} …`) },
+    source: { kind: 'tool-jobs', form: 'notice', summary: boundContextSummary(clean(`${name} ${command} …`)) },
   })
 
   const detachAfter = (jobId, args, exec, def, native, label) => {

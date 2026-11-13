@@ -292,6 +292,41 @@ test('shell shadow: a native promoted after detach injects only with output', as
   await stop()
 })
 
+// The later notice of a detached call is a user message, not a tool result: a saved secret's
+// value in the output is replaced by its label in each of the three notices.
+test('shell shadow: a saved secret in the output is replaced in every notice', async () => {
+  const value = `sample-${'Zx9'.repeat(8)}`
+  const flow = async (settle, kind, status = 'idle') => {
+    const { emit, stop, rt, agent, calls, shadowOf } = await start({ services: { jobs: jobsService(jobId => ({
+      job: { id: jobId, status: 'running', output: { spillPaths: [] } }, lossy: false, chunks: [{ text: 'starting', channel: 'stdout' }],
+    })) } })
+    await rt.secretEndpoint('secret-set', { name: 'SAMPLE_TOKEN', value, scope: [] })
+    await emit('dm-a', 'turn/start', { turn: 1 })
+    rt.shadowShells(agent)
+    const shadow = shadowOf()
+    const pending = shadow.execute({ command: `curl -H ${value}` }, execOf(agent))
+    await emit('dm-a', 'agent/inbox/spliced', { target: 'next-step', inserted: [userMessage('hurry')] })
+    await emit('dm-a', 'job/registered', { jobId: 'j1', toolCall: { callId: 'c1' } })
+    assert.equal((await pending).kind, 'promoted')
+    agent.status = status
+    settle(shadow.calls[0])
+    await new Promise(r => setTimeout(r, 0))
+    const notice = calls.find(c => c[0] === kind)?.[1]
+    await stop()
+    assert.ok(notice !== undefined, kind)
+    assert.equal(notice.source.kind, 'tool-jobs')
+    assert.equal(JSON.stringify(notice).includes(value), false, 'the value is in the notice')
+    return notice.content[0].text
+  }
+  const out = `Authorization: Bearer ${value}`
+  assert.equal(await flow(call => call.res({ kind: 'foreground', exitCode: 0, stdout: { text: out } }), 'followup'),
+    'background job j1 (pwsh: curl -H [secret:SAMPLE_TOKEN]) finished:\nexit 0 out:Authorization: Bearer [secret:SAMPLE_TOKEN]')
+  assert.match(await flow(call => call.res({ kind: 'promoted', jobId: 'j1', output: out }), 'inject', 'running'),
+    /is still running\. Output since your last read:\nAuthorization: Bearer \[secret:SAMPLE_TOKEN\]$/)
+  assert.match(await flow(call => call.rej(new Error(`refused: ${out}`)), 'followup'),
+    /failed: refused: Authorization: Bearer \[secret:SAMPLE_TOKEN\]$/)
+})
+
 test('shell shadow: bash is shadowed the same way', async () => {
   const def = shellDef('bash')
   const { emit, stop, rt, agent, calls, } = await start({ services: { jobs: jobsService(jobId => ({
