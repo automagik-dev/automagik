@@ -30,11 +30,19 @@ function setArch(){ if (!archCv || calm || !window.ArcaMotion) return; clearTime
 function theme(from){ var t = from && from.closest('[data-theme]'), v = t ? t.getAttribute('data-theme') : null;      /* the drawer wears the world it is opened in */
   [dr, scrim, world].forEach(function(e){ if (!e) return; if (v) e.setAttribute('data-theme', v); else e.removeAttribute('data-theme'); }); }
 function isOpen(){ return root.classList.contains('is-family-open'); }
+/* the drawer's pictures are not among the page's own requests: each carries its address in data-src (or data-srcset) and gets it when its
+   layer is shown, and only if the picture itself is shown (the ones for the other ground stay without an address until that ground is used).
+   (A browser's own lazy loading was not enough: WebKitGTK fetched a hidden picture chosen by a <source>.) Call it once the layer is in the page. */
+function shown(x){ return x.getClientRects().length > 0; }
+function fill(box){ if (!box) return;
+  [].forEach.call(box.querySelectorAll('[data-srcset]'), function(s){ if (!shown(s.parentNode)) return; s.setAttribute('srcset', s.getAttribute('data-srcset')); s.removeAttribute('data-srcset'); });
+  [].forEach.call(box.querySelectorAll('img[data-src]'), function(i){ if (!shown(i)) return; i.setAttribute('src', i.getAttribute('data-src')); i.removeAttribute('data-src'); }); }
+function stops(){ return [].filter.call(dr.querySelectorAll('a[href], button, [tabindex="0"]'), function(x){ return x.offsetParent !== null; }); }
 /* the hole in the veil, where the button stands once the page is pushed aside: the button's place at rest plus the drawer's width
    (the page's wrapper is taken to start at the window's left edge) */
 function hole(){ if (!scrim || !last) return; var r = last.getBoundingClientRect(), at = page ? page.getBoundingClientRect().left : 0;
   scrim.style.setProperty('--fam-bx', Math.round(r.left - at + dr.getBoundingClientRect().width + r.width / 2) + 'px'); scrim.style.setProperty('--fam-by', Math.round(r.top + r.height / 2) + 'px'); }
-function open(from){ clearTimeout(timer); last = from || openers[0] || null; theme(last); dr.hidden = false; if (scrim) scrim.hidden = false;
+function open(from){ clearTimeout(timer); last = from || openers[0] || null; theme(last); dr.hidden = false; if (scrim) scrim.hidden = false; fill(dr);
   hole(); dr.getBoundingClientRect(); root.classList.add('is-family-open'); root.style.overflow = 'hidden';
   openers.forEach(function(o){ o.setAttribute('aria-expanded', 'true'); }); dr.focus({ preventScroll: true }); away(true); setArch(); }
 function close(keep){ if (!isOpen()) return; root.classList.remove('is-family-open'); away(false);
@@ -80,14 +88,23 @@ dr.addEventListener('click', function(e){
   world.style.setProperty('--fam-x', Math.round(r.left + r.width / 2) + 'px'); world.style.setProperty('--fam-y', Math.round(r.top + r.height / 2) + 'px');
   var n = world.querySelector('[data-family-world-name]'), l = world.querySelector('[data-family-world-line]');
   if (n) n.textContent = it.getAttribute('data-family-product'); if (l) l.textContent = it.getAttribute('data-family-line') || '';
-  world.hidden = false; world.getBoundingClientRect(); world.classList.add('is-in');
+  world.hidden = false; fill(world); world.getBoundingClientRect(); world.classList.add('is-in');
   setTimeout(function(){ close(true); if (!stay) window.location.href = href; else { away(true); var b = world.querySelector('[data-family-back]'); if (b) b.focus({ preventScroll: true }); } }, calm ? 0 : 700); });
 if (world) world.addEventListener('click', function(e){ if (!e.target.closest('[data-family-back]')) return;
   var o = openers[0]; if (o){ var r = o.getBoundingClientRect(); world.style.setProperty('--fam-x', Math.round(r.left + r.width / 2) + 'px'); world.style.setProperty('--fam-y', Math.round(r.top + r.height / 2) + 'px'); }
   world.classList.remove('is-in'); setTimeout(function(){ world.hidden = true; away(false); if (o) o.focus({ preventScroll: true }); }, calm ? 0 : 700); });
 document.addEventListener('keydown', function(e){
   if (e.key === 'Escape'){ if (world && !world.hidden && world.classList.contains('is-in')){ var b = world.querySelector('[data-family-back]'); if (b) b.click(); } else close(); return; }
-  if (e.key !== 'Tab' || !isOpen()) return;
-  var f = [].filter.call(dr.querySelectorAll('a[href], button, [tabindex="0"]'), function(x){ return x.offsetParent !== null; }), first = f[0], end = f[f.length - 1], at = document.activeElement;
-  if (e.shiftKey && (at === first || at === dr)){ e.preventDefault(); end.focus(); } else if (!e.shiftKey && at === end){ e.preventDefault(); first.focus(); } });
+  if (!(e.key === 'Tab' || e.keyCode === 9) || !isOpen()) return;
+  var f = stops(), first = f[0], end = f[f.length - 1], at = document.activeElement, out = !at || at === dr || !dr.contains(at);      /* out: the focus is on the drawer itself or has left it */
+  if (!first) return;
+  if (e.shiftKey && (at === first || out)){ e.preventDefault(); end.focus(); } else if (!e.shiftKey && (at === end || out)){ e.preventDefault(); first.focus(); } });
+/* a second hold on the focus, for a browser whose Shift+Tab does not reach the lines above (WebKitGTK rested one stop on nothing): when the
+   keyboard takes the focus out of the drawer to nowhere, it goes on to the other end at once (off the first stop: the last; off the last: the first) */
+var keyed = false;
+document.addEventListener('keydown', function(){ keyed = true; }, true);
+document.addEventListener('pointerdown', function(){ keyed = false; }, true);
+dr.addEventListener('focusout', function(e){ if (!keyed || !isOpen() || (e.relatedTarget && dr.contains(e.relatedTarget))) return; var from = e.target;
+  setTimeout(function(){ var at = document.activeElement; if (!isOpen() || (at && at !== document.body && at !== root)) return;
+    var f = stops(); if (!f.length) return; (from === f[0] ? f[f.length - 1] : from === f[f.length - 1] ? f[0] : dr.contains(from) && from.offsetParent !== null ? from : f[0]).focus(); }, 0); });
 })();

@@ -105,6 +105,10 @@
 .fam > .eyebrow { padding-left: calc(var(--lock) * 321.34 / 264); }      /* the label stands in the names' column */
 .fam-word.is-mykes img { height: calc(var(--lock) * 257 / 264); margin-top: calc(var(--lock) * 7 / 264); }      /* its file's frame is 257 high where the others are 264, on the same line */
 .fam-item.is-word .fam-words { gap: 0; } .fam-item.is-word .fam-words > span:last-child { padding-left: calc(var(--lock) * 22 / 264); }
+/* a host that IS Automagik: its two app buttons stand in the top block, under the link; and a product listed by its logo (Arca on another
+   host's page) has its line in the names' column */
+.fam-here-block .fam-apps { padding: var(--space-8) var(--space-13) 0; }
+.fam-item.is-logo .fam-words > span:last-child { padding-left: calc(var(--lock) * 321.34 / 264); }
 /* where you are: the host product's own logo, whole, and its line */
 .fam-words .fam-logo { display: block; margin-bottom: var(--space-8); color: var(--text); } .fam-logo svg { display: block; height: calc(var(--lock) * 0.7); width: auto; fill: currentColor; }
 /* where you are: a bar at the edge, and the words */

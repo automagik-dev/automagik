@@ -175,11 +175,6 @@ html:has(.sheet:popover-open) :is(.top,main,.site-footer,.skip){interactivity:in
   .fam-lockup .fam-lock-cream{display:none}
 }
 .fam-world{background:var(--bg);color:var(--text)}
-/* The host is Automagik (the package's issue 11b). Its two rules for this case are in its
-   README, not in family.css, for the host to add: Desktop and Mobile get the top block's side
-   room, and the line under a row shown by its logo (Arca) stands in the names' column. */
-.fam-here-block .fam-apps{padding:var(--space-8) var(--space-13) 0}
-.fam-item.is-logo .fam-words>span:last-child{padding-left:calc(var(--lock) * 321.34 / 264)}
 /* The classes the piece borrows: the label, the quiet link and the small ghost button, as
    this site draws a label, a footer link and its small secondary button. */
 .fam>.eyebrow{margin-bottom:0}

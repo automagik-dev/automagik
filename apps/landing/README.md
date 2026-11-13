@@ -42,8 +42,9 @@ everywhere; it is the `products` list in `scripts/build-pages.mjs`.
 ## The family drawer
 
 The menu button and the drawer it opens are the product family's shared piece: Arca's
-drawer package, issue 11, approved by the owner on 2026-11-12, as issue 11c gives it (the
-same piece, with the case where the host is Automagik answered). `assets/family/` holds the
+drawer package, issue 11, approved by the owner on 2026-11-12, as issue 12 gives it (the
+same look, with the case where the host is Automagik answered and two faults found with
+real keys fixed). `assets/family/` holds the
 piece as it was given (`family.html`, `header-button.html`, `family.css`, `family.js`) and
 its art, all byte copies; `assets/family/SOURCE.md` lists each file's source and SHA-256,
 and `landing.test.mjs` pins them. Never edit a copy: a change is asked of the piece's
@@ -59,8 +60,15 @@ author and arrives as a new issue, which is a file swap with new digests.
   out, its Desktop and Mobile buttons move into the top block, and Arca, which the piece
   has in the top block on Arca's site, is the first row of Products, by its logo
   (`arca-logo-b.svg`, written into the page so it takes the text colour). The two style
-  rules this needs are in the package's README, not in `family.css`; they are in
-  `styles.css`, word for word.
+  rules this needs are in the piece's own `family.css`.
+- **A closed drawer fetches nothing**: every picture in it carries its address in
+  `data-src` or `data-srcset`, and the piece's script gives a picture its address when it
+  is shown (on a first open, the lockup and the three words for the ground in view). The
+  builder fills the same slots, in those attributes, and writes no `src` there. With script
+  off the drawer never opens, so its pictures are never needed.
+- **The keyboard stays in it**: Enter or Space opens it, Tab and Shift+Tab go round its
+  stops (Shift+Tab from the first goes to Close), Escape closes it and the focus returns to
+  the button.
 - **How it is built in**: `family(route)` in `scripts/build-pages.mjs` reads the piece's
   file and writes it into every page with its comments left out, its slots filled, and this
   site's own parts in the places the piece gives a host: the top block, the list under it
