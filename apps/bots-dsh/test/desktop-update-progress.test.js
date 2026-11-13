@@ -180,9 +180,7 @@ test('#1240: on an app from before the check, every pill is held while plugins a
   const staged = (app, plugins = pump) => ({ ...app, app, plugins })
   const appStates = [
     ['checking', staged({ phase: 'checking' }), ['Checking for updates…', plugLabel]],
-    ['available', staged({ phase: 'available', version: '3.96.0' }), ['Automagik 3.96.0 is out', plugLabel]],
     ['downloading', staged({ phase: 'downloading', version: '3.96.0', percent: 30 }), ['Updating · 30%', plugLabel]],
-    ['ready', staged({ phase: 'ready', version: '3.96.0' }), ['Restart to update to 3.96.0']],
     ['installing', staged({ phase: 'installing', version: '3.96.0' }), ['Installing the update…']],
     // The Retry states: a failed check, download or verification.
     ['a failed check', staged({ phase: 'error', failure: 'check' }), ['Update check failed · Retry', plugLabel]],
@@ -252,6 +250,32 @@ test('#1240: a modern app keeps every pill\'s ordinary behaviour', () => {
     assert.deepEqual(opened, ['open', 'plugins'])
   } finally {
     delete omniDesktop.updates.check
+  }
+})
+
+test('#1240: on an app from before the check, the labelled app pill stays live with plugins staged', () => {
+  const staged = (app, plugins = pump) => ({ ...app, app, plugins })
+  for (const [why, app, label, count] of [
+    ['an update is out', { phase: 'available', version: '3.96.0' }, 'Automagik 3.96.0 is out', 2],
+    ['an update is ready', { phase: 'ready', version: '3.96.0' }, 'Restart to update to 3.96.0', 1],
+  ]) {
+    opened.length = 0
+    const buttons = drawnPills(staged(app))
+    assert.equal(buttons.length, count, why)
+    // The app's labelled pill is not the plugin path, and About keeps it live: its click restarts
+    // into the app update or opens its release page, with staged plugins untouched.
+    assert.equal(labelOf(buttons[0]), label, why)
+    assert.equal(buttons[0].props.className, 'bt-desk-update bt-desk-update-go', why)
+    assert.equal(buttons[0].props.disabled, false, why)
+    buttons[0].props.onClick()
+    assert.deepEqual(opened, ['open'], why)
+    // The plugins' pill beside it (shown while the app update is out) is still held.
+    if (count === 2) {
+      assert.equal(labelOf(buttons[1]), plugLabel, why)
+      assert.equal(buttons[1].props.disabled, true, why)
+      buttons[1].props.onClick()
+      assert.deepEqual(opened, ['open'], why)
+    }
   }
 })
 

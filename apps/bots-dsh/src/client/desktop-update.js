@@ -173,13 +173,17 @@ export function DesktopUpdate() {
   if (!appPill && !plugPill) return null
   // An app from before `check` (v3.120.0) has only `open`, and `applyPlugins`/`open` put staged
   // plugins in at once, restarting DSH under the agents at work (#1029, #1240). The same rule as
-  // About's Check for updates holds both pills while plugins are staged or coming, or before the
-  // app has said anything; the labels stay as they are, so the hold changes only what a click does.
+  // About's Check for updates holds the plugins' pill and the app's check/Retry pill while plugins
+  // are staged or coming, or before the app has said anything. The app's labelled pill (an update
+  // ready or out) stays live, as About keeps it: in that app `open` restarts into the app update,
+  // or opens its release page, without putting staged plugins in. The labels stay as they are, so
+  // the hold changes only what a click does.
   const held = opensIntoPlugins(bridge, state)
-  const open = () => { if (held || BUSY.has(app.phase)) return; void bridge.open().catch(() => {}) }
+  const appHeld = held && !appPill?.primary
+  const open = () => { if (appHeld || BUSY.has(app.phase)) return; void bridge.open().catch(() => {}) }
   const apply = () => { if (held || BUSY.has(plugins?.phase)) return; void (bridge.applyPlugins ?? bridge.open)().catch(() => {}) }
   return h('div', { className: 'bt-desk-updates' },
-    appPill ? h(Pill, { pill: appPill, busy: BUSY.has(app.phase), held, percent: app.phase === 'downloading' ? app.percent ?? 0 : undefined, onClick: open }) : null,
+    appPill ? h(Pill, { pill: appPill, busy: BUSY.has(app.phase), held: appHeld, percent: app.phase === 'downloading' ? app.percent ?? 0 : undefined, onClick: open }) : null,
     plugPill ? h(Pill, { pill: plugPill, busy: BUSY.has(plugins.phase), held, percent: plugins.phase === 'downloading' ? plugins.percent ?? 0 : undefined, onClick: apply }) : null)
 }
 

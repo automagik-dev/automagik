@@ -17073,8 +17073,9 @@ function DesktopUpdate() {
   const plugPill = pluginPill(plugins);
   if (!appPill && !plugPill) return null;
   const held = opensIntoPlugins(bridge, state);
+  const appHeld = held && !appPill?.primary;
   const open = () => {
-    if (held || BUSY.has(app.phase)) return;
+    if (appHeld || BUSY.has(app.phase)) return;
     void bridge.open().catch(() => {
     });
   };
@@ -17086,7 +17087,7 @@ function DesktopUpdate() {
   return (0, import_react39.createElement)(
     "div",
     { className: "bt-desk-updates" },
-    appPill ? (0, import_react39.createElement)(Pill, { pill: appPill, busy: BUSY.has(app.phase), held, percent: app.phase === "downloading" ? app.percent ?? 0 : void 0, onClick: open }) : null,
+    appPill ? (0, import_react39.createElement)(Pill, { pill: appPill, busy: BUSY.has(app.phase), held: appHeld, percent: app.phase === "downloading" ? app.percent ?? 0 : void 0, onClick: open }) : null,
     plugPill ? (0, import_react39.createElement)(Pill, { pill: plugPill, busy: BUSY.has(plugins.phase), held, percent: plugins.phase === "downloading" ? plugins.percent ?? 0 : void 0, onClick: apply2 }) : null
   );
 }
