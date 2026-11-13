@@ -147,15 +147,17 @@ function blockBrowser() {
  * onReady(id, selected, { existing }) is told a confirmed sign-in; `existing` says the CLI was
  * already signed in when the attempt started (no one signed in through it).
  * onFail({ id, cause, phase, exit? }) is told an attempt that failed, as a class for the log.
+ * record lets tests exercise ownership proof with a fake process.
  */
 export class CliLogins {
-  constructor({ resolve, signedIn = signedInOf, onReady = () => {}, onChange = () => {}, onFail = () => {}, spawn = spawnProcess, now = Date.now, linkTtlMs = LINK_TTL_MS, startupMs = STARTUP_MS, answerMs = ANSWER_TIMEOUT_MS, retainMs = RETAIN_MS, stateTtlMs = STATE_TTL_MS, timers = globalThis } = {}) {
+  constructor({ resolve, signedIn = signedInOf, onReady = () => {}, onChange = () => {}, onFail = () => {}, spawn = spawnProcess, record = spawn === spawnProcess ? recordLogin : () => undefined, now = Date.now, linkTtlMs = LINK_TTL_MS, startupMs = STARTUP_MS, answerMs = ANSWER_TIMEOUT_MS, retainMs = RETAIN_MS, stateTtlMs = STATE_TTL_MS, timers = globalThis } = {}) {
     this.resolve = resolve
     this.signedIn = signedIn
     this.onReady = onReady
     this.onChange = onChange
     this.onFail = onFail
     this.spawn = spawn
+    this.record = record
     this.now = now
     this.linkTtlMs = linkTtlMs
     this.startupMs = startupMs
@@ -362,7 +364,7 @@ export class CliLogins {
     }
     // Write the pending record before spawning: a crash before PID persistence cannot let
     // recovery assume that no vendor started. Only verified full-tree exit clears it.
-    const ownership = this.spawn === spawnProcess ? recordLogin(env) : undefined
+    const ownership = this.record(env)
     let owned
     try {
       owned = process.platform === 'win32' && this.spawn === spawnProcess

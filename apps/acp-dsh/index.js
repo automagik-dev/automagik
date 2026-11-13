@@ -123,6 +123,7 @@ export function nodeCommand() {
  * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string, loginSpawn?: typeof spawn, loginTimers?: any, imageSetup?: (launch: any) => Promise<any> }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  *   loginSpawn, loginTimers: tests only, a fake CLI process and clock for sign-in attempts.
+ *   loginRecord: tests only, ownership records with a fake sign-in process.
  *   checkTimers: tests only, the clock of the retries after a connector check that failed.
  *   imageSetup: tests only, the image run's lockdown check (image.js imageSetup).
  *   account: reads which account a signed-in CLI is on (account.js); consentFile: where the
@@ -135,7 +136,7 @@ export function apply(ctx, config = {}, {
   cliStore,
   find = name => findCommand(name), signedIn = signedInOf,
   catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined,
-  loginSpawn, loginTimers, imageSetup, account = accountOf,
+  loginSpawn, loginTimers, loginRecord, imageSetup, account = accountOf,
   cliHome = store.home ? join(dirname(store.home), 'cli-homes') : undefined,
   consentFile = cliHome ? join(cliHome, CONSENT_FILE)
     : typeof store.home === 'string' && store.home === adaptersHome()
@@ -154,6 +155,13 @@ export function apply(ctx, config = {}, {
   }
   const accountChanges = new Set()
   const loginLocks = new Set()
+  let restarting = false
+  let preparingRestart
+  // The preparation finished: its stops are proved, so dispose has nothing left to stop.
+  let prepared = false
+  const restartGuard = () => {
+    if (restarting) throw accountFailure('busy', 'Automagik is restarting.')
+  }
   const authVersions = new Map()
   const agents = new Map()
   const log = message => info(ctx, message)
@@ -879,9 +887,11 @@ export function apply(ctx, config = {}, {
       warn(ctx, `sign-in to ${AGENTS[id]?.defaultName ?? id} failed: ${cause} (${phase}${exit === undefined ? '' : `, ${exit}`}; ${cli})`)
     },
     ...(loginSpawn ? { spawn: loginSpawn } : {}),
+    ...(loginRecord ? { record: loginRecord } : {}),
     ...(loginTimers ? { timers: loginTimers, now: () => loginTimers.now() } : {}),
     signedIn,
     resolve(id) {
+      restartGuard()
       if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
       reconcile({ kick: false })
       attemptVersions.set(id, cliDetails.get(id)?.version)
@@ -891,7 +901,7 @@ export function apply(ctx, config = {}, {
     // sign-in the person made here is their word for that account; an existing one waits for
     // `accountConfirm`, and until then nothing is announced, so no chosen model is applied.
     async onReady(id, selected, { existing = false } = {}) {
-      if (disposed || accountChanges.has(id)) return
+      if (disposed || restarting || accountChanges.has(id)) return
       const version = authVersions.get(id)
       const same = clis.get(id) === selected.cli && (!homes
         || selected.env[HOME_ENV] === homes.home(AGENTS[id].key))
@@ -901,7 +911,7 @@ export function apply(ctx, config = {}, {
       nextEpoch(id)
       if (same && consents !== undefined) {
         const who = await Promise.resolve().then(() => account(AGENTS[id], selected.cli, { env: selected.env })).catch(() => undefined)
-        if (disposed || accountChanges.has(id) || authVersions.get(id) !== version) return
+        if (disposed || restarting || accountChanges.has(id) || authVersions.get(id) !== version) return
         if (!existing) consents.confirm(id, who)
         noteAccount(id, true, who)
       }
@@ -919,7 +929,7 @@ export function apply(ctx, config = {}, {
       }
     },
     onChange(active) {
-      for (const id of loginLocks) {
+      for (const id of restarting ? [] : loginLocks) {
         if (logins.current(id)) continue
         loginLocks.delete(id)
         homes.end(AGENTS[id].key)
@@ -959,6 +969,7 @@ export function apply(ctx, config = {}, {
     }
   }
   async function confirmAccount(id, ref) {
+    restartGuard()
     if (disposed) throw accountFailure('disposed', 'Automagik is restarting. Try again.')
     if (!consentIds.includes(id)) throw accountFailure('invalid', `Choose ${consentIds.map(other => AGENTS[other].defaultName).sort().join(' or ')}.`)
     if (consents === undefined) throw accountFailure('unavailable', 'This installation keeps no account record.')
@@ -984,6 +995,7 @@ export function apply(ctx, config = {}, {
   }
 
   async function signOutAccount(id) {
+    restartGuard()
     if (!homes || !consentIds.includes(id) || disposed) {
       throw accountFailure('unavailable', 'The Bot account cannot be changed here.')
     }
@@ -1031,6 +1043,7 @@ export function apply(ctx, config = {}, {
   }
 
   async function resetAccount(id) {
+    restartGuard()
     if (!homes || !consentIds.includes(id) || disposed) {
       throw accountFailure('unavailable', 'The Bot account cannot be changed here.')
     }
@@ -1069,16 +1082,19 @@ export function apply(ctx, config = {}, {
   }
 
   async function startLogin(id, label, alreadySignedOut = false) {
+    restartGuard()
     if (!homes || !consentIds.includes(id)) return logins.start(id, { label })
     if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
     const current = logins.current(id)
     if (current) return current
     const spec = AGENTS[id]
     if (!alreadySignedOut) await inspect(id)
+    restartGuard()
     if (!alreadySignedOut && signIns.get(id) === true && !homes.paused(spec.key)) {
       return logins.start(id, { label })
     }
     if (!alreadySignedOut) await signOutAccount(id)
+    restartGuard()
     homes.begin(spec.key)
     loginLocks.add(id)
     authVersions.set(id, (authVersions.get(id) ?? 0) + 1)
@@ -1162,6 +1178,41 @@ export function apply(ctx, config = {}, {
     }
   }
 
+  // Only proved stops release the locks. Paused homes stay paused for the next sign-in.
+  function prepareRestart() {
+    if (preparingRestart) return preparingRestart
+    restarting = true
+    const timers = loginTimers ?? globalThis
+    let expired = false
+    let step = 'logins'
+    let timer
+    const work = async () => {
+      await Promise.all(consentIds.map(id => logins.stop(id)))
+      if (accountChanges.size > 0) return { ok: false, step: 'accounts' }
+      if (expired) return { ok: false, step }
+      step = 'runs'
+      adapter.dispose()
+      for (const agent of agents.values()) agent.catalog?.dispose()
+      if (homes) await Promise.all(consentIds.map(id => stopRuns(homes.home(AGENTS[id].key))))
+      if (expired) return { ok: false, step }
+      step = 'homes'
+      for (const id of loginLocks) {
+        homes.end(AGENTS[id].key)
+        loginLocks.delete(id)
+      }
+      homes?.dispose()
+      prepared = true
+      return { ok: true }
+    }
+    preparingRestart = Promise.race([
+      Promise.resolve().then(work).catch(() => ({ ok: false, step })),
+      new Promise(resolve => {
+        timer = timers.setTimeout(() => { expired = true; resolve({ ok: false, step }) }, 4500)
+      }),
+    ]).finally(() => timers.clearTimeout(timer))
+    return preparingRestart
+  }
+
   const service = {
     ...(homes ? { authScope: 'isolated' } : {}),
     settingsEntry: name,
@@ -1169,8 +1220,10 @@ export function apply(ctx, config = {}, {
     // Sign-in, for the DSH owner's views only (the Bot team's owner-only route): never tools,
     // never listed by status(), and nothing here writes into a conversation or a model setting.
     // `label` names the view that opens an attempt (a Bot id) for the cancel confirmation.
-    loginStart: (id, { label } = {}) => homes && consentIds.includes(id)
-      ? startLogin(id, label) : logins.start(id, { label }),
+    loginStart: (id, { label } = {}) => {
+      restartGuard()
+      return homes && consentIds.includes(id) ? startLogin(id, label) : logins.start(id, { label })
+    },
     accountSignOut: id => signOutAccount(id),
     accountReset: id => resetAccount(id),
     accountRecovery: id => ({ required: !!(homes && consentIds.includes(id)
@@ -1188,6 +1241,7 @@ export function apply(ctx, config = {}, {
     loginTextMatches: text => logins.textMatches(text),
     /** How many sign-in attempts are starting or waiting (the busy signal). */
     loginActive: () => logins.activeAttempts(),
+    prepareRestart,
     /**
      * Which account an agent's CLI is signed in to, for the DSH owner's views only (#869): never
      * tools, never a status or inspect row, a log or an event. { id, signedIn?, consent?, ref?,
@@ -1422,7 +1476,7 @@ export function apply(ctx, config = {}, {
     store.dispose?.()
     cliStore?.dispose?.()
     adapter.dispose()
-    if (homes) {
+    if (homes && !prepared) {
       void Promise.all(consentIds.map(async id => {
         await logins.stop(id)
         await stopRuns(homes.home(AGENTS[id].key))
