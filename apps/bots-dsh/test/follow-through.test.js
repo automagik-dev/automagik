@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { afterRound } from './relay-rows.js'
 import { setTimeout as realDelay } from 'node:timers/promises'
-import { createRuntime } from '../index.js'
+import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 import { immediate, until } from './until.js'
 import { stripWrittenCalls, writesToolCall } from '../src/host/turns.js'
@@ -61,14 +61,15 @@ async function start(home, logs, inspect) {
   let route
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
-  rt = createRuntime(ctx, { home })
+  apply(ctx, { home })
+  rt = ctx.provided.get('omniTeam')
   let seq = 0
   const emit = (id, type, data) => {
     // A Session already resolved by the test stands in for the one DSH emits, so a
     // test can give it a route or a size; otherwise only the id is known.
     const session = agents.get(id)?.session ?? { id }
     for (const listener of ctx.listeners.get('session/event') ?? []) {
-      if (listener.length >= 2) listener(agents.get(id)?.session ?? { id }, { type, seq: ++seq, data })
+      if (listener.length >= 2) listener(session, { type, seq: ++seq, data })
     }
   }
   const tool = (name, args, sessionId, exec = {}) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId }, ...exec })
@@ -230,7 +231,7 @@ test('when only Omni restarts, a turn still running or finished meanwhile is not
   assert.deepEqual([third.agentOf('b').calls[0].source.exchangeId, third.agentOf('a').calls.length], ['x1', 0])
 })
 
-// Chief asks Writer for the plan; Writer's turn takes it up and the work waits.
+// Omni asks Writer for the plan; Writer's turn takes it up and the work waits.
 const askWriter = async (host, home) => {
   await host.tool('message_bot', { to: 'Writer', message: 'Draft the plan' }, 'a')
   const request = host.agentOf('b').calls[0]
@@ -275,14 +276,14 @@ for (const role of ['reply', 'report', 'resume']) {
   })
 }
 
-test('an answer a turn produced while DS Bot was not watching goes to the Bot that waits for it, once', async (t) => {
+test('an answer a turn produced while Omni was not watching goes to the Bot that waits for it, once', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const home = freshHome(t)
   const logs = new Map()
   const first = await start(home, logs)
   const request = await askWriter(first, home)
   const exchangeId = request.source.exchangeId
-  // Writer answers, and DS Bot restarts before it sees the end of that turn.
+  // Writer answers, and Omni restarts before it sees the end of that turn.
   logs.set('b', writerLog(request, 'The plan is ready.'))
   await first.stop()
 
@@ -297,7 +298,7 @@ test('an answer a turn produced while DS Bot was not watching goes to the Bot th
   await settleState(t, home, () => stateOf(home).works?.[exchangeId] === undefined)
   assert.equal(second.agentOf('b').calls.length, 0)
 
-  // Chief reads the answer; another restart finds nothing left to settle.
+  // Omni reads the answer; another restart finds nothing left to settle.
   second.emit('a', 'user/message', { content: reply.content, source: reply.source })
   await settleState(t, home, () => Object.keys(notes(home).queued ?? {}).length === 0)
   await second.stop()
@@ -457,7 +458,7 @@ test('the answer that goes up keeps what came back for the work', async (t) => {
   const home = freshHome(t, state)
   const logs = new Map()
   const first = await start(home, logs)
-  const request = { content: [{ type: 'text', text: '[Message from Chief]\nDraft the plan' }], source: { kind: 'bot', form: 'relay', role: 'request', exchangeId: 'x1', senderName: 'Chief', senderSessionId: 'a', hop: 0 } }
+  const request = { content: [{ type: 'text', text: '[Message from Omni]\nDraft the plan' }], source: { kind: 'bot', form: 'relay', role: 'request', exchangeId: 'x1', senderName: 'Omni', senderSessionId: 'a', hop: 0 } }
   run(first, 'b', 1, request)
   await settle(() => inflight(home).b?.trigger?.exchangeId === 'x1')
   logs.set('b', writerLog(request, 'The plan is ready.'))
@@ -483,7 +484,7 @@ test('an answer that already went up is not sent again', async (t) => {
   const request = await askWriter(first, home)
   const exchangeId = request.source.exchangeId
   logs.set('b', writerLog(request, 'The plan is ready.'))
-  // Chief already has the answer: another run delivered it.
+  // Omni already has the answer: another run delivered it.
   logs.set('a', [{ type: 'user/message', seq: 1, data: { source: { kind: 'bot', role: 'reply', replyTo: exchangeId, senderSessionId: 'b' }, content: [{ type: 'text', text: '[Reply from Writer]\nThe plan is ready.' }] } }])
   await first.stop()
 
@@ -501,7 +502,7 @@ test('a work that still waits for what it handed on holds its text, and is not s
   const home = freshHome(t, state)
   const logs = new Map()
   const first = await start(home, logs)
-  const request = { content: [{ type: 'text', text: '[Message from Chief]\nDraft the plan' }], source: { kind: 'bot', form: 'relay', role: 'request', exchangeId: 'x1', senderName: 'Chief', senderSessionId: 'a', hop: 0 } }
+  const request = { content: [{ type: 'text', text: '[Message from Omni]\nDraft the plan' }], source: { kind: 'bot', form: 'relay', role: 'request', exchangeId: 'x1', senderName: 'Omni', senderSessionId: 'a', hop: 0 } }
   run(first, 'b', 1, request)
   await settle(() => inflight(home).b?.trigger?.exchangeId === 'x1')
   logs.set('b', writerLog(request, 'The plan is ready.'))
@@ -753,6 +754,7 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   // A run's Session whose record is gone by the restart: no Bot owns it any more.
   await first.ctx.get('omniTeam').deliver({ toId: 'b', sessionId: 'gone', role: 'task', note: 'Inbox', text: 'Check the inbox' })
   await settle(() => (notes(home).queued.b ?? []).length === 2 && notes(home).queued.gone?.length === 1)
+  const original = (await first.call('exchange', { a: 'a', b: 'b' })).value.find(entry => entry.id === plan.source.exchangeId)
   await first.stop()
 
   t.mock.timers.enable({ apis: ['setTimeout'] })
@@ -764,7 +766,8 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   assert.equal(second.agentOf('gone').calls.length, 0)
   const [again, ...rest] = second.agentOf('b').calls
   assert.equal(rest.length, 0)
-  assert.deepEqual([again.source.exchangeId, again.source.role, text(again)], [plan.source.exchangeId, 'request', text(plan)])
+  assert.deepEqual([again.source.exchangeId, again.source.role], [plan.source.exchangeId, 'request'])
+  assert.match(text(again), /^\[Message from Omni · DeepSeek Harness restarted before it could reach you\]\nDraft the plan$/)
   // The resend is the same exchange, not a new one.
   const exchanges = (await second.call('exchange', { a: 'a', b: 'b' })).value
   assert.equal(exchanges.length, 4)
@@ -798,7 +801,7 @@ test('a queued request kept over a restart is sent again however old, and the as
   await settle(() => second.agentOf('b').calls.length === 1)
   const [again] = second.agentOf('b').calls
   assert.deepEqual([again.source.exchangeId, again.source.role], [plan.source.exchangeId, 'request'])
-  assert.match(text(again), /^\[Message from Chief · DeepSeek Harness restarted before it could reach you\]/)
+  assert.match(text(again), /^\[Message from Omni · DeepSeek Harness restarted before it could reach you\]/)
 
   // The work is marked, so the answer that goes up says the request arrived late.
   await settleState(t, home, () => stateOf(home).works?.[plan.source.exchangeId]?.late === true)
@@ -849,7 +852,7 @@ test('a delivery that fails is not recorded as delivered, and stays queued for t
 test('a reply that fails to reach the asker reaches it as a failure notice carrying the answer', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const state = seed()
-  // Chief asked Writer; Writer handed part of it to Reviewer.
+  // Omni asked Writer; Writer handed part of it to Reviewer.
   state.bots.c = { id: 'c', name: 'Reviewer', sessionId: 'c', createdAt: 3 }
   state.works = {
     x1: { from: 'a', to: 'b', open: ['y1'], results: [], at: 1 },
@@ -874,7 +877,7 @@ test('a reply that fails to reach the asker reaches it as a failure notice carry
   await settle(() => host.agentOf('b').calls.length === 1)
   const notice = host.agentOf('b').calls[0]
   assert.deepEqual([notice.source.role, notice.source.replyTo, notice.source.work], ['reply', 'y1', 'x1'])
-  assert.match(text(notice), /^\[Reply from Reviewer · for the work Chief asked you for; your answer goes to Chief once everything you handed on is back\]\nReviewer could not send its reply to you \(session\/not-found: Session sess-b is gone\); what it had answered:\nThe numbers check out\.$/)
+  assert.match(text(notice), /^\[Reply from Reviewer · for the work Omni asked you for; your answer goes to Omni once everything you handed on is back\]\nReviewer could not send its reply to you \(session\/not-found: Session sess-b is gone\); what it had answered:\nThe numbers check out\.$/)
   // The wait stays until the notice is read; the kept result is marked.
   await settleState(t, home, () => stateOf(home).works?.x1?.results[0]?.failed === true)
   assert.deepEqual(stateOf(home).works.x1.open, ['y1'])
@@ -981,9 +984,9 @@ test('a request kept for retry keeps its work, and the result flows up after the
   state.works = { x1: { from: 'a', to: 'b', open: [], results: [], at: 1 } }
   const home = freshHome(t, state)
   const first = await start(home)
-  // Writer is doing the work Chief gave it and hands part of it to Reviewer; the
+  // Writer is doing the work Omni gave it and hands part of it to Reviewer; the
   // send fails before it reaches Reviewer, so it stays queued for the next start.
-  run(first, 'b', 1, { content: [{ type: 'text', text: '[Message from Chief]\nDraft the plan' }], source: { kind: 'bot', form: 'relay', role: 'request', exchangeId: 'x1', senderName: 'Chief', senderSessionId: 'a', hop: 0 } })
+  run(first, 'b', 1, { content: [{ type: 'text', text: '[Message from Omni]\nDraft the plan' }], source: { kind: 'bot', form: 'relay', role: 'request', exchangeId: 'x1', senderName: 'Omni', senderSessionId: 'a', hop: 0 } })
   const flushing = first.ctx.sessions.flush
   first.ctx.sessions.flush = async (session) => {
     if (session?.id === 'c') throw Object.assign(new Error('Session sess-c is gone'), { code: 'session/not-found' })
@@ -1067,6 +1070,48 @@ test('a tool call written as text gets one more turn on the same round slot', as
   assert.equal(host.agentOf('gb').calls.length, 2)
 })
 
+test('a group member that leaves only the call tags gets the same retry, and never posts the tags', async (t) => {
+  const home = freshHome(t)
+  const host = await start(home)
+  const result = await openRoomTurn(t, host)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  await settle(() => host.agentOf('gb').calls.length === 2)
+  const retry = host.agentOf('gb').calls[1]
+  assert.deepEqual([retry.source.role, retry.source.retried, retry.source.exchangeId], ['room', true, host.agentOf('gb').calls[0].source.exchangeId])
+  assert.match(text(retry), /^\[Group chat "Ops" · your tool call did not run\]/)
+  assert.equal(result(), undefined)
+
+  // Leftover tags again: the round gets one readable line, no markup.
+  run(host, 'gb', 2, retry)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
+  await settle(() => result() !== undefined)
+  assert.deepEqual(result().replies.map(reply => reply.text), ['Tried to run a tool but wrote the call as text, so it did not run.'])
+  assert.equal(host.agentOf('gb').calls.length, 2)
+})
+
+test('call tags mixed into the text are stripped, and the readable part still goes out', async (t) => {
+  const home = freshHome(t)
+  const host = await start(home)
+  const result = await openRoomTurn(t, host)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  await settle(() => host.agentOf('gb').calls.length === 2)
+  const retry = host.agentOf('gb').calls[1]
+  assert.equal(retry.source.retried, true)
+  assert.equal(result(), undefined)
+
+  // Written again: what was said around the tags goes on, without them.
+  run(host, 'gb', 2, retry)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
+  await settle(() => result() !== undefined)
+  const [reply] = result().replies.map(entry => entry.text)
+  assert.match(reply, /Hi, everyone\./)
+  assert.doesNotMatch(reply, /parameter|function|tool_call/)
+})
+
 test('a group member cut off on the token limit is not counted as a silent pass', async (t) => {
   const home = freshHome(t)
   const host = await start(home)
@@ -1123,46 +1168,4 @@ test('a written tool call is told apart from text about one', () => {
   assert.equal(stripWrittenCalls('plain <text> with an angle or two'), 'plain <text> with an angle or two')
   assert.equal(writesToolCall('plain <text> with an angle or two'), false)
   assert.equal(stripWrittenCalls('a < b or c > d'), 'a < b or c > d')
-})
-
-test('a group member that leaves only the call tags gets the same retry, and never posts the tags', async (t) => {
-  const home = freshHome(t)
-  const host = await start(home)
-  const result = await openRoomTurn(t, host)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
-  await settle(() => host.agentOf('gb').calls.length === 2)
-  const retry = host.agentOf('gb').calls[1]
-  assert.deepEqual([retry.source.role, retry.source.retried, retry.source.exchangeId], ['room', true, host.agentOf('gb').calls[0].source.exchangeId])
-  assert.match(text(retry), /^\[Group chat "Ops" · your tool call did not run\]/)
-  assert.equal(result(), undefined)
-
-  // Leftover tags again: the round gets one readable line, no markup.
-  run(host, 'gb', 2, retry)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
-  await settle(() => result() !== undefined)
-  assert.deepEqual(result().replies.map(reply => reply.text), ['Tried to run a tool but wrote the call as text, so it did not run.'])
-  assert.equal(host.agentOf('gb').calls.length, 2)
-})
-
-test('call tags mixed into the text are stripped, and the readable part still goes out', async (t) => {
-  const home = freshHome(t)
-  const host = await start(home)
-  const result = await openRoomTurn(t, host)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
-  await settle(() => host.agentOf('gb').calls.length === 2)
-  const retry = host.agentOf('gb').calls[1]
-  assert.equal(retry.source.retried, true)
-  assert.equal(result(), undefined)
-
-  // Written again: what was said around the tags goes on, without them.
-  run(host, 'gb', 2, retry)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
-  await settle(() => result() !== undefined)
-  const [reply] = result().replies.map(entry => entry.text)
-  assert.match(reply, /Hi, everyone\./)
-  assert.doesNotMatch(reply, /parameter|function|tool_call/)
 })

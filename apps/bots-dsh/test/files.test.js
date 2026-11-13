@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict'
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import fsp from 'node:fs/promises'
-import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { clearTimeout as realClearTimeout, setTimeout as realTimeout } from 'node:timers'
 import { replaceFile } from '../src/host/files.js'
 
 const folder = (t) => {

@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import { Session } from '@deepseek-ai/dsh-session'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
-import { createRuntime } from '../index.js'
+import { apply } from '../index.js'
 import { fakeAttachments, fakeContext } from './fake-ctx.js'
 import { install as installTurns } from '../src/host/turns.js'
 import { install as installParts } from '../src/host/parts.js'
@@ -106,7 +106,8 @@ async function start(seed) {
     route = options
     return register(options)
   }
-  rt = createRuntime(ctx, { home })
+  apply(ctx, { home })
+  rt = ctx.provided.get('omniTeam')
   let seq = 0
   const emit = (id, type, data, extra) => {
     if (type === 'user/message') agentOf(id).session.deriveMessages().push({ role: 'user', content: data.content, source: data.source })
@@ -886,7 +887,8 @@ test('one turn keeps its identity across two earlier pages', async (t) => {
   let route
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
-  rt = createRuntime(ctx, { home })
+  apply(ctx, { home })
+  rt = ctx.provided.get('omniTeam')
   t.after(async () => {
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
@@ -1140,7 +1142,7 @@ for (const id of ['b', 'gb']) {
 
       if (pending) {
         const decision = await ctx.listeners.get('agent/pre-step').find(listener => listener.toString().includes('switchBeforeStep'))({ agent, messages: [input], step: 1, signal: AbortSignal.timeout(60_000) }, async () => 'next')
-        assert.deepEqual(decision, { kind: 'reject' })
+        assert.deepEqual(decision, { kind: 'enter', messages: [] })
       } else {
         record('user/message', input)
         await fire('agent/request-error', { agent, failure: { code: 'CONTEXT_WINDOW_EXCEEDED' }, signal: AbortSignal.timeout(60_000) })
@@ -1266,4 +1268,32 @@ test('a fresh part gets its Bot\'s deny list before the handoff turn', async (t)
   const applied = restricted.filter(entry => entry.sessionId === 's1')
   assert.ok(applied.length > 0, 'the fresh part was restricted before its handoff turn')
   assert.deepEqual(applied.at(-1).deny, ['bash'])
+})
+
+// A request merged with another the recipient had not read goes out under the same id. If
+// the merged text never reaches the recipient, the dialog keeps the text that did.
+test('a merged request that does not go out leaves the delivered text in the dialog', async (t) => {
+  const { ctx, exchanges, stop } = await start(team())
+  t.after(stop)
+  await rt.deliver({ fromId: 'a', toId: 'b', role: 'request', text: 'Draft the plan', exchangeId: 'x-merge' })
+  const flush = ctx.sessions.flush
+  ctx.sessions.flush = async () => { throw new Error('Session is gone') }
+  await assert.rejects(rt.deliver({ fromId: 'a', toId: 'b', role: 'request', text: 'Draft the plan\n\nAnd the budget', exchangeId: 'x-merge', merged: true }), /Session is gone/)
+  ctx.sessions.flush = flush
+  assert.deepEqual((await exchanges()).map(entry => [entry.id, entry.text]), [['x-merge', 'Draft the plan']])
+})
+
+// The book is written before the message goes out: one it cannot keep is not sent.
+test('a message between Bots that the book cannot keep is not sent', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async (t) => {
+  const { agentOf, tool, exchanges, home, stop } = await start(team())
+  t.after(stop)
+  mkdirSync(join(home, 'ledger'), { recursive: true })
+  chmodSync(join(home, 'ledger'), 0o500)
+  try {
+    await assert.rejects(tool('message_bot', { to: 'Writer', message: 'Hello' }, 'a'))
+    assert.equal(agentOf('b').calls.filter(([kind]) => kind === 'steer' || kind === 'followup').length, 0)
+  } finally {
+    chmodSync(join(home, 'ledger'), 0o700)
+  }
+  assert.deepEqual(await exchanges(), [])
 })

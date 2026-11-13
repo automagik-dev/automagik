@@ -5,64 +5,26 @@ import { heldText } from '../src/client/stops.js'
 import { HELD_LINES } from '../src/shared/held.js'
 import { DICTIONARY, hostText, hostTemplateOf, installLocale, language, t } from '../src/client/i18n.js'
 
-function fakeLocale(initial = 'zh') {
-  let active = initial
+function fakeLocale(active) {
   const dicts = new Map()
-  const listeners = new Set()
-  const catalog = [{ id: 'zh', label: '中文', fallback: 'en' }, { id: 'en', label: 'English' }]
-  const publish = () => { for (const fn of listeners) fn() }
   return {
-    dicts,
-    setActive: (next) => { active = next; publish() },
-    subscribe: (fn) => {
-      listeners.add(fn)
-      return () => listeners.delete(fn)
-    },
-    addLanguage: (def) => {
-      catalog.push(def)
-      publish()
-      return () => {
-        const idx = catalog.indexOf(def)
-        if (idx >= 0) catalog.splice(idx, 1)
-        publish()
-      }
-    },
-    register: (ns, localeOrMap, dict) => {
-      const pairs = typeof localeOrMap === 'string' ? [[localeOrMap, dict]] : Object.entries(localeOrMap ?? {})
-      if (!dicts.has(ns)) dicts.set(ns, new Map())
-      const map = dicts.get(ns)
-      for (const [loc] of pairs) {
-        if (map.has(loc.toLowerCase())) throw new Error(`locale namespace "${ns}" already has locale "${loc}"`)
-      }
-      for (const [loc, d] of pairs) {
-        map.set(loc.toLowerCase(), d)
-      }
-      publish()
-      return () => {
-        for (const [loc] of pairs) map.delete(loc.toLowerCase())
-        if (map.size === 0) dicts.delete(ns)
-        publish()
-      }
-    },
+    register: (ns, locale, dict) => { dicts.set(`${ns}:${locale}`, dict); return () => dicts.delete(`${ns}:${locale}`) },
     bind: ns => (key, params) => {
-      const text = (active !== 'en' ? dicts.get(ns)?.get(active.toLowerCase())?.[key] : undefined) ?? key
+      const text = (active === 'zh' ? dicts.get(`${ns}:zh`)?.[key] : undefined) ?? key
       return params ? text.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match)) : text
     },
-    getLocale: () => ({ active, locales: catalog }),
+    getLocale: () => ({ active }),
   }
 }
 
-test('every literal the client translates has an entry in all supported locales', () => {
+test('every literal the client translates has a Chinese entry', () => {
   const dir = new URL('../src/client/', import.meta.url)
   const missing = []
-  const locales = ['zh', 'zh-TW', 'ja', 'ko', 'es', 'fr', 'de']
   for (const name of readdirSync(dir).filter(file => file.endsWith('.js'))) {
     const text = readFileSync(new URL(name, dir), 'utf8')
     for (const match of text.matchAll(/\bt\(\s*(['"])((?:\\.|(?!\1).)*)\1/g)) {
       const key = match[2].replace(/\\'/g, "'")
-      for (const loc of locales) {
-        if (!Object.hasOwn(DICTIONARY[loc] ?? {}, key)) missing.push(`${loc}:${name}: ${key}`)
-      }
+      if (!Object.hasOwn(DICTIONARY.zh, key)) missing.push(`${name}: ${key}`)
     }
   }
   assert.deepEqual(missing, [])
@@ -71,12 +33,8 @@ test('every literal the client translates has an entry in all supported locales'
 test('copy follows the DSH language and stays English without a locale service', () => {
   assert.equal(t('Message {name}', { name: 'Omni' }), 'Message Omni')
   assert.equal(language(), 'en')
-  assert.equal(dateLocale(), 'en-US')
-  const mock = fakeLocale('zh')
-  const off = installLocale(mock)
+  const off = installLocale(fakeLocale('zh'))
   try {
-    assert.equal(LANGUAGES.length, 6)
-    assert.equal(mock.getLocale().locales.length, 8)
     assert.equal(language(), 'zh')
     assert.equal(t('Message {name}', { name: 'Omni' }), '给 Omni 发消息')
     assert.equal(t('Model'), '模型')
