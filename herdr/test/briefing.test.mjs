@@ -1100,6 +1100,34 @@ test("hook worker scope: a non-git project omits the instruction and stays quiet
   assert.equal((await sc.brief(env, '{"session_id":"non-git"}', { keep: true })).stdout, "");
 });
 
+test("hook #848: a timed-out git check reuses seen.isGit after an edit invalidates the old hash", async (t) => {
+  for (const isGit of [true, false]) {
+    const sc = await turns(t, () => ["claude"]);
+    const realGit = spawnSync("sh", ["-c", "PATH=/usr/bin:/bin command -v git"], { encoding: "utf8" }).stdout.trim();
+    const fakeGit = join(sc.bin, "git");
+    const answer = (body) => {
+      writeFileSync(fakeGit, `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "--is-inside-work-tree" ]; then ${body}; fi\nexec "${realGit}" "$@"\n`);
+      chmodSync(fakeGit, 0o755);
+    };
+    answer(`echo ${isGit}; exit 0`);
+    const first = await sc.turn(1);
+    assert.equal(first.stderr, "");
+    assert.equal(first.stdout.includes(WORKER_LINE), isGit);
+    const seenFile = briefedPath(sc.app, "s-1");
+    assert.equal(JSON.parse(readFileSync(seenFile, "utf8")).isGit, isGit);
+    const file = team();
+    byId(file, ID.main).instructions = "New instructions after the first turn.";
+    writeFileSync(join(sc.main, ".herdr/bots.json"), JSON.stringify(file));
+    answer("kill -TERM $$");
+    const edited = await sc.turn(2);
+    assert.equal(edited.stderr, "");
+    assert.match(edited.stdout, /New instructions after the first turn/);
+    assert.equal(edited.stdout.includes(WORKER_LINE), isGit, "the stored boolean survives a new hash");
+    assert.equal(JSON.parse(readFileSync(seenFile, "utf8")).isGit, isGit);
+    assert.equal((await sc.turn(3)).stdout, "", "the edited briefing prints only once");
+  }
+});
+
 test("hook worker scope (#774): a timed-out git check reuses the recorded or launched git state and does not reprint", async (t) => {
   const sc = await turns(t, () => ["claude"]);
   const first = await sc.turn(1);
