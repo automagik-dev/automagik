@@ -2604,10 +2604,25 @@ test("#805 the watcher checks helpers before asking cmdRestart", async (t) => {
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
   const reads = () => s.calls().filter((c) => c[0] === "read" && c[1] === "t5").length;
   const before = reads();
+  const POLL_MS = 3000; // long: the next poll cannot fall inside the settle window below
+  // A slow-starting watcher: the first hc call of the run waits 800 ms, as a loaded runner's cold
+  // node start does. The test waits for the read itself, never for a clock (a fixed 300 ms sleep
+  // saw 0 reads here and failed the release cut once).
+  const late = join(s.root, "late-start");
+  exe(join(s.root, "bin", "hc"), `#!/bin/sh\nif [ ! -e "${late}" ]; then : > "${late}"; sleep 0.8; fi\n`
+    + `exec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   const running = s.cliAsync(["restart", ID.main, "--run-queued", entry.id, "--json"],
-    { env: { AUTOMAGIK_HERDR_QUEUE_POLL_MS: "1000", AUTOMAGIK_HERDR_QUEUE_MAX_MS: "1000" } });
-  await new Promise((done) => setTimeout(done, 300));
-  assert.equal(reads() - before, 1, "the watcher's helper check keeps cmdRestart from reading again");
+    { env: { AUTOMAGIK_HERDR_QUEUE_POLL_MS: String(POLL_MS), AUTOMAGIK_HERDR_QUEUE_MAX_MS: "1000" } });
+  const deadline = Date.now() + 10_000;
+  while (reads() - before < 1 && Date.now() < deadline) await new Promise((done) => setTimeout(done, 10));
+  const seen = Date.now();
+  assert.equal(reads() - before, 1, "the watcher's helper check read the pane once");
+  await new Promise((done) => setTimeout(done, 200)); // a second read, if cmdRestart made one, lands in this window
+  // The watcher's own next poll comes POLL_MS after its first read; a stalled runner can run this
+  // timer after it. Only a window that closed well before the poll can show "no second read".
+  if (Date.now() - seen < POLL_MS / 2) {
+    assert.equal(reads() - before, 1, "the watcher's helper check keeps cmdRestart from reading again");
+  }
   const r = await running;
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), []);
