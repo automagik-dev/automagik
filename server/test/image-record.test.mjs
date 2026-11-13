@@ -160,20 +160,21 @@ test('the consumer docs pin the rolling pointer and provenance verification', ()
 
 const SRC = ROOT + '/server/server-lane.mjs'
 const { postServerLane } = await import(SRC)
-const rec = (version) => {
-  const r = imageRecord({ ...good, version, tag: `${version}-${revision.slice(0, 8)}` })
+const rec = (version, image = good.image) => {
+  const r = imageRecord({ ...good, image, version, tag: `${version}-${revision.slice(0, 8)}` })
   const dir = mkdtempSync(join(tmpdir(), 'lane-'))
   temps.push(dir)
   const file = join(dir, 'server-image.json')
   writeFileSync(file, JSON.stringify(r))
   return { file, text: JSON.stringify(r) }
 }
-const fakeGh = ({ source, lane, posted, calls }) => (args) => {
+// laneRead, when given, is gh's whole answer to the read of the server-lane release.
+const fakeGh = ({ source, lane, posted, calls, laneRead }) => (args) => {
   calls.push(args.join(' '))
   const http = (code, body) => ({ status: 0, stdout: `HTTP/2 ${code}\r\n\r\n${body ? JSON.stringify(body) : ''}` })
   if (args[0] === 'api' && args[1] === '--include') {
     const tag = args[2].split('/tags/')[1]
-    if (tag === 'server-lane') return lane ? http(200, lane) : http(404)
+    if (tag === 'server-lane') return laneRead ?? (lane ? http(200, lane) : http(404))
     return http(200, source)
   }
   if (args[0] === 'api') return { status: 0, stdout: posted }
@@ -231,4 +232,57 @@ test('server-lane fails closed on an unreadable pointer or a lane that is not a 
     fakeGh({ source: stable, lane: { ...laneRel, assets: [] }, calls: [] })), /no readable record/)
   assert.throws(() => postServerLane(input(file),
     fakeGh({ source: stable, lane: { ...laneRel, prerelease: false }, calls: [] })), /prerelease/)
+})
+
+const writes = (calls) => calls.filter((c) => c.startsWith('release '))
+
+// The lane holds one image's records: a pointer that names another image is never replaced,
+// whether its content is older or newer than the candidate.
+test('server-lane refuses a posted record that names another image, and writes nothing', () => {
+  const other = 'ghcr.io/automagik-si/another-server'
+  for (const version of ['3.93.0', '3.94.0', '3.95.0']) {
+    const calls = []
+    assert.throws(() => postServerLane(input(rec('3.94.0').file),
+      fakeGh({ source: stable, lane: laneRel, posted: rec(version, other).text, calls })),
+    /server-lane names another image/, version)
+    assert.ok(calls.some((c) => c.startsWith('api repos/o/r/releases/assets/7')), version)
+    assert.deepEqual(writes(calls), [], version)
+  }
+})
+
+// Only a confirmed 404 means the lane is missing. Any other answer to that read is an unreadable
+// lane: bootstrapping over it would replace a pointer nobody compared. One test per answer, so
+// each of them fails by name.
+const answer = (status, line) => ({ status, stdout: `${line}\r\n\r\n{"message":"refused"}` })
+const unreadable = [
+  ['500', answer(1, 'HTTP/2.0 500 Internal Server Error')],
+  ['403', answer(1, 'HTTP/2.0 403 Forbidden')],
+  ['401', answer(1, 'HTTP/2.0 401 Unauthorized')],
+  ['500 with gh exit 0', answer(0, 'HTTP/2 500')],
+  ['403 with gh exit 0', answer(0, 'HTTP/2 403')],
+  ['401 with gh exit 0', answer(0, 'HTTP/2 401')],
+  ['gh did not run', { error: new Error('spawn gh ENOENT'), status: null, stdout: null }],
+  ['gh failed after a 404 line',
+    { error: new Error('spawnSync gh ENOBUFS'), status: null, stdout: 'HTTP/2.0 404 Not Found\r\n\r\n' }],
+]
+for (const [name, laneRead] of unreadable) {
+  test(`server-lane stops on an unreadable lane read and writes nothing: ${name}`, () => {
+    const calls = []
+    assert.throws(() => postServerLane(input(rec('3.94.0').file), fakeGh({ source: stable, laneRead, calls })),
+      /cannot read release server-lane/)
+    assert.ok(calls.some((c) => c.endsWith('/releases/tags/server-lane')))
+    assert.deepEqual(writes(calls), [])
+  })
+}
+
+// gh exits 1 on a 404 and still prints the status line: that is the missing lane, and it bootstraps.
+test('server-lane still bootstraps on a 404, whatever gh exits with', () => {
+  for (const status of [0, 1]) {
+    const calls = []
+    const laneRead = { status, stdout: 'HTTP/2.0 404 Not Found\r\n\r\n{"message":"Not Found"}' }
+    const result = postServerLane(input(rec('3.94.0').file), fakeGh({ source: stable, laneRead, calls }))
+    assert.match(result, /^server-lane records /)
+    assert.deepEqual(writes(calls).map((c) => c.split(' ').slice(0, 3).join(' ')),
+      ['release create server-lane', 'release upload server-lane'], `exit ${status}`)
+  }
 })
