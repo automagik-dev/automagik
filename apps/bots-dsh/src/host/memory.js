@@ -709,10 +709,16 @@ export function install(rt) {
   // What a Bot's model leaves room for, from the last time it was asked.
   const windows = new Map()
   const windowAsked = new Map()
+  // The Bot's chat model (not the memory model): its window is what the memory text shares.
+  const chatRoute = async (bot) => {
+    const route = splitRef(await rt.desiredModel(bot) ?? await rt.defaultModel())
+    if (route === undefined) throw new Error('no chat model')
+    return route
+  }
   async function noteWindow(bot) {
     if (Date.now() - (windowAsked.get(bot.id) ?? 0) < WINDOW_ASK_MS) return
     windowAsked.set(bot.id, Date.now())
-    const info = await modelFor(bot).then(route => ctx.llm.resolveModelInfo(route.provider, route.model)).catch(() => undefined)
+    const info = await chatRoute(bot).then(route => ctx.llm.resolveModelInfo(route.provider, route.model)).catch(() => undefined)
     const size = info?.context?.contextWindow
     if (typeof size === 'number' && size > 0) windows.set(bot.id, size - (info.defaultMaxTokens ?? 0))
   }
@@ -1268,14 +1274,11 @@ export function install(rt) {
     until: entry.meta.until ?? null, pinned: isPinned(entry), expired: isExpired(entry, today()),
   }))
 
-  async function modelFor(bot) {
-    const desired = await rt.desiredModel(bot)
-    // A local agent CLI answers through its own subscription, not a model API:
-    // its memory reads the team's default model when one is set.
-    const team = rt.isLocalAgentRef?.(state.prefs.defaultBotModel) === true ? undefined : state.prefs.defaultBotModel
-    const ref = rt.isLocalAgentRef?.(desired) === true ? (team ?? null) : desired ?? await rt.defaultModel()
-    const route = ref === null ? undefined : splitRef(ref)
-    if (route === undefined) throw modelFailure('No model is available. Add one in Settings > Models.')
+  // Memory runs beside the chats, on the team's background model (models.js), never on an
+  // agent over ACP, which answers only in its own chat.
+  async function modelFor() {
+    const route = splitRef(await rt.backgroundModel())
+    if (route === undefined) throw Object.assign(new Error('No model can run memory review. Pick a background model in Settings, or add a model in Harness settings.'), { code: 'memory/no-model' })
     return route
   }
   // The panel's model calls belong to the Bot or group whose memory they serve;
@@ -1332,23 +1335,23 @@ export function install(rt) {
       : `The model wrote nothing within ${where}; no complete answer was written`)
   }
 
-  // A served model can still refuse the call (a key without access, say), and
-  // desiredModel only falls back for models that are not served; so a failed call
-  // is tried once more on the profile default. The provider's own error is not
-  // passed on: its message may quote the request.
+  // A served model can still refuse the call (a key without access, say), so a failed call
+  // is tried once more on the Bot's own model, when that one answers beside its chat.
+  // The provider's own error is not passed on: its message may quote the request.
   const answerFailure = error => (ownFailure(error) ? error : modelFailure(`The model could not answer (${failureCode(error, 'provider error')}).`))
   async function botShot(bot, system, text, tag) {
-    const own = await modelFor(bot)
+    const first = await modelFor()
     try {
-      return await oneShot(own, system, text, tag)
+      return await oneShot(first, system, text, tag)
     } catch (error) {
-      const fallback = splitRef(await rt.defaultModel())
-      if (fallback === undefined || (fallback.provider === own.provider && fallback.model === own.model)) throw answerFailure(error)
+      const mine = await rt.desiredModel(bot, { aside: true })
+      const fallback = rt.answersAside(mine) ? splitRef(mine) : undefined
+      if (fallback === undefined || (fallback.provider === first.provider && fallback.model === first.model)) throw answerFailure(error)
       try {
         return await oneShot(fallback, system, text, tag)
       } catch (again) {
         const said = failure => failureText(failure, 'provider error')
-        throw modelFailure(`${own.provider}/${own.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`)
+        throw modelFailure(`${first.provider}/${first.model}: ${said(error)}; ${fallback.provider}/${fallback.model}: ${said(again)}`)
       }
     }
   }
@@ -1387,9 +1390,12 @@ export function install(rt) {
   const panelBody = panel => (panel.group ? { roomId: panel.id } : { botId: panel.id })
   const panelLabel = (panel, scope) => (scope.kind === 'team' ? 'the team memory' : panel.group ? 'the group memory' : `${panel.name}'s memory`)
 
-  function startSummary(panel, loaded, language, hash) {
+  // The models a summary runs on, the background model first and the keeper's after it: a
+  // failure stands until one of them changes.
+  const summaryModels = async keeper => `${await rt.backgroundModel() ?? ''}|${keeper?.model ?? ''}`
+
+  function startSummary(panel, loaded, language, hash, models) {
     const { keeper } = panel
-    const model = keeper.model
     const request = panel.group
       ? groupSummaryRequest({ name: panel.name, lines: linesFor(loaded.group), language })
       : summaryRequest({ name: panel.name, own: linesFor(loaded.own), team: linesFor(loaded.team), language })
@@ -1400,15 +1406,15 @@ export function install(rt) {
       summaryFailures.delete(panel.id)
       if (rt.readOnly() === undefined) await writeText(summaryPath(panel.id), JSON.stringify(value, null, 2))
     })().catch((error) => {
-      summaryFailures.set(panel.id, { hash, model, message: failureText(error, 'provider error') })
+      summaryFailures.set(panel.id, { hash, models, message: failureText(error, 'provider error') })
       rt.warn('omni-ui: memory summary for %s failed: %s', panel.name, failureCode(error))
     }).finally(() => summarizing.delete(panel.id))
     summarizing.set(panel.id, job)
   }
 
   // The summary is written again when the entries or the interface language change;
-  // a failed one waits for `regenerate`, or a new model for the keeper, instead of
-  // retrying on every poll.
+  // a failed one waits for `regenerate`, or another background model or keeper's model,
+  // instead of retrying on every poll.
   async function memoryView(body) {
     const panel = panelOf(body)
     const loaded = await settled(() => Object.fromEntries(Object.entries(panel.scopes).map(([tag, scope]) => [tag, loadScope(scope)])))
@@ -1417,9 +1423,10 @@ export function install(rt) {
     const hash = createHash('sha256').update(JSON.stringify([language, ...Object.values(loaded).map(linesFor)])).digest('hex')
     const saved = savedSummary(panel.id)
     const prior = summaryFailures.get(panel.id)
-    const failed = prior?.hash === hash && prior.model === panel.keeper?.model ? prior : undefined
+    const models = await summaryModels(panel.keeper)
+    const failed = prior?.hash === hash && prior.models === models ? prior : undefined
     const wanted = body.regenerate === true || (body.summarize === true && saved?.hash !== hash && failed === undefined)
-    if (wanted && entries.length > 0 && panel.keeper !== undefined && !summarizing.has(panel.id)) startSummary(panel, loaded, language, hash)
+    if (wanted && entries.length > 0 && panel.keeper !== undefined && !summarizing.has(panel.id)) startSummary(panel, loaded, language, hash, models)
     return {
       ...panelBody(panel),
       entries,

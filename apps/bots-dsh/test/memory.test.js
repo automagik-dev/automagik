@@ -148,17 +148,24 @@ const ownChat = [
 // it says otherwise. `requireSession` turns down a request without a Session, as
 // some routes do.
 let rt
-function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-')), replies = [], config = {}, history = {}, reasoning = { efforts: [{ id: 'off' }, { id: 'high' }] }, models = ['v4'], defaultModel, modelMaxTokens, requireSession = false } = {}) {
+function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-')), replies = [], config = {}, history = {}, reasoning = { efforts: [{ id: 'off' }, { id: 'high' }] }, models = ['v4'], defaultModel, modelMaxTokens, requireSession = false, keyless = {}, agents = {} } = {}) {
   if (!existsSync(join(home, 'state.json'))) writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
   const services = defaultModel === undefined ? {} : { agentDefaultModel: { currentSelection: () => ({ provider: 'deepseek', model: defaultModel }) } }
+  // `keyless`: providers DSH serves whose key is not set ({ provider: [model ids] }).
+  if (Object.keys(keyless).length > 0) {
+    services.settings = { describe: () => [{ ns: 'keys', value: Object.fromEntries(Object.keys(keyless).map(id => [id, { apiKeyEnv: `${id.toUpperCase()}_API_KEY` }])) }] }
+    services.credentials = { describe: async () => ({ configured: false, writable: true }) }
+  }
   const ctx = fakeContext({ services })
   const warnings = []
   ctx.logger.warn = (...args) => warnings.push(format(...args))
   const requests = []
   Object.assign(ctx, {
     llm: {
-      listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
-      listModels: async () => models.map(id => ({ id })),
+      // `agents`: agents over ACP the catalog lists ({ provider: [model ids] }).
+      listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }, ...Object.keys({ ...keyless, ...agents }).map(id => ({ id, name: id }))],
+      listModels: async id => (keyless[id] ?? agents[id] ?? models).map(model => ({ id: model })),
+      listConfigurableProviders: () => Object.keys(keyless).map(id => ({ provider: id, displayName: id, settingsNs: 'keys', settingsPath: [id] })),
       resolveModelInfo: async () => ({ reasoning, ...(modelMaxTokens === undefined ? {} : { defaultMaxTokens: modelMaxTokens }) }),
       async* stream(request) {
         requests.push(request)
@@ -1232,7 +1239,7 @@ test('an aborted summary call is not retried', async (t) => {
   assert.match(failed.error, /aborted/)
 })
 
-test('an auth failure is not retried: only the profile fallback is tried', async (t) => {
+test('an auth failure is not retried: only the Bot\'s own model is tried after it', async (t) => {
   const replies = [
     { text: '', finish: 'error', failure: { message: 'invalid key', code: 'AUTH', status: 401 } },
     '## Overview\nYou like tea.',
@@ -1244,7 +1251,7 @@ test('an auth failure is not retried: only the profile fallback is tried', async
   await summarized(call)
   const done = (await call('memory-view', { botId: 'b2' })).value
   assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
-  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/flash@16384'])
+  assert.deepEqual(routes(requests), ['deepseek/flash@16384', 'deepseek/v4@16384'])
 })
 
 test('an adapter output default leaves room for a larger retry', async (t) => {
@@ -1295,7 +1302,9 @@ test('the panel call asks for the model\'s lowest thinking level when it has no 
 
 const routes = requests => requests.map(request => `${request.provider}/${request.model}@${request.maxTokens}`)
 
-test('a summary the Bot\'s model refuses is written by the profile default model', async (t) => {
+// Memory runs on the team's background model (DSH's default here, deepseek/flash), then on the
+// Bot's own (deepseek/v4) when that fails.
+test('a summary the background model refuses is written by the Bot\'s own model', async (t) => {
   const replies = [{ text: '', finish: 'error', failure: '403 Forbidden' }, '## Overview\nYou like tea.']
   const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
   t.after(() => stop())
@@ -1304,11 +1313,11 @@ test('a summary the Bot\'s model refuses is written by the profile default model
   await summarized(call)
   const done = (await call('memory-view', { botId: 'b2' })).value
   assert.deepEqual([done.summary?.text, done.fresh, done.error], ['## Overview\nYou like tea.', true, null])
-  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/flash@16384'])
+  assert.deepEqual(routes(requests), ['deepseek/flash@16384', 'deepseek/v4@16384'])
   assert.ok(requests.every(request => request.messages[0].content[0].text.includes('Likes tea')))
 })
 
-test('a summary cut off at both budgets on the Bot\'s model is written by the default model', async (t) => {
+test('a summary cut off at both budgets on the background model is written by the Bot\'s own model', async (t) => {
   const replies = [{ text: '', finish: 'max-tokens' }, { text: '## half', finish: 'max-tokens' }, '## Overview\nYou like tea.']
   const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
   t.after(() => stop())
@@ -1317,7 +1326,7 @@ test('a summary cut off at both budgets on the Bot\'s model is written by the de
   await summarized(call)
   const done = (await call('memory-view', { botId: 'b2' })).value
   assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
-  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/v4@32768', 'deepseek/flash@16384'])
+  assert.deepEqual(routes(requests), ['deepseek/flash@16384', 'deepseek/flash@32768', 'deepseek/v4@16384'])
 })
 
 test('a summary that failed on both models is tried again once the Bot has another model', async (t) => {
@@ -1329,9 +1338,10 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   await call('memory-view', { botId: 'b2', summarize: true })
   await summarized(call)
   const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
-  assert.equal(failed.error, 'deepseek/v4: provider error; deepseek/flash: The provider returned an error (SERVER 503)')
+  // The provider's words are not kept, only that a provider failed and which one.
+  assert.equal(failed.error, 'deepseek/flash: provider error; deepseek/v4: The provider returned an error (SERVER 503)')
   assert.equal(failed.summarizing, false)
-  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/flash@16384'])
+  assert.equal(requests.length, 2)
 
   assert.equal((await call('update-bot', { id: 'b2', model: 'deepseek/flash' })).ok, true)
   replies.push('## Overview\nYou like tea.')
@@ -1343,14 +1353,36 @@ test('a summary that failed on both models is tried again once the Bot has anoth
   assert.deepEqual(routes(requests).slice(2), ['deepseek/flash@16384'])
 })
 
-test('"ask or update" falls back to the default model when the Bot\'s model fails', async (t) => {
+test('a summary that failed on both models is tried again once the background model changes', async (t) => {
+  const replies = [new Error('401: Unauthorized'), new Error('503 Service Unavailable')]
+  const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash', 'pro'], defaultModel: 'flash' })
+  t.after(() => stop())
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  const failed = (await call('memory-view', { botId: 'b2', summarize: true })).value
+  assert.equal(failed.summarizing, false)
+  assert.notEqual(failed.error, null)
+  assert.equal(requests.length, 2)
+
+  assert.equal((await call('set-prefs', { backgroundModel: 'deepseek/pro' })).ok, true)
+  replies.push('## Overview\nYou like tea.')
+  const retried = (await call('memory-view', { botId: 'b2', summarize: true })).value
+  assert.deepEqual([retried.summarizing, retried.error], [true, null])
+  await summarized(call)
+  const done = (await call('memory-view', { botId: 'b2' })).value
+  assert.deepEqual([done.summary?.text, done.error], ['## Overview\nYou like tea.', null])
+  assert.deepEqual(routes(requests).slice(2), ['deepseek/pro@16384'])
+})
+
+test('"ask or update" falls back to the Bot\'s own model when the background model fails', async (t) => {
   const replies = [new Error('403 Forbidden'), JSON.stringify({ reply: 'You like tea.', changes: [] })]
   const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash' })
   t.after(() => stop())
   await tool('remember', { text: 'Likes tea' }, 'b2')
   const answer = (await call('memory-ask', { botId: 'b2', text: 'What do I like?' })).value
   assert.equal(answer.reply, 'You like tea.')
-  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/flash@16384'])
+  assert.deepEqual(routes(requests), ['deepseek/flash@16384', 'deepseek/v4@16384'])
 })
 
 test('"ask or update" answers from the entries and changes them through the same rules', async (t) => {
@@ -2903,6 +2935,118 @@ test('memory summaries retry transient failures on the same route and output bud
   assert.equal(done.summary?.text, '## Overview\nYou like tea.')
   assert.equal(done.error, null)
   assert.deepEqual(routes(host.requests), ['deepseek/v4@16384', 'deepseek/v4@16384'])
+})
+
+// The pinned Claude Code route (dsh-oh-my-claude): a request that names a live Session
+// and no auxiliary purpose resumes that Session's conversation, with its own instructions
+// and tools, and answers as the Bot would; a session-title request answers the title from
+// that Session. Only a compaction request runs on its own, with the system prompt it was
+// given; an empty tool list is the second guarantee that no tool is offered.
+function sessionReusingAdapter(ctx) {
+  const isolated = ctx.llm.stream
+  const seen = { foreground: 0, title: 0 }
+  ctx.llm.stream = async function* (request) {
+    const aside = request.purpose === 'compaction'
+      && Array.isArray(request.tools) && request.tools.length === 0
+    if (request.sessionId === undefined || aside) {
+      yield* isolated(request)
+      return
+    }
+    seen[request.purpose === 'session-title' ? 'title' : 'foreground'] += 1
+    yield { type: 'text-delta', index: 0, text: 'Sure, I will call remember to save that for you.' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  return seen
+}
+
+test('a memory review on a session-reusing adapter runs on its own, never in the Bot\'s conversation', async (t) => {
+  const { ctx, call, read, journal, requests, stop } = start({
+    config: { memoryReviewDelayMs: 0 },
+    replies: [JSON.stringify({ changes: [{ op: 'add', text: 'The user wants this remembered' }] })],
+  })
+  t.after(() => stop())
+  const adapter = sessionReusingAdapter(ctx)
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'b2', session: idleSession }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual([adapter.foreground, adapter.title], [0, 0])
+  assert.equal(requests.length, 1)
+  const [request] = requests
+  // The route, the budget, the effort, the timeout and the chat it is counted for stay.
+  assert.deepEqual(
+    [request.provider, request.model, request.sessionId, request.purpose, request.tools, request.maxTokens, request.reasoningEffort],
+    ['deepseek', 'v4', 'b2', 'compaction', [], 16384, 'off'],
+  )
+  // No history rides along: the request is its system prompt and this one user message.
+  assert.deepEqual(request.messages.map(message => message.role), ['user'])
+  assert.ok(request.signal instanceof AbortSignal)
+  assert.match(request.system, /^You keep the long-term memory of one Bot/)
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /- The user wants this remembered \[id: [0-9a-f]{4}; source: part 1 #10;/)
+  assert.deepEqual(JSON.parse(read('reviewed.json')), { 'chat:b2': 11 })
+  // Reviewed once: the next idle asks nothing and writes nothing.
+  const rows = journal().length
+  ctx.emit('agent/status', { agent: { id: 'b2', session: idleSession }, status: 'idle' })
+  await reviewed(call)
+  assert.deepEqual([adapter.foreground, requests.length, journal().length], [0, 1, rows])
+})
+
+// Settings → Background jobs: the team picks the model memory runs on. An agent over ACP, a
+// model DSH does not serve, or one whose account has no key is refused; clearing the pick goes
+// back to DSH's default.
+test('the team\'s background model runs memory, and the pick is checked', async (t) => {
+  const replies = ['## Overview\nYou like tea.', '## Overview\nYou like tea and toast.']
+  const { tool, call, requests, stop } = start({ replies, models: ['v4', 'flash'], defaultModel: 'flash', keyless: { openai: ['gpt-6'] } })
+  t.after(() => stop())
+  assert.equal((await call('set-prefs', { backgroundModel: 'acp-codex/default' })).error.code, 'bot/invalid')
+  assert.equal((await call('set-prefs', { backgroundModel: 'deepseek/gone' })).error.code, 'bot/invalid')
+  const keyless = await call('set-prefs', { backgroundModel: 'openai/gpt-6' })
+  assert.deepEqual([keyless.error?.code, keyless.error?.message], ['bot/invalid', 'Model openai/gpt-6 has no key yet: add one in Connect AI first'])
+  assert.equal((await call('state')).value.prefs.backgroundModel, undefined)
+  assert.equal((await call('set-prefs', { backgroundModel: 'deepseek/v4' })).ok, true)
+  assert.equal((await call('state')).value.prefs.backgroundModel, 'deepseek/v4')
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  assert.deepEqual(routes(requests), ['deepseek/v4@16384'])
+  assert.equal((await call('set-prefs', { backgroundModel: null })).ok, true)
+  assert.equal((await call('state')).value.prefs.backgroundModel, undefined)
+  await tool('remember', { text: 'Likes toast' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  assert.deepEqual(routes(requests), ['deepseek/v4@16384', 'deepseek/flash@16384'])
+})
+
+// The pick decides, not the Bot's own model: a Bot on deepseek/v4 with the background model
+// set to deepseek/lite has its memory written on deepseek/lite.
+test('memory runs on the picked background model, not on the Bot\'s own model', async (t) => {
+  const { tool, call, requests, stop } = start({ replies: ['## Overview\nYou like tea.'], models: ['v4', 'flash', 'lite'], defaultModel: 'flash' })
+  t.after(() => stop())
+  assert.equal((await call('set-prefs', { backgroundModel: 'deepseek/lite' })).ok, true)
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  assert.deepEqual(routes(requests), ['deepseek/lite@16384'])
+})
+
+// A Bot saved on an agent over ACP: its memory goes to the background model, and when that
+// one fails nothing is sent to the agent, which answers only in its own chat.
+test('the memory of a Bot on an agent over ACP runs on the background model, never on the agent', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const team = structuredClone(TEAM)
+  team.bots.b2.model = 'acp-codex/v4'
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
+  const replies = ['## Overview\nYou like tea.', new Error('403 Forbidden')]
+  const { tool, call, requests, stop } = start({ home, replies, models: ['v4', 'flash'], defaultModel: 'flash', agents: { 'acp-codex': ['v4'] } })
+  t.after(() => stop())
+  assert.equal((await call('state')).value.bots.find(bot => bot.id === 'b2').model, 'acp-codex/v4')
+  await tool('remember', { text: 'Likes tea' }, 'b2')
+  await call('memory-view', { botId: 'b2', summarize: true })
+  await summarized(call)
+  assert.equal((await call('memory-view', { botId: 'b2' })).value.summary?.text, '## Overview\nYou like tea.')
+  assert.deepEqual(routes(requests), ['deepseek/flash@16384'])
+  const answer = await call('memory-ask', { botId: 'b2', text: 'What do I like?' })
+  assert.equal(answer.ok, false)
+  assert.deepEqual(routes(requests), ['deepseek/flash@16384', 'deepseek/flash@16384'])
 })
 
 // A memory call is not a turn of the Bot's conversation: it is marked as upkeep and
