@@ -804,11 +804,26 @@ test("#1142 by object identity: an alias the paths don't show is refused, here (
   for (const target of [app, join(home, ".config"), home]) {
     assert.equal(codexDirVerdict(join(root, "shared"), codexWhere({ home, appHome: app, id: bindOf(target) })), "refused", target);
   }
-  // KNOWN LIMIT (#1151, owner-accepted; t29q's model at f9bfba1a): a bind mount that shows a folder INSIDE an app home
+  // KNOWN LIMIT (tracked in #1151; t29q's model at f9bfba1a): a bind mount that shows a folder INSIDE an app home
   // under another path has that folder's dev:ino, and no folder above it is an app home, so the walk can't tell: it is
   // still allowed. A model result, recorded as it is: not fixed, and not a mount test.
   assert.equal(codexDirVerdict(join(root, "shared"), codexWhere({ home, appHome: app, id: bindOf(join(app, "sub")) })), "ok",
     "KNOWN LIMIT #1151: a bind of an app home's descendant is still allowed");
+});
+
+test("#1142 the home rule alone: with the app home outside the home folder, the home folder and every folder above it stay refused", (t) => {
+  // In the usual layout the default app home lies under the home folder, so the app-home rule refuses the same folders
+  // and the home rule never decides alone. A linked ~/.config puts the app home elsewhere: then only the home rule does.
+  const root = realpathSync(scratchRoot(t, "hb-1142-"));
+  const home = join(root, "u", "home"), cfg = join(root, "e", "cfg"), shared = join(root, "s", "shared");
+  for (const d of [home, join(cfg, "herdr-app"), shared]) mkdirSync(d, { recursive: true });
+  symlinkSync(cfg, join(home, ".config"));
+  const where = (id) => codexWhere({ home, resolve: canonHere, id });
+  assert.deepEqual(where(idHere).appHomes, [join(cfg, "herdr-app")], "the default app home resolves outside the home folder");
+  assert.equal(codexDirVerdict(shared, where(idHere)), "ok", "positive control");
+  // A bind mount (modelled: a folder with another's dev:ino) of the home folder, or of the folder above it.
+  const bindOf = (target) => (p) => (p === shared ? idHere(target) : idHere(p));
+  for (const target of [home, join(root, "u")]) assert.equal(codexDirVerdict(shared, where(bindOf(target))), "refused", target);
 });
 
 test("#1142 a Codex seat on a linked machine whose HOME is an alias: both core folders and the caches it names are granted as canonical values, .local stays out, start and restart", (t) => {
