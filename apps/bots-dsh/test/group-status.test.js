@@ -9,6 +9,8 @@ import { fakeContext } from './fake-ctx.js'
 import { immediate, until } from './until.js'
 import { ROOM_REPLY_TIMEOUT_MS } from '../src/host/constants.js'
 
+let rt
+
 // Omni in its own chat 'a'; Writer, the admin of group 'r1', speaks there from 'gb'.
 const seed = () => ({
   version: 1,
@@ -75,7 +77,7 @@ async function start(extra = {}) {
   const askApproval = (sessionId, extra = {}, next = () => 'from-dsh') => ctx.listeners.get('approval/request')[0]({ agent: { session: { id: sessionId } }, toolName: 'pwsh', reason: 'escalate sandbox', ...extra }, next)
   const stop = async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) }
   await tool('list_bots', {}, 'a')
-  return { agentOf, emit, tool, call, askApproval, stop, archived, rt: ctx.provided.get('omniTeam') }
+  return { agentOf, emit, tool, call, askApproval, stop, archived, rt }
 }
 
 // Waits on real I/O (state writes) without timers, which some tests mock.
@@ -130,7 +132,7 @@ test('a group Session\'s approval waits in the team view, frees the round, and t
   assert.equal(text(post), '[Group post from Writer]\nCopied the doc to E:/docs.')
 })
 
-test('a running task\'s approval stays with DSH and waits under the Bot that started it', async (t) => {
+test('a running task\'s approval races DSH\'s card and waits under the Bot that started it', async (t) => {
   const host = await start({ tasks: {
     t1: { title: 'Plan the launch week', from: 'a', at: 1, status: 'working' },
     t2: { title: 'Old report', from: 'a', at: 1, status: 'done' },
@@ -140,7 +142,7 @@ test('a running task\'s approval stays with DSH and waits under the Bot that sta
   const outcome = host.askApproval('t1', {}, () => new Promise((resolve) => { release = resolve }))
   const { value } = await host.call('state', {})
   const [approval] = value.work.approvals
-  assert.deepEqual([approval.botId, approval.taskId, approval.sessionId, approval.roomId, approval.answerable], ['a', 't1', 't1', undefined, false])
+  assert.deepEqual([approval.botId, approval.taskId, approval.sessionId, approval.roomId, approval.answerable], ['a', 't1', 't1', undefined, true])
   // The Bot shows it needs the user.
   assert.equal(value.activity.a, 'alert')
   release('allowed-once')
@@ -152,7 +154,7 @@ test('a running task\'s approval stays with DSH and waits under the Bot that sta
   assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
 })
 
-test('an own chat\'s approval stays with DSH and is listed while it waits', async (t) => {
+test('an own chat\'s approval races DSH\'s card and is listed while it waits', async (t) => {
   const host = await start()
   t.after(host.stop)
   let release
@@ -177,6 +179,19 @@ test('the team\'s own lookups are not asked about; a message to another Bot stil
   assert.equal(await host.askApproval('a', { toolName: 'read_group_chat' }), 'allowed-once')
   assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
   assert.equal(await host.askApproval('a', { toolName: 'mcp__dsh__message_bot', reason: '{"to":"Genie"}' }), 'from-dsh')
+})
+
+test('an own chat\'s approval propagates a DSH answerer failure and settles', async (t) => {
+  const host = await start()
+  t.after(host.stop)
+  const settled = []
+  host.rt.onApproval((kind, payload) => { if (kind === 'settled') settled.push(payload) })
+  const outcome = host.askApproval('a', {}, () => Promise.reject(new Error('dsh card broke')))
+  const [approval] = host.rt.approvalsView()
+  assert.equal(approval.answerable, true)
+  await assert.rejects(outcome, /dsh card broke/)
+  assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
+  assert.deepEqual(settled.map(entry => [entry.id, entry.outcome]), [[approval.id, 'cancelled']])
 })
 
 test('a member still going keeps its turn; one quiet for the whole wait is missed, and a later [PASS] stays out of the group', async (t) => {

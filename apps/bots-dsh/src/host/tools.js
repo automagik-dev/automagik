@@ -451,7 +451,7 @@ export function install(rt) {
     },
   }))
 
-  ctx.tools.register(defineTool({
+  rt.teamTools.push(defineTool({
     name: 'delete_bot',
     description: 'Main Bot only. Delete a Bot from the team for good, only when the user explicitly asks to delete that Bot. Its memory and conversations are archived, its secrets are deleted, and it leaves every group chat; its tasks go on without it and its folder stays on disk. A Main Bot cannot be deleted, and neither can an adopted DSH bot.',
     parameters: {

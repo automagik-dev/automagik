@@ -69,7 +69,8 @@ export function stackReplies(replies) {
   const items = []
   replies.forEach((reply, index) => {
     const last = items.at(-1)
-    if (reply.kind === undefined && last?.reply.kind === undefined && last?.reply.botId === reply.botId) {
+    // A first reply without an author (the relay parses model output) starts its own block.
+    if (last !== undefined && reply.kind === undefined && last.reply.kind === undefined && last.reply.botId === reply.botId) {
       last.texts.push(reply.text)
       last.time = reply.time
       last.duration = reply.duration

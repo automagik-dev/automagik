@@ -27,7 +27,9 @@ function keyed(ctx, stored, records) {
 }
 
 // Enough of the dsh services for the roster to make Sessions; kickoff messages are dropped.
-function start(team, { models = [], reasoning = {}, archiveError, config = {}, selection } = {}) {
+// With `keys`, the models' route takes an API key and these are the ones set.
+let rt
+function start(team, { models = [], reasoning = {}, archiveError, config = {}, keys, selection } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-roster-'))
   if (team !== undefined) writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const services = {}
@@ -79,7 +81,7 @@ function start(team, { models = [], reasoning = {}, archiveError, config = {}, s
     route = options
     return register(options)
   }
-  apply(ctx, { home, ...config })
+  rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => {
     const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
@@ -290,6 +292,67 @@ test('the state reports a changed model list without a new revision', async (t) 
   const first = (await call('state', {})).value
   assert.equal((await call('state', { since: first.revision, models: first.modelsKey })).value.unchanged, true)
   assert.equal((await call('state', { since: first.revision, models: 'stale' })).value.unchanged, undefined)
+})
+
+test('an unchanged state answer skips the live fields a window already holds', async (t) => {
+  const { call, stop, ctx } = start(undefined, { models: ['deepseek-v4-flash'] })
+  t.after(stop)
+  const first = (await call('state', {})).value
+  assert.equal(typeof first.liveKey, 'string')
+  // The window echoes the live key it holds; while it still names the answer,
+  // the live fields stay out.
+  const quiet = (await call('state', { since: first.revision, models: first.modelsKey, live: first.liveKey })).value
+  assert.equal(quiet.unchanged, true)
+  assert.equal(quiet.liveKey, first.liveKey)
+  assert.equal(quiet.activity, undefined)
+  assert.equal(quiet.work, undefined)
+  assert.equal(quiet.connectors, undefined)
+  // A key that names an older answer still gets the fields with the current one.
+  const stale = (await call('state', { since: first.revision, models: first.modelsKey, live: 'an older answer' })).value
+  assert.equal(stale.unchanged, true)
+  assert.equal(stale.liveKey, first.liveKey)
+  assert.equal(typeof stale.activity, 'object')
+  assert.equal(typeof stale.work, 'object')
+  // Live state that changes without a new revision moves the key.
+  const chief = first.bots.find(bot => bot.id === first.mainBotId)
+  for (const listener of ctx.listeners.get('session/event') ?? []) {
+    listener({ id: chief.sessionId ?? chief.id }, { type: 'turn/start', data: { turn: 1 }, time: Date.now() })
+  }
+  const working = (await call('state', { since: first.revision, models: first.modelsKey, live: first.liveKey })).value
+  assert.equal(working.unchanged, true)
+  assert.notEqual(working.liveKey, first.liveKey)
+  assert.equal(Object.keys(working.work?.bots ?? {}).length, 1)
+  // And once it holds that answer, the next poll is small again.
+  const again = (await call('state', { since: first.revision, models: first.modelsKey, live: working.liveKey })).value
+  assert.equal(again.unchanged, true)
+  assert.equal(again.activity, undefined)
+})
+
+test('a window holding live state gets fresh fields after the host restarts at the same revision', async (t) => {
+  const first = start({ version: 1, mainBotIds: ['chief'], bots: { chief: { id: 'chief', sessionId: 'chief', name: 'Chief' } } })
+  t.after(first.stop)
+  await rt.teamTools.find(d => d.name === 'list_bots').execute({}, { agent: { id: 'chief' } })
+  // Start working before the first poll, so both runs' first live answer would
+  // have counter 1 even though one is working and the other is idle.
+  for (const listener of first.ctx.listeners.get('session/event') ?? []) {
+    listener({ id: 'chief' }, { type: 'turn/start', data: { turn: 1 }, time: Date.now() })
+  }
+  const held = (await first.call('state', {})).value
+  assert.equal(Object.keys(held.work.bots).length, 1)
+  await first.ctx.dispose()
+  const saved = JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8'))
+  const second = start(saved)
+  t.after(second.stop)
+  const now = (await second.call('state', { since: held.revision, models: held.modelsKey, live: held.liveKey })).value
+  assert.equal(now.unchanged, true)
+  assert.equal(now.revision, held.revision)
+  assert.deepEqual(now.work?.bots, {})
+  assert.deepEqual(now.activity, {})
+  assert.notEqual(now.liveKey, held.liveKey)
+  const quiet = (await second.call('state', { since: now.revision, models: held.modelsKey, live: now.liveKey })).value
+  assert.equal(quiet.liveKey, now.liveKey)
+  assert.equal(quiet.work, undefined)
+  assert.equal(quiet.activity, undefined)
 })
 
 test('a new team starts with a DeepSeek-blue octopus as its Main Bot', async (t) => {
@@ -1182,7 +1245,7 @@ test('a non-Main Bot still cannot change another Bot\u2019s thinking level', asy
   const writer = (await call('create-bot', { name: 'Writer', model: 'deepseek/deepseek-v4-flash', effort: 'high' })).value
   await until(() => sent.some(entry => entry.sessionId === writer.id))
   const exec = { agent: { id: writer.id } }
-  assert.match(await ctx.registeredTools.get('update_bot').execute({ bot: 'Omni', effort: 'low' }, exec), /^Only a Main Bot can change another Bot/)
+  assert.match(await rt.teamTools.find(d => d.name === 'update_bot').execute({ bot: 'Omni', effort: 'low' }, exec), /^Only a Main Bot can change another Bot/)
   // Its own level it may change.
   assert.equal(await rt.teamTools.find(d => d.name === 'update_bot').execute({ effort: 'low' }, exec), 'Updated Writer.')
   assert.equal((await call('state', {})).value.bots.find(bot => bot.id === writer.id).effort, 'low')
@@ -1297,7 +1360,7 @@ test('a photo that cannot be read changes nothing, and a non-Main Bot cannot set
   await until(() => sent.some(entry => entry.sessionId === writer.id))
   const mine = { agent: { id: writer.id } }
   // Another Bot's photo is a Main Bot's to change, as its other settings are.
-  assert.match(await ctx.registeredTools.get('update_bot').execute({ bot: 'Omni', avatar: PNG_DATA_URL }, mine), /^Only a Main Bot can change another Bot/)
+  assert.match(await rt.teamTools.find(d => d.name === 'update_bot').execute({ bot: 'Omni', avatar: PNG_DATA_URL }, mine), /^Only a Main Bot can change another Bot/)
   assert.equal((await call('state', {})).value.bots.find(bot => bot.id === chief).avatar?.image, undefined)
   // Its own it may set; a later bad photo leaves the good one alone.
   assert.equal(await rt.teamTools.find(d => d.name === 'update_bot').execute({ avatar: PNG_DATA_URL }, mine), 'Updated Writer.')

@@ -129,8 +129,6 @@ const api = (handlers = {}) => {
     memoryReviews: () => ({}),
     connectorsView: () => ({}),
     capabilityStatusesView: () => ({}),
-    phoneView: () => null,
-    phoneServe: () => {},
     selfOf: id => handlers.selfOf?.(id),
     thinkingOf: handlers.thinkingOf ?? (async () => undefined),
     // Omni's extension registry (extend.js): no other plugin adds endpoints here.
