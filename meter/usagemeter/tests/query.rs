@@ -4517,13 +4517,15 @@ fn hourly_below_evidence_adds_nothing_and_a_second_model_still_counts() {
     s.store()
         .conn
         .execute(
-            "UPDATE usage SET input_uncached = 100, cache_read = 0, output = 0
+            "UPDATE usage SET input_uncached = 200, cache_read = 0, output = 0
              WHERE hour_ms = ?1 AND model = ?2",
             params![t(since), CLAUDE_MODEL],
         )
         .unwrap();
+    // Column-wise: input is 90 over the calls' 110, cache read and output are short; only the 90
+    // counts (a total-wise difference would be negative and count nothing).
     let v = ask(&s, "branch", since, until, &[]);
-    assert_eq!(figures(&v), (0, 0), "{v}");
+    assert_eq!(figures(&v), (90, 90), "{v}");
     put_hourly(
         &s,
         "claude-sonnet-5-5",
@@ -4535,7 +4537,7 @@ fn hourly_below_evidence_adds_nothing_and_a_second_model_still_counts() {
         0,
     );
     let v = ask(&s, "branch", since, until, &[]);
-    assert_eq!(figures(&v), (300, 300), "{v}");
+    assert_eq!(figures(&v), (390, 390), "{v}");
     assert_eq!(v["rows"][0]["tokens"]["total"], 1650);
 }
 
