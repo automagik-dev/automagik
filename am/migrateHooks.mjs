@@ -32,6 +32,8 @@ import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 export const HOOKS_JOURNAL = "hooks-journal.json";
 export const BACKUP_SUFFIX = ".am-backup";
 export const CLI_LINK = "automagik-herdr";
+/** The same command under its own name (install.sh links both). */
+export const AM_LINK = "am";
 /** The sidebar folders, in the order the entry point tries them. */
 export const SIDEBARS = Object.freeze([PACK_NAME, OLD_PACK_NAME]);
 const MAX_BACKUPS = 100;
@@ -782,10 +784,15 @@ export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit, w
  * there: nothing. Returns the line to log, or null.
  */
 export function relink({ binDir, modsDir, owned }) {
-  const link = join(binDir, CLI_LINK);
+  const lines = [CLI_LINK, AM_LINK].map((name) => relinkOne({ binDir, modsDir, owned, name })).filter(Boolean);
+  return lines.length ? lines.join("; ") : null;
+}
+
+function relinkOne({ binDir, modsDir, owned, name }) {
+  const link = join(binDir, name);
   const st = lstat(link);
   if (!st) return null;
-  if (!st.isSymbolicLink()) return `left ${link} alone: it is a file, not a link (remove it and run install.sh again to link automagik-herdr)`;
+  if (!st.isSymbolicLink()) return `left ${link} alone: it is a file, not a link (remove it and run install.sh again to link ${name})`;
   const bin = (m) => join(resolve(modsDir), m, "bin");
   const entries = (m) => [join(bin(m), "automagik-herdr"), join(bin(m), "automagik-herdr.mjs")];
   const cli = (m) => entries(m).find((p) => isFile(p)) ?? null;
@@ -793,7 +800,7 @@ export function relink({ binDir, modsDir, owned }) {
   if (!SIDEBARS.some((m) => entries(m).includes(to))) return null;
   const want = SIDEBARS.find((m) => owned.has(m) && cli(m));
   if (!want || to === cli(want)) return null;
-  const tmp = join(binDir, `.${CLI_LINK}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`);
+  const tmp = join(binDir, `.${name}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`);
   symlinkSync(cli(want), tmp);
   try { renameSync(tmp, link); } catch (error) { removePath(tmp, { force: true }); throw error; }
   return `linked ${link} to ${cli(want)}`;
