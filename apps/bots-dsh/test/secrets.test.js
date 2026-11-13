@@ -238,6 +238,19 @@ test('a full value starting inside a leading piece is still replaced whole', () 
   assert.equal(out.includes(second.slice(12)), false)
 })
 
+// A full value that starts four characters into another value's leading piece is still
+// replaced whole: the piece stops before it, and that shorter piece is redacted too.
+test('a full value starting four characters into a leading piece is still replaced whole', () => {
+  const second = `tok_${fresh()}`
+  const piece = `pad-${second.slice(0, 16)}`
+  const first = `outer-${piece}`
+  const text = `${piece}${second.slice(16)} rest ${'z'.repeat(64_000)}`
+  const redact = redactor([{ name: 'FIRST', value: first }, { name: 'SECOND', value: second }])
+  const out = redact(text)
+  assert.equal(out, `[secret:FIRST][secret:SECOND] rest ${'z'.repeat(64_000)}`)
+  assert.equal(out.includes(second.slice(16)), false)
+})
+
 // A byte cut inside a multi-byte character leaves a replacement character before the tail.
 test('a byte cut inside a multi-byte character still redacts the value tail', () => {
   const value = `${fresh()}é${fresh()}`
@@ -249,6 +262,20 @@ test('a byte cut inside a multi-byte character still redacts the value tail', ()
   const tail = value.slice(value.indexOf('é') + 1)
   assert.ok(kept.startsWith(`\uFFFD${tail}`))
   assert.equal(redact(kept), `[secret:UNI]${'z'.repeat(kept.length - 1 - tail.length)}`)
+})
+
+// A 4-byte character cut after its first byte leaves three replacement characters, the
+// most the skip covers, before the value's tail starts.
+test('a byte cut inside a 4-byte character still redacts the value tail', () => {
+  const value = `${fresh()}😀${fresh()}`
+  const redact = redactor([{ name: 'FOUR', value }])
+  const KEPT = 64_000
+  const bytes = Buffer.from(value + 'z'.repeat(KEPT), 'utf8')
+  const at = Buffer.byteLength(value.slice(0, value.indexOf('😀')), 'utf8')
+  const kept = bytes.subarray(at + 1, at + 1 + KEPT).toString('utf8')
+  const tail = value.slice(value.indexOf('😀') + '😀'.length)
+  assert.ok(kept.startsWith(`\uFFFD\uFFFD\uFFFD${tail}`))
+  assert.equal(redact(kept), `[secret:FOUR]${'z'.repeat(kept.length - 3 - tail.length)}`)
 })
 
 // The leading-piece match runs only where the 64,000-byte kept tail can start inside a value.
