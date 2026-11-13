@@ -1438,7 +1438,7 @@ a worker and a Restart --tree helper:
   permitted locations may require automatic review or fail. See #1151." The mode words,
   `--no-daemon` and the network switch stay either way. A template worker runs its own command
   and gets neither the pack's folders nor this warning.
-- Known limit (#1151, accepted by the owner): a bind mount that shows a folder inside an app home
+- Known limit (tracked in #1151): a bind mount that shows a folder inside an app home
   under another path has that folder's own device and inode, and no folder above it is an app
   home, so the pack can't tell it apart and may grant it. The pack claims no bind containment. (A
   bind of an app home itself, or of a folder above one, is the same object and is refused.)

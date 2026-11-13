@@ -588,7 +588,7 @@ export function codexWhere({ home = null, appHome = null, resolve = null, id = n
  * can be observed refuses `dir` by identity too; one that can't (an absent optional cache, say)
  * is not granted itself and withholds nothing. A where without observations never grants, except
  * codexWhereThere's (deferred: the destination weighs those words). This is not a proof against a
- * bind mount that shows the app home under another path (#1151, an accepted limit).
+ * bind mount that shows a folder inside an app home under another path (a known limit, #1151).
  */
 export function codexDirVerdict(dir, where = {}, general = []) {
   if (typeof dir !== "string" || !dir.startsWith("/") || dir === "/") return "refused";
