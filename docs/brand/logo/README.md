@@ -33,7 +33,7 @@ The mark with the wordmark: the triskle for `automagik`, and each product's own 
 - `mykes-clean-lockup-ink.svg`, `-cream.svg`: the cords with the mykes word.
 - They share Automagik's frame: 264 units high, the small letters 136 high on a baseline at 18, and the same space from the mark to the word. At one height the letters are the same size in all of them.
 - The vortex and the cords fill the box Automagik's triskle fills. The lamp is wide and short, so it is centred on the small letters, and its foot sits a little under their baseline.
-- The genie and omni words are the files in `wordmark/`, placed whole and unchanged, with their sparkle. The mykes word has no i and so no sparkle; its letters are in its lockup only.
+- The genie and omni words are the files in `wordmark/`, placed whole and unchanged, with their sparkle. The mykes word has no i and so no sparkle; its letters are the same outline as the mykes files in `wordmark/`.
 
 **The `genie-lockup-*` and `omni-lockup-*` files are RETIRED.** They carry the triskle, which is Automagik's alone. Do not use them: Genie's lockup is `genie-lamp-lockup-*` and Omni's is `omni-mark-lockup-*`. The files stay here for older work that points at them, and they are not to be changed.
 
@@ -46,11 +46,12 @@ The notes below are for Automagik's lockup; the retired files were built the sam
 
 ## Wordmark: `wordmark/`
 
-The name alone, in the approved round lowercase lettering, with the product's sparkle on the i. The letters are outlines; no font is needed. A product's word alone is a correct form, as Automagik's name without its mark is (the README's rule 10). There is no wordmark file for Mykes: its letters are in its lockup.
+The name alone, in the approved round lowercase lettering, with the product's sparkle on the i. The letters are outlines; no font is needed. A product's word alone is a correct form, as Automagik's name without its mark is (the README's rule 10). The mykes word has no i and so no sparkle.
 
 - One file per name and letter colour: `-ink` for light grounds, `-cream` for dark grounds.
 - The files are as high as the lockup frame, so a wordmark and a lockup at one height have letters of one size.
-- **This is the one place the lettering is drawn.** The lockups are built from these files. To change the wordmark, replace these files under the same names and rebuild the lockups. (The mykes letters, in its lockup, are the one exception until Mykes has a wordmark file.)
+- **This is the one place the lettering is drawn.** The lockups are built from these files. To change the wordmark, replace these files under the same names and rebuild the lockups. (The mykes lockup is the one exception: it is we unfold's file as handed over, and its letters are the same outline as the mykes wordmark file's.)
+- `mykes-wordmark-ink.svg` and `mykes-wordmark-cream.svg`: the word "mykes" in the same lettering, for the family's menu drawer, where Omni, Genie and Mykes each stand as a word with no mark. They are we unfold's files, the ones the Mykes deck uses, kept here as byte copies (there named `mykes-word-day.svg` and `mykes-word-night.svg`). The word has no sparkle. Its frame is 257 units high where the others' is 264, on the same line: show it at 257/264 of the others' height and the letters are one size.
 
 ## Where Genie's, Omni's and Mykes's files came from
 

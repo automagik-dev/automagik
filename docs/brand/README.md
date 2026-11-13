@@ -52,6 +52,7 @@ It is documentation. No build, app or release reads this folder.
 | A browser tab | `favicon/favicon.ico` and `favicon/favicon.svg` |
 | A phone's home screen, a web manifest | `favicon/apple-touch-icon.png`, `favicon/icon-192.png`, `favicon/icon-512.png` |
 | Automagik's name without the mark | `logo/wordmark/automagik-wordmark-ink.svg` or `-cream.svg` |
+| Mykes's name without the mark | `logo/wordmark/mykes-wordmark-ink.svg` or `-cream.svg` |
 | Colour cannot be used | the files with `-ink` or `-cream` and no `three-colours` in the name |
 
 - "ink" means ink letters, for light grounds. "cream" means cream letters, for dark grounds.
@@ -155,7 +156,6 @@ These are on the site but are not part of this folder:
 - **The Open Intelligence tag** and the IBM Plex Mono face it is set in. They are we unfold's.
 - **Omni's art and the pet art.** No approved file for them is in this set, and pets are never marks.
 - **Any other drawing of a lamp, a vortex or cords.** The approved marks of Genie, Omni and Mykes are the files in `logo/svg/` and `logo/lockups/` (rule 9), and nothing else. The site's `lamp.webp` is not Genie's mark.
-- **A wordmark file for Mykes.** Its letters are in its lockup only.
 - **Other projects' marks** in the "made possible by" row, and Arca's logo.
 - **The home page's layouts**: the hero with the cast, the grid's arrangement, the phone menu.
 - **Motion.** The site's motion rules are in the component stylesheet; there are no motion tokens.
