@@ -23951,7 +23951,7 @@ var PLUGINS_COMING = /* @__PURE__ */ new Set(["ready", "downloading"]);
 function opensIntoPlugins(bridge, state) {
   if (!bridge || typeof bridge.check === "function") return false;
   if (state == null) return true;
-  if (!splitsPlugins(state) || state.plugins.auto === false) return false;
+  if (!splitsPlugins(state)) return false;
   return PLUGINS_COMING.has(state.plugins.phase) || state.kind === "plugins" && PLUGINS_COMING.has(state.phase);
 }
 var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href, target: "_blank", rel: "noopener noreferrer" });
