@@ -455,9 +455,10 @@ export function install(rt) {
     // the record. A selection DSH turns down refuses the whole update, with nothing written.
     const markBefore = markOf(bot.model)
     const revBefore = bot.permissionRev
-    if (patch.permission !== undefined || patch.denyTools !== undefined || (patch.model !== undefined && (bot.permissionAuto
+    if (patch.permission !== undefined || (patch.model !== undefined && (bot.permissionAuto
       ? markOf(String(patch.model)) !== bot.permissionAuto
       : String(patch.model).split('/')[0] !== 'acp-codex'))) await rt.clearAuto?.(bot)
+    if (patch.denyTools !== undefined && bot.permissionRev === revBefore) rt.movePermissionRev(bot)
     const modelChanged = patch.model !== undefined || patch.effort !== undefined
     const modelBefore = modelChanged ? modelFields(bot) : undefined
     if (modelChanged) await switchModel(bot, patch, modelRef, effortId)
@@ -519,6 +520,7 @@ export function install(rt) {
     // a name added now disappears at once and a name removed comes back.
     if (denyTools !== undefined) {
       await rt.applyToolDeny(bot)
+      if (bot.permissionAuto) rt.endAuto(bot)
       // The list changed either way: a restricted Bot's already-armed fresh-Session tasks
       // would keep opening Sessions no deny layer can bind (#584, L5), and a Bot that just
       // became unrestricted releases a task whose pause had been stuck.
