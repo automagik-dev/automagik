@@ -195,10 +195,10 @@ test('an old paused round shows the pause as a plain line', () => {
 // #872: Bots that went back and forth without progress paused; the line names both
 // and says what lets them go on.
 test('a round the idle guard paused names the Bots and how they go on', () => {
-  const replies = [{ kind: 'paused', idle: true, botId: 'chief', name: 'Chief', names: ['Writer'], count: 6, limit: 6, time: at(0, 14, 5) }]
+  const replies = [{ kind: 'paused', idle: true, botId: 'chief', name: 'Omni', names: ['Writer'], count: 6, limit: 6, time: at(0, 14, 5) }]
   const out = show(call('group_relay', 'direct', { content: { replies } }), { sessionId: 'room' })
   const events = findAll(out, node => node.props?.className === 'bt-event').map(text)
-  assert.deepEqual(events, ['Chief and Writer went back and forth 6 times without progress and paused. Write here to go on'])
+  assert.deepEqual(events, ['Omni and Writer went back and forth 6 times without progress and paused. Write here to go on'])
 })
 
 // The admin was alone with the user's message and passed: the round shows the
@@ -832,7 +832,7 @@ test('a group relay recovers replies after the prune marker with and without a r
   const inside = '{"replies":[{"botId":"writer","text":"First."},{"botId":"chief","text":"cut[... tool result middle pruned ...]{"botId":"writer","text":"Last."}]}'
   for (const args of [{}, { roundId: 'round-2' }]) {
     const out = show(call('group_relay', 'direct', { args, content: between }), { sessionId: 'room' })
-    assert.match(text(out), /Writer.*First\..*Chief.*Last\./)
+    assert.match(text(out), /Writer.*First\..*Omni.*Last\./)
     const out2 = show(call('group_relay', 'direct', { args, content: inside }), { sessionId: 'room' })
     assert.match(text(out2), /Writer.*First\..*Last\./)
     assert.doesNotMatch(text(out2), /round-2/)
@@ -1569,4 +1569,16 @@ test('a message kept as a file starts the clipboard write inside its click, befo
   release({ text: full, whole: true })
   await copying
   assert.deepEqual(copiedTexts, [inner])
+})
+
+// The repair card's Retry reaches the Bot as a plugin trigger; the chat shows that it went
+// on, never the note to the Bot or the user's message again.
+test('a Retry after a failed turn shows as one event line', () => {
+  const out = expand(TriggerCell({
+    node: { key: 'trigger', kind: 'turn-trigger', location: { turn: { turn: 4 } }, data: { seq: 9, time: 1, content: text$('[Retry after a failed turn]\nYour last turn failed (AUTH) and the user has fixed it.'), source: { kind: 'bot', role: 'continue', exchangeId: 'c1' } } },
+    sessionId: chief.id, actions: {},
+    useRoster: select => select(team()), useSessions: select => select({ byId: {} }),
+    useTurnClock: select => select({}), useUi: select => select({ visits: {}, reactions: {} }),
+  }))
+  assert.equal(text(out), 'Went on after the failed turn')
 })

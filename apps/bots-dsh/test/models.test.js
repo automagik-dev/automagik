@@ -52,6 +52,32 @@ test('the default model can run: a provider without its key is passed over, and 
   assert.equal(await rt(undefined, ['deepseek'], lineup).desiredModel({ model: 'gone/model' }), 'gateway/opus')
 })
 
+// DSH serves the models of a provider whose key is not set; every turn on them fails.
+function withoutKeys(defaultSelection, providers) {
+  const rt = runtime(defaultSelection)
+  rt.missingKeys = async () => new Set(providers)
+  return rt
+}
+
+test('a model that needs a key is never a default or a fallback, though a Bot keeps its own', async () => {
+  const rt = withoutKeys({ provider: 'deepseek', model: 'deepseek-v4-pro' }, ['deepseek'])
+  assert.equal(await rt.defaultModel(), 'ollama/kimi-k3')
+  assert.equal(rt.cachedDefault(), 'ollama/kimi-k3')
+  assert.equal(rt.isUsable('ollama/kimi-k3'), true)
+  assert.equal(rt.isUsable('deepseek/deepseek-v4-pro'), false)
+  assert.equal(rt.isUsable(undefined), false)
+  assert.equal(await rt.desiredModel({ model: 'deepseek/deepseek-v4-pro' }), 'deepseek/deepseek-v4-pro')
+  assert.equal(await rt.desiredModel({ model: 'gone/model', appliedModel: 'deepseek/deepseek-v4-pro' }), 'ollama/kimi-k3')
+  assert.equal(await rt.desiredModel({ model: 'gone/model', appliedModel: 'ollama/deepseek-v4-pro' }), 'ollama/deepseek-v4-pro')
+})
+
+test('with every model needing a key, nothing is picked', async () => {
+  const rt = withoutKeys({ provider: 'ollama', model: 'kimi-k3' }, ['deepseek', 'ollama'])
+  assert.equal(await rt.defaultModel(), undefined)
+  assert.equal(rt.cachedDefault(), undefined)
+  assert.equal(await rt.desiredModel({ model: 'gone/model', appliedModel: 'ollama/kimi-k3' }), undefined)
+})
+
 test('a model is named by its ref, or by an id or name only one provider serves', async () => {
   const rt = runtime(undefined)
   assert.equal(await rt.resolveModel('ollama/kimi-k3'), 'ollama/kimi-k3')
@@ -277,6 +303,53 @@ test('an agent effort maps by its own id; a level it does not list stays on the 
   for (const effort of ['off', 'minimal']) {
     assert.equal(await desired('acp-codex/default', effort), undefined)
   }
+})
+
+test('group selections sync per Session even when the Bot-level fields already match', async () => {
+  const { rt, selected } = bench({ reasoning: { 'deepseek/v4-flash': { reasoning: { efforts: [{ id: 'low' }, { id: 'high' }], defaultEffort: 'high' } } } })
+  const bot = { id: 'b1', model: 'deepseek/v4-flash', effort: 'low', appliedModel: 'deepseek/v4-flash', appliedEffort: 'low' }
+  const groups = ['g1', 'g2']
+  rt.groupSessionsOf = () => groups
+  const select = rt.ctx.sessionController.selectModel
+  rt.ctx.sessionController.selectModel = async (request) => {
+    await select(request)
+    return { selected: { provider: request.provider, model: request.model, reasoningEffort: request.reasoningEffort ?? 'high' } }
+  }
+  await rt.applyModel(bot)
+  assert.deepEqual(selected, ['g1:deepseek/v4-flash:low', 'g2:deepseek/v4-flash:low'])
+  await rt.applyModel(bot)
+  assert.equal(selected.length, 2)
+  groups.push('g3')
+  await rt.applyModel(bot)
+  assert.deepEqual(selected.slice(2), ['g3:deepseek/v4-flash:low'])
+
+  delete bot.effort
+  await rt.applyModel(bot)
+  assert.deepEqual(selected.slice(3), ['b1:deepseek/v4-flash', 'g1:deepseek/v4-flash', 'g2:deepseek/v4-flash', 'g3:deepseek/v4-flash'])
+  // The provider's resolved default is not an explicit Bot choice to reapply.
+  await rt.applyModel(bot)
+  assert.equal(selected.length, 7)
+  await rt.applyModel(bot, { force: true })
+  assert.equal(selected.length, 11)
+})
+
+test('a failed group selection is retried without reselecting the own chat or successful groups', async () => {
+  const { rt, selected } = bench()
+  const bot = { id: 'b1', model: 'deepseek/v4-flash', appliedModel: 'deepseek/v4-flash' }
+  rt.groupSessionsOf = () => ['g1', 'g2']
+  const select = rt.ctx.sessionController.selectModel
+  let failed = false
+  rt.ctx.sessionController.selectModel = async (request) => {
+    if (request.sessionId === 'g2' && !failed) {
+      failed = true
+      throw new Error('Session unavailable')
+    }
+    return select(request)
+  }
+  await rt.applyModel(bot)
+  assert.deepEqual(selected, ['g1:deepseek/v4-flash'])
+  await rt.applyModel(bot)
+  assert.deepEqual(selected, ['g1:deepseek/v4-flash', 'g2:deepseek/v4-flash'])
 })
 
 test('resolveEffort takes an id or a name, and refuses what the model has not', async () => {

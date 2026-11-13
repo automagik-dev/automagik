@@ -8,9 +8,6 @@ import { fakeContext } from './fake-ctx.js'
 import { until } from './until.js'
 
 const QUESTION = 'ask_user_question'
-const AGENT_TEAMS = ['spawn_teammate', 'wait_agent', 'team_task_create', 'team_task_get', 'team_task_list', 'team_task_update']
-const DELEGATION = ['subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'list_subagent_models', 'send_message', 'interrupt_agent', 'list_agents', 'workflow', 'ralph', ...AGENT_TEAMS]
-const DELEGATION_REFUSAL = 'Bots do not start subagents, teammates or workflows. Do the work yourself, or hand it to another Bot with message_bot.'
 
 const team = () => ({
   version: 1,
@@ -173,8 +170,8 @@ test('an adopted DSH Bot retains native question and goal tools alongside team t
   await new Promise(resolve => setTimeout(resolve, 20))
   for (const id of ['writer', 'fresh-writer', 'room-writer']) assert.equal(goals.current.get(id).phase, 'active')
   assert.deepEqual(goals.blocked, [])
-  assert.ok(ctx.registeredTools.has('message_bot'))
-  assert.ok(ctx.registeredTools.has('list_bots'))
+  assert.ok(rt.teamTools.some(tool => tool.name === 'message_bot'))
+  assert.ok(rt.teamTools.some(tool => tool.name === 'list_bots'))
 })
 
 test('the guard refuses the blocking question tool in Bot Sessions only', async (t) => {
@@ -227,7 +224,7 @@ test('a goal started in a Bot chat or a group is blocked; one elsewhere runs', a
   await until(() => goals.blocked.length === 3, { label: 'the three Bot and group goals are blocked', t })
   await new Promise(resolve => setTimeout(resolve, 20))
   assert.deepEqual(goals.blocked.map(entry => entry.sessionId), ['writer', 'room', 'room-writer'])
-  for (const entry of goals.blocked) assert.deepEqual([entry.code, entry.message], ['not-supported', 'Omni does not run goals. Ask the Bot in a message instead.'])
+  for (const entry of goals.blocked) assert.deepEqual([entry.code, entry.message], ['not-supported', 'Bot chats do not run /goal. To give a group a goal, use Set a goal in its + menu.'])
   assert.equal(goals.current.get('plain').phase, 'active')
 })
 
@@ -242,60 +239,10 @@ test('without DSH\'s goal service a goal change is left alone', async (t) => {
   assert.deepEqual(warnings, [])
 })
 
-// Fei2411/DS-Bot#798: a Bot could call dsh's delegation tools; the child agents they
-// start run out of the user's sight and die with the part that started them.
-test('a Bot\'s chat and its group Sessions lose the delegation tools; other Sessions keep them', async (t) => {
-  const servedDelegation = ['subagent', 'subagent_fork', 'list_subagent_models', 'send_message', 'interrupt_agent', 'list_agents', 'workflow']
-  const { agentFor, hidden, stop } = await setup({ served: ['read', 'ask_user', QUESTION, ...servedDelegation] })
-  t.after(stop)
-  for (const id of ['chief', 'writer', 'room-writer', 'plain', 'elsewhere']) await agentFor(id)
-  for (const id of ['chief', 'writer', 'room-writer']) assert.deepEqual(hidden.filter(([sessionId]) => sessionId === id), [[id, [QUESTION]], [id, servedDelegation]])
-  assert.deepEqual(hidden.filter(([sessionId]) => sessionId === 'plain' || sessionId === 'elsewhere'), [])
-})
-
-// Fei2411/DS-Bot#973: an admin started an Agent Teams teammate it could not message,
-// list or stop; the teammate died and nobody heard of it. Agent Teams registers its
-// tools in each Agent's own scope, where restrict() cannot reach them; the guard test
-// below is what holds there.
-test('a Bot\'s chat and its group Sessions mask the Agent Teams tools; other Sessions keep them', async (t) => {
-  const { agentFor, hidden, stop } = await setup({ served: ['read', 'ask_user', 'send_message', 'list_agents', ...AGENT_TEAMS] })
-  t.after(stop)
-  for (const id of ['chief', 'room-writer', 'plain']) await agentFor(id)
-  for (const id of ['chief', 'room-writer']) assert.deepEqual(hidden.filter(([sessionId]) => sessionId === id), [[id, ['send_message', 'list_agents', ...AGENT_TEAMS]]])
-  assert.deepEqual(hidden.filter(([sessionId]) => sessionId === 'plain'), [])
-})
-
-test('the guard refuses the delegation tools in Bot Sessions only', async (t) => {
-  const { guard, stop } = await setup()
-  t.after(stop)
-  for (const name of DELEGATION) {
-    for (const sessionId of ['chief', 'writer', 'room-writer']) assert.equal(guard(name, sessionId), DELEGATION_REFUSAL)
-    for (const sessionId of ['plain', 'elsewhere', undefined]) assert.equal(guard(name, sessionId), undefined)
-  }
-  assert.equal(guard('read', 'writer'), undefined)
-  assert.equal(guard('message_bot', 'writer'), undefined)
-})
-
-// restrict() throws away the whole list when one name sits in the Agent's own scope,
-// so each name is masked on its own after the group fails; what stays is covered by
-// the assembly filter and the guard.
-test('a delegation name restrict() cannot mask keeps the other masks and stays refused', async (t) => {
-  const { rt, agentFor, hidden, guard, stop } = await setup({ served: ['read', 'ask_user', QUESTION, 'subagent', 'send_message'], throwOn: 'send_message' })
-  t.after(stop)
-  const warnings = []
-  rt.warn = (...args) => warnings.push(args)
-  await agentFor('chief')
-  assert.deepEqual(hidden, [['chief', [QUESTION]], ['chief', ['subagent']]])
-  assert.deepEqual(warnings, [])
-  // The Session is marked anyway, so resolving it again adds no restrict entries.
-  await rt.resolveAgent('chief')
-  assert.deepEqual(hidden, [['chief', [QUESTION]], ['chief', ['subagent']]])
-  assert.equal(guard('send_message', 'chief'), DELEGATION_REFUSAL)
-})
-
-// The standard preset registers subagent (model selection) in the Agent's own scope,
-// which restrict() and a same-name section cannot reach, so Bot Sessions filter the
-// hidden tools and their guidance sections out of the assembled prompt instead.
+// The standard preset registers its tools in the Agent's own scope, which restrict() and a
+// same-name section cannot reach, so Bot Sessions filter the hidden tools and their
+// guidance out of the assembled prompt instead. A Bot keeps DSH's delegation tools (its
+// subagents are the team's own): only the blocking question and the Session goal go.
 test('Bot Sessions filter the hidden tools and their guidance out of the prompt assembly', async (t) => {
   const { rt, agentFor, scopedListeners, stop } = await setup({ served: ['read'] })
   t.after(stop)
@@ -308,30 +255,23 @@ test('Bot Sessions filter the hidden tools and their guidance out of the prompt 
   await rt.resolveAgent('chief')
   assert.equal(scopedListeners.length, 4)
   const filtered = await filters[0].listener({}, {}, async () => ({
-    sections: [{ name: 'bot-identity' }, { name: 'tool:goal' }, { name: 'tool:workflow' }, { name: 'tool:subagent' }, { name: 'tool:bash' }],
+    sections: [{ name: 'bot-identity' }, { name: 'tool:goal' }, { name: 'tool:ask_user_question' }, { name: 'tool:workflow' }, { name: 'tool:subagent' }, { name: 'tool:bash' }],
     contexts: [{ name: 'x' }],
-    tools: [{ name: 'read' }, { name: 'subagent' }, { name: 'workflow' }, { name: 'send_message' }, { name: 'message_bot' }, { name: 'ask_user_question' }],
+    tools: [{ name: 'read' }, { name: 'subagent' }, { name: 'workflow' }, { name: 'send_message' }, { name: 'message_bot' }, { name: 'ask_user_question' }, { name: 'create_goal' }],
     variables: { a: 1 },
   }))
-  assert.deepEqual(filtered.sections.map(section => section.name), ['bot-identity', 'tool:bash'])
-  assert.deepEqual(filtered.tools.map(tool => tool.name), ['read', 'message_bot'])
+  assert.deepEqual(filtered.sections.map(section => section.name), ['bot-identity', 'tool:workflow', 'tool:subagent', 'tool:bash'])
+  assert.deepEqual(filtered.tools.map(tool => tool.name), ['read', 'subagent', 'workflow', 'send_message', 'message_bot'])
   assert.deepEqual(filtered.contexts, [{ name: 'x' }])
   assert.deepEqual(filtered.variables, { a: 1 })
-  // Fei2411/DS-Bot#814: DSH 0.2.2 adds the tool list after this waterfall, so the
-  // assembly it passes has none; the guidance is still filtered and no tools appear.
+  // DSH 0.2.2 adds the tool list after this waterfall, so the assembly it passes has
+  // none; the guidance is still filtered and no tools appear.
   const current = await filters[0].listener({}, {}, async () => ({
-    sections: [{ name: 'bot-identity' }, { name: 'tool:subagent' }],
+    sections: [{ name: 'bot-identity' }, { name: 'tool:goal' }],
     contexts: [],
     variables: {},
   }))
   assert.deepEqual(current, { sections: [{ name: 'bot-identity' }], contexts: [], variables: {} })
-  // Fei2411/DS-Bot#973: Agent Teams' Team Lead guidance goes too.
-  const team = await filters[0].listener({}, {}, async () => ({
-    sections: [{ name: 'bot-identity' }, { name: 'team:policy' }, { name: 'tool:spawn_teammate' }],
-    contexts: [],
-    variables: {},
-  }))
-  assert.deepEqual(team.sections.map(section => section.name), ['bot-identity'])
   // The computer-use filter keeps everything but the provider's own sections.
   const computer = await filters[1].listener({}, {}, async () => ({
     sections: [{ name: 'bot-identity' }, { name: 'computer-use:dsh-cua' }],

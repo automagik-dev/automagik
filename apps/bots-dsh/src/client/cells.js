@@ -20,7 +20,7 @@ import { dateLocale, t } from './i18n.js'
 import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
 import { turnReasoning, thinkingStep, opensReply, stepActivity } from './turn-reasoning.js'
-import { parseReplies, relayRange } from '../shared/group-replies.js'
+import { parseReplies, relayRange, stackReplies } from '../shared/group-replies.js'
 import { FOLD_AT, FOLD_HUGE, NEVER, stripLongNote, useFold } from './fold.js'
 import { noHover, useViewport, viewBottom } from './motion.js'
 import { heldCardKey } from './sources.js'
@@ -412,22 +412,8 @@ function GroupMessage({ bot, text, texts = [text], room, roster, actions, msgKey
     h(Bubbles, { texts, roster, selfId: bot.id, actions, sessionId: room?.id, msgKey, useUi, lead: flat ? null : lead, whole }))
 }
 
-// A member's messages in a row, as one block under its name: what it says while it
-// works comes one message at a time. A block carries the last message's time and run.
-export function stackReplies(replies) {
-  const items = []
-  replies.forEach((reply, index) => {
-    const last = items.at(-1)
-    // Only two neighbouring replies of one Bot stack; a malformed reply without an
-    // author (the relay parses model output) starts its own block instead of throwing.
-    if (last !== undefined && reply.kind === undefined && last.reply.kind === undefined && last.reply.botId === reply.botId) {
-      last.texts.push(reply.text)
-      last.time = reply.time
-      last.duration = reply.duration
-    } else items.push({ reply, index, texts: reply.kind === undefined ? [reply.text] : [], time: reply.time, duration: reply.duration })
-  })
-  return items
-}
+// A member's messages in a row, as one block under its name (shared with the host's own log).
+export { stackReplies }
 
 // A centered event line that names a group chat and opens it.
 function GroupEvent({ prefix, room, name, roster, actions }) {

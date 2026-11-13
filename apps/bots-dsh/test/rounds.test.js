@@ -507,10 +507,10 @@ test('a member turn that runs out of quota leaves a lasting line in the group lo
   await running
   const failed = rt.roomOf(room.id).log.filter(line => line.kind === 'notice' && line.reason === 'failed')
   assert.equal(failed.length, 1)
-  assert.deepEqual(failed[0].names, ['Chief'])
+  assert.deepEqual(failed[0].names, ['Omni'])
   assert.match(failed[0].detail, /^QUOTA/)
   const { lineText } = await import('../src/host/groups.js')
-  assert.match(lineText(failed[0]), /^\[Chief stopped: its model call failed \(QUOTA.*\)\. What it was doing here is not finished; the user can switch its model in its settings or ask it to go on\.\]$/)
+  assert.match(lineText(failed[0]), /^\[Omni stopped: its model call failed \(QUOTA.*\)\. What it was doing here is not finished; the user can switch its model in its settings or ask it to go on\.\]$/)
 })
 
 // A member deleted while its group Session is made sits the round out; the Session it was
@@ -762,6 +762,7 @@ test('members call each other for as long as they call, and a user @ mid-round s
   await answer(called.sessionId, called.message.source.exchangeId, 'Here.', 22)
   const result = JSON.parse(await running)
   assert.equal(result.replies.filter(reply => reply.kind === 'paused').length, 0)
+
   const state = rt.state.rooms[room.id]
   assert.equal(state.log.filter(line => line.kind === 'notice').length, 0, 'no pause notice')
   assert.equal(state.paused, undefined)
@@ -773,170 +774,30 @@ test('members call each other for as long as they call, and a user @ mid-round s
 test('calls parked under the old relay limit run in the group\'s next round', async (t) => {
   const { call, emit, userMessage, relay, answer, stop, sent, rt, home } = start()
   t.after(stop)
-  const chief = (await call('state', {})).value.mainBotId
-  const writer = (await call('create-bot', { name: 'Writer' })).value
-  const editor = (await call('create-bot', { name: 'Editor' })).value
-  const room = (await call('create-room', { name: 'R1', members: [chief, writer.id, editor.id] })).value
-  await call('update-room', { id: room.id, mode: 'admin', relayLimit: 2 })
-  sent.length = 0
-
-  await emit(room.id, userMessage('Start'))
-  const running = relay(room.id, 'relay')
-  const first = await turnFor(sent)
-  await answer(first.sessionId, first.message.source.exchangeId, '@Writer one', 1)
-  const second = await turnFor(sent, first)
-  await answer(second.sessionId, second.message.source.exchangeId, '@Omni back', 2)
-  const third = await turnFor(sent, first, second)
-  // The next calls would be the third relay, past the limit: both wait instead of
-  // running, and the log does not show a hand-off that never starts.
-  await answer(third.sessionId, third.message.source.exchangeId, '@Writer again, @Editor too', 3)
-  const result = JSON.parse(await running)
-
-  const state = rt.state.rooms[room.id]
-  assert.equal(sent.filter(entry => entry.message.source.role === 'room').length, 3, 'the parked calls never reached their members')
-  const notices = state.log.filter(line => line.kind === 'notice')
-  assert.equal(notices.length, 1, 'one notice for the pause, not one per parked call')
-  assert.deepEqual({ reason: notices[0].reason, names: notices[0].names, limit: notices[0].limit },
-    { reason: 'paused', names: ['Writer', 'Editor'], limit: 2 })
-  assert.match(lineText(notices[0]), /Paused: Bots have called each other 2 times since the user last wrote here/)
-  assert.match(lineText(notices[0]), /@Writer and @Editor wait/)
-  // The round the user watched shows the same pause as one line of its replies —
-  // and nothing is marked dropped.
-  assert.deepEqual(result.replies.filter(reply => reply.kind === 'paused').map(reply => [reply.names, reply.count]),
-    [[['Writer', 'Editor'], 2]])
-  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).rooms[room.id]
-  assert.deepEqual(saved.paused.map(entry => [entry.id, entry.name, entry.note, entry.by]),
-    [[writer.id, 'Writer', 'Omni mentioned you', chief], [editor.id, 'Editor', 'Omni mentioned you', chief]])
-})
-
-test('Continue runs the parked calls in a round of their own, and a free group ignores it', async (t) => {
-  const { call, emit, userMessage, relay, answer, stop, sent, rt } = start()
-  t.after(stop)
   const room = await team(call, sent)
-  await call('update-room', { id: room.id, mode: 'admin', relayLimit: 2 })
-  const writer = Object.values(rt.state.bots).find(bot => bot.name === 'Writer')
-  const state = rt.state.rooms[room.id]
-
-  // Nothing parked yet: Continue is a no-op and sends no relay.
-  sent.length = 0
-  await call('room-continue', { roomId: room.id })
-  assert.equal(sent.filter(entry => entry.message.source?.role === 'resume').length, 0)
-
-  await emit(room.id, userMessage('Start'))
-  const running = relay(room.id, 'relay')
-  const first = await turnFor(sent)
-  await answer(first.sessionId, first.message.source.exchangeId, '@Writer one', 1)
-  const second = await turnFor(sent, first)
-  await answer(second.sessionId, second.message.source.exchangeId, '@Omni back', 2)
-  const third = await turnFor(sent, first, second)
-  await answer(third.sessionId, third.message.source.exchangeId, '@Writer again', 3)
-  await running
-  assert.equal(state.paused.length, 1)
-  assert.equal(state.paused[0].id, writer.id)
-
-  // Continue: the count restarts and a resume relay runs the parked call.
-  sent.length = 0
-  assert.equal((await call('room-continue', { roomId: room.id })).ok, true)
-  assert.equal(state.relays, 0)
-  const resume = sent.find(entry => entry.sessionId === room.id && entry.message.source?.role === 'resume')
-  assert.ok(resume, 'Continue sends a resume relay to the group Session')
-  await emit(room.id, { type: 'user/message', data: { source: resume.message.source, content: resume.message.content } })
-  const running2 = relay(room.id, 'relay-2')
-  const turn = await turnFor(sent)
-  assert.equal(turn.sessionId, state.sessions[writer.id], 'the parked call runs')
-  await answer(turn.sessionId, turn.message.source.exchangeId, 'Back on it.', 4)
-  await running2
-  assert.deepEqual(state.paused, [])
-})
-
-test('a user message after a pause answers the user first, then runs the parked call', async (t) => {
-  const { call, emit, userMessage, relay, answer, stop, sent, rt } = start()
-  t.after(stop)
-  const room = await team(call, sent)
-  await call('update-room', { id: room.id, mode: 'admin', relayLimit: 2 })
+  await call('update-room', { id: room.id, mode: 'admin' })
   const chief = rt.state.mainBotIds[0]
   const writer = Object.values(rt.state.bots).find(bot => bot.name === 'Writer')
-  const state = rt.state.rooms[room.id]
-
-  await emit(room.id, userMessage('Start'))
-  const running = relay(room.id, 'relay')
-  const first = await turnFor(sent)
-  await answer(first.sessionId, first.message.source.exchangeId, '@Writer one', 1)
-  const second = await turnFor(sent, first)
-  await answer(second.sessionId, second.message.source.exchangeId, '@Omni back', 2)
-  const third = await turnFor(sent, first, second)
-  await answer(third.sessionId, third.message.source.exchangeId, '@Writer again', 3)
-  await running
-  assert.equal(state.paused.length, 1)
+  const state = () => rt.state.rooms[room.id]
+  state().paused = [{ id: writer.id, name: 'Writer', note: 'Omni mentioned you', by: chief }]
+  await rt.save()
 
   // The user's next message opens the round: its own speaker, the admin, and the
   // parked call start together.
   sent.length = 0
-  await emit(room.id, userMessage('@Omni one more question'))
-  const next = relay(room.id, 'relay-2')
-  const own = await turnFor(sent)
-  assert.equal(own.sessionId, state.sessions[chief], 'the member the user called answers first')
-  await answer(own.sessionId, own.message.source.exchangeId, 'Yes?', 4)
-  const parked = await turnFor(sent, own)
-  assert.equal(parked.sessionId, state.sessions[writer.id], 'the parked call runs after the user\'s speaker')
-  await answer(parked.sessionId, parked.message.source.exchangeId, 'On it.', 5)
-  await next
-  assert.equal(state.relays, 1, 'the count restarted with the user\'s message; the parked call counts into it')
-  assert.deepEqual(state.paused, [])
-})
-
-test('a user message mid-round restarts the relay count for the calls after it', async (t) => {
-  const { call, emit, userMessage, compose, relay, answer, stop, sent, rt } = start()
-  t.after(stop)
-  const room = await team(call, sent)
-  await call('update-room', { id: room.id, mode: 'admin', relayLimit: 3 })
-  const state = rt.state.rooms[room.id]
-
-  await emit(room.id, userMessage('Start'))
+  await emit(room.id, userMessage('Status, please'))
+  assert.equal(state().paused.length, 1, 'still parked until a round runs')
   const running = relay(room.id, 'relay')
   const first = await turnFor(sent)
   const second = await turnFor(sent, first)
-  await answer(second.sessionId, second.message.source.exchangeId, '@Omni back', 2)
-  const third = await turnFor(sent, first, second)
-
-  // Two relays spent of three. While the admin answers, the user writes; its
-  // message restarts the count, so the call the Writer then makes does not park.
-  await compose(room.id, '@Writer hold on')
-  await answer(third.sessionId, third.message.source.exchangeId, 'Done.', 3)
-  const fourth = await turnFor(sent, first, second, third)
-  await answer(fourth.sessionId, fourth.message.source.exchangeId, '@Omni last', 4)
-  const fifth = await turnFor(sent, first, second, third, fourth)
-  assert.ok(fifth, 'the Writer\'s call runs: the count restarted at the user\'s message')
-  await answer(fifth.sessionId, fifth.message.source.exchangeId, 'All done.', 5)
-  const result = JSON.parse(await running)
-  assert.equal(result.replies.filter(reply => reply.kind === 'paused').length, 0)
-  assert.equal(state.relays, 1)
-})
-
-// A group the user has not written in since the limit came in carries no count at
-// all: a Bot's own post must count from zero, not from NaN, and still park.
-test('a round a Bot opens counts relays from nothing, and parks past the limit', async (t) => {
-  const { call, emit, relay, answer, stop, sent, rt, ctx, home } = start()
-  t.after(stop)
-  const room = await team(call, sent)
-  await call('update-room', { id: room.id, mode: 'admin', relayLimit: 1 })
-  const state = rt.state.rooms[room.id]
-  const chief = rt.state.mainBotIds[0]
-  assert.equal(state.relays, undefined, 'no user message ever: there is no count yet')
-
-  sent.length = 0
-  const posted = await ctx.registeredTools.get('post_to_group').execute({ group: 'R1', message: '@Writer ping' }, { agent: { id: rt.chatOf(chief) } })
-  assert.match(posted, /^Posted in "R1"/)
-  const post = sent.find(entry => entry.sessionId === room.id && entry.message.source.role === 'post')
-  assert.ok(post, 'the Bot\'s post reached the group Session')
-  await emit(room.id, { type: 'user/message', data: { source: post.message.source, content: post.message.content } })
-  const running = relay(room.id, 'relay')
-  const first = await turnFor(sent)
-  await answer(first.sessionId, first.message.source.exchangeId, '@Omni back', 1)
+  const [own, parked] = first.sessionId === state().sessions[chief] ? [first, second] : [second, first]
+  assert.equal(own.sessionId, state().sessions[chief])
+  assert.equal(parked.sessionId, state().sessions[writer.id], 'the parked call runs')
+  assert.match(parked.message.content[0].text, /Omni mentioned you/)
+  await answer(own.sessionId, own.message.source.exchangeId, 'All fine.', 1)
+  await answer(parked.sessionId, parked.message.source.exchangeId, 'On it.', 2)
   await running
-  // The first call ran as relay 1; the call it made is over the limit and parked.
-  assert.equal(state.relays, 1)
-  assert.deepEqual(state.paused.map(entry => entry.name), ['Omni'])
+  assert.equal(state().paused, undefined)
   const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).rooms[room.id]
   assert.equal(saved.paused, undefined)
 })
@@ -951,10 +812,10 @@ test('calls the idle guard parked wait for the user\'s message, also one that jo
   const chief = rt.state.mainBotIds[0]
   const writer = Object.values(rt.state.bots).find(bot => bot.name === 'Writer')
   const state = () => rt.state.rooms[room.id]
-  state().paused = [{ id: writer.id, name: 'Writer', note: 'Chief mentioned you', by: chief, idle: true }]
+  state().paused = [{ id: writer.id, name: 'Writer', note: 'Omni mentioned you', by: chief, idle: true }]
   await rt.save()
 
-  await emit(room.id, { type: 'user/message', data: { source: { kind: 'bot', form: 'relay', role: 'post', exchangeId: 'p1', senderSessionId: writer.id, senderName: 'Writer', roomId: room.id }, content: [{ type: 'text', text: '[Group post from Writer]\n@Chief the draft is up' }] } })
+  await emit(room.id, { type: 'user/message', data: { source: { kind: 'bot', form: 'relay', role: 'post', exchangeId: 'p1', senderSessionId: writer.id, senderName: 'Writer', roomId: room.id }, content: [{ type: 'text', text: '[Group post from Writer]\n@Omni the draft is up' }] } })
   const running = relay(room.id, 'relay')
   const first = await turnFor(sent)
   assert.equal(first.sessionId, state().sessions[chief])
@@ -962,13 +823,14 @@ test('calls the idle guard parked wait for the user\'s message, also one that jo
 
   await compose(room.id, 'Go on, both of you')
   await answer(first.sessionId, first.message.source.exchangeId, 'Thanks.', 1)
-  const parked = await waitFor(() => sent.find(entry => entry !== first && entry.message.source.role === 'room' && /Chief mentioned you/.test(entry.message.content[0].text)))
+  const parked = await waitFor(() => sent.find(entry => entry !== first && entry.message.source.role === 'room' && /Omni mentioned you/.test(entry.message.content[0].text)))
   assert.ok(parked, 'the user\'s message brings the parked call in')
   assert.equal(state().paused, undefined)
   const again = await waitFor(() => sent.find(entry => entry !== first && entry !== parked && entry.message.source.role === 'room'))
   await answer(parked.sessionId, parked.message.source.exchangeId, 'On it.', 1)
   await answer(again.sessionId, again.message.source.exchangeId, 'Fine.', 2)
   await running
+
 })
 
 test('a member the reply timeout cut short is told to the group, not left as silence', async (t) => {
@@ -1177,7 +1039,7 @@ test('a user message mid-round reaches the admin at once while a member still an
   await answer(again.sessionId, again.message.source.exchangeId, 'It was not called.', 2)
   await answer(writer.sessionId, writer.message.source.exchangeId, 'Done.', 3)
   const result = JSON.parse(await running)
-  assert.deepEqual(result.replies.map(reply => reply.name ?? 'User'), ['Chief', 'User', 'Chief', 'Writer'])
+  assert.deepEqual(result.replies.map(reply => reply.name ?? 'User'), ['Omni', 'User', 'Omni', 'Writer'])
 })
 
 test('a plain message in a group where everyone answers still goes one member at a time', async (t) => {
@@ -1256,7 +1118,7 @@ test('a group stops answering its own status posts once the idle steps reach the
   assert.equal(state().log.filter(line => line.kind === 'notice').length, 1, 'no second notice')
 
   // The user's message opens the round and lifts the pause.
-  await emit(room.id, userMessage('@Chief 我们接着做'))
+  await emit(room.id, userMessage('@Omni 我们接着做'))
   const resumed = relay(room.id, 'relay-8')
   const answered = []
   for (let n = 0; n < 3; n += 1) {
@@ -1313,10 +1175,10 @@ test('a paused group holds idle calls, lets new work through, and only the user 
   // A member's idle @ call while paused is held, not dropped: it waits for the user.
   const { round: asking } = await posted('@Writer 再核对一遍', 'relay-2')
   const again = await turnFor(sent)
-  await answer(again.sessionId, again.message.source.exchangeId, '@Chief 待命', 2)
+  await answer(again.sessionId, again.message.source.exchangeId, '@Omni 待命', 2)
   await asking
   const held = (state().paused ?? []).map(entry => [entry.name, entry.idle])
-  assert.deepEqual(held, [['Chief', true]], 'the idle call waits in the park list')
+  assert.deepEqual(held, [['Omni', true]], 'the idle call waits in the park list')
   assert.equal(sent.filter(entry => entry.sessionId === state().sessions[chief] && entry.message.source.role === 'room').length, 0, 'the held member is not called')
 
   // A late result posts into the group and reaches the member that asked, without
@@ -1370,8 +1232,8 @@ test('a paused group parks every member an @all called, in a new round', async (
   await settle()
   assert.equal(sent.filter(entry => entry.message.source.role === 'room').length, 0, 'a paused room opens no round')
   assert.deepEqual((state().paused ?? []).map(entry => [entry.name, entry.note, entry.idle]), [
-    ['Writer', 'Chief called everyone', true],
-    ['Tester', 'Chief called everyone', true],
+    ['Writer', 'Omni called everyone', true],
+    ['Tester', 'Omni called everyone', true],
   ], 'every member @all called waits for the user')
   await held
 
@@ -1446,7 +1308,7 @@ test('a post with new work that lands in a running round is answered in that rou
 
 // #853: the guard reads status posts, not ordinary talk about work.
 test('the idle guard reads status posts and not ordinary work', () => {
-  const everyone = [{ id: 'a', name: 'Chief' }, { id: 'b', name: 'Writer' }]
+  const everyone = [{ id: 'a', name: 'Omni' }, { id: 'b', name: 'Writer' }]
   const idle = [
     '待命', '暂无待办', '静候下一步', '收到，待命', '收口无待办', '保持待命', '暂无待办，静候下一步',
     '目前没有新进展', '今日无任务', '当前无任务',
@@ -1457,7 +1319,7 @@ test('the idle guard reads status posts and not ordinary work', () => {
   const work = [
     '当前任务：修 502', '目前任务已完成', '今天任务很多', '任务', '变化', '安排', '进展', '动作', '待', '静',
     '待我确认', '静态资源缺失', '安排在周三上线', '进展：接口改完', '动作序列有误',
-    '正在核对 09:31 之后的日志', '已完成登录接口改造', '@Chief 这段日志也看一下',
+    '正在核对 09:31 之后的日志', '已完成登录接口改造', '@Omni 这段日志也看一下',
   ]
   for (const text of work) assert.equal(isIdleRelayText(text, everyone, []), false, `should not count: ${text}`)
 })

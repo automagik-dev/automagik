@@ -93,8 +93,8 @@ test('the live feed tells a window about saves, new chat entries and the reply b
   assert.equal(saved.event, 'revision')
   assert.equal(saved.data.revision > TEAM.revision, true)
 
-  // The feed's own listener sits right before im's on session/event; the others need a live dsh.
-  const onEvent = ctx.listeners.get('session/event').at(-2)
+  // The feed's own listener is the last on session/event; the others need a live dsh.
+  const onEvent = ctx.listeners.get('session/event').at(-1)
   onEvent({ id: 'm1c' }, userMessage('hello', 60))
   assert.deepEqual(await next(), { event: 'message', data: { botId: 'm1', sessionId: 'm1c', item: { kind: 'user', text: 'hello', time: 60 } } })
   // A group Session or an earlier part is not a Bot's own chat now.
@@ -225,7 +225,7 @@ test('view replay omits hidden, refused and interactive calls in pages and the l
   const response = await routes['/api/omni-ui/feed'].fetch(new Request('http://localhost/api/omni-ui/feed', { signal: abort.signal }))
   const next = reader(response)
   assert.equal((await next()).event, 'hello')
-  const onEvent = ctx.listeners.get('session/event').at(-2)
+  const onEvent = ctx.listeners.get('session/event').at(-1)
   for (const event of events) onEvent({ id: 'm1c' }, event)
   assert.deepEqual(await next(), { event: 'message', data: { botId: 'm1', sessionId: 'm1c', item: expected } })
 })

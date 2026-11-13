@@ -116,7 +116,7 @@ test('warnings send only cleaned text to the logger and stderr', (t) => {
   const quiet = t.mock.method(console, 'error', (...args) => stderr.push(args.join(' ')))
   const rt = host(home, { config: { diagnosticsFile: false } })
   rt.ctx.logger.warn = (...args) => warnings.push(args)
-  rt.warn('ds-bot: warning: %s', error)
+  rt.warn('omni-ui: warning: %s', error)
   quiet.mock.restore()
 
   assert.equal(warnings[0][0], '%s')
@@ -177,7 +177,7 @@ test('a stop waits for the log writes queued before it, and nothing is written a
     syncBuiltinESMExports()
   })
   const rt = host(home)
-  rt.warn('ds-bot: before the stop')
+  rt.warn('omni-ui: before the stop')
   await appending
   let stopped = false
   const stopping = rt.stop().then(() => { stopped = true })
@@ -187,7 +187,7 @@ test('a stop waits for the log writes queued before it, and nothing is written a
   await stopping
   assert.match(readFileSync(log, 'utf8'), /before the stop/)
 
-  rt.warn('ds-bot: after the stop')
+  rt.warn('omni-ui: after the stop')
   await rt.diagnostics.clear()
   // A write queued after the stop would be part of what a second stop waits for.
   await rt.stop()

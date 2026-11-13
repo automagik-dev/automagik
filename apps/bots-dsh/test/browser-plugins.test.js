@@ -27,7 +27,6 @@ const TEAM = {
   questions: {},
 }
 
-let rt
 function start(config, { services = {}, team = TEAM } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-browser-plugin-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
@@ -38,12 +37,14 @@ function start(config, { services = {}, team = TEAM } = {}) {
     route = options
     return register(options)
   }
-  rt = createRuntime(ctx, { home, ...config })
+  const rt = createRuntime(ctx, { home, ...config })
+  // The team's tools are served per Bot Session; the fake registry finds them through the runtime.
+  ctx.provide('omniTeam', rt)
   return {
     ctx,
     rt,
     call: async (endpoint, payload) => {
-      const response = await route.fetch(new Request('http://localhost/api/omni-ui', {
+      const response = await route.fetch(new Request('http://localhost/api/bot', {
         method: 'POST',
         body: JSON.stringify({ endpoint, payload }),
       }))
@@ -383,10 +384,10 @@ test('every team has the refs browser unless the config turns it off', (t) => {
 })
 
 test('user browser controls are not exposed as Bot tools', (t) => {
-  const { stop } = start({ browser: true, browserPlugin: 'refs' })
+  const { ctx, stop } = start({ browser: true, browserPlugin: 'refs' })
   t.after(stop)
   for (const name of ['browser-takeover', 'browser-give-back', 'browser-stop']) {
-    assert.equal(rt.teamTools.some(d => d.name === name), false)
+    assert.equal(ctx.registeredTools.has(name), false)
   }
 })
 
@@ -457,7 +458,7 @@ test('browser_task uses the Bot session model route when no test completion is i
     }),
   }
 
-  const value = await rt.teamTools.find(d => d.name === 'browser_task').execute({}, {
+  const value = await ctx.registeredTools.get('browser_task').execute({}, {
     agent: { id: 'b2', session },
     signal: new AbortController().signal,
   })
@@ -489,7 +490,7 @@ test('the selected plugin is the same for every Bot, and profiles stay apart', a
   })
   t.after(stop)
   assert.ok(ctx.calls.includes('effect ds-bot: browser plugin'))
-  const tool = rt.teamTools.find(d => d.name === 'browser_snapshot')
+  const tool = ctx.registeredTools.get('browser_snapshot')
   const writer = await tool.execute({}, { agent: { id: 'b2' } })
   const chief = await tool.execute({}, { agent: { id: 'm1' } })
   assert.deepEqual(seen, ['b2', 'm1'])
@@ -572,13 +573,13 @@ test('a matching browser grant allows the write without asking', async (t) => {
   const writer = browserWriter()
   const team = structuredClone(TEAM)
   team.bots.b2.browserGrants = [{ site: 'example.com', kinds: ['post'] }]
-  const { stop } = start({
+  const { ctx, stop } = start({
     browserPlugin: 'refs',
     browserPluginApi: writer.plugin,
   }, { services: { approval, permissionPresets: permissionService('workspace-write') }, team })
   t.after(stop)
 
-  assert.equal(await rt.teamTools.find(d => d.name === 'browser_write').execute({}, browserExec()), 'written')
+  assert.equal(await ctx.registeredTools.get('browser_write').execute({}, browserExec()), 'written')
   assert.equal(writer.runs(), 1)
   assert.equal(approval.requests.length, 0)
 })
@@ -586,12 +587,12 @@ test('a matching browser grant allows the write without asking', async (t) => {
 test('approval is one-shot and each write requests it again', async (t) => {
   const approval = fakeApproval('allowed-once')
   const writer = browserWriter()
-  const { stop } = start({
+  const { ctx, stop } = start({
     browserPlugin: 'refs',
     browserPluginApi: writer.plugin,
   }, { services: { approval, permissionPresets: permissionService('workspace-write') } })
   t.after(stop)
-  const tool = rt.teamTools.find(d => d.name === 'browser_write')
+  const tool = ctx.registeredTools.get('browser_write')
 
   assert.equal(await tool.execute({}, browserExec()), 'written')
   assert.equal(await tool.execute({}, browserExec()), 'written')
@@ -608,13 +609,13 @@ test('approval is one-shot and each write requests it again', async (t) => {
 test('a rejected approval prevents the write', async (t) => {
   const approval = fakeApproval('rejected')
   const writer = browserWriter()
-  const { stop } = start({
+  const { ctx, stop } = start({
     browserPlugin: 'refs',
     browserPluginApi: writer.plugin,
   }, { services: { approval, permissionPresets: permissionService('workspace-write') } })
   t.after(stop)
 
-  await assert.rejects(rt.teamTools.find(d => d.name === 'browser_write').execute({}, browserExec()), /Do not try this action again unless the user asks\..*Nothing was done\./)
+  await assert.rejects(ctx.registeredTools.get('browser_write').execute({}, browserExec()), /Do not try this action again unless the user asks\..*Nothing was done\./)
   assert.equal(writer.runs(), 0)
 })
 
@@ -630,14 +631,14 @@ test('browser grants match exact hosts, subdomains, and wildcard sites and kinds
     const writer = browserWriter()
     const team = structuredClone(TEAM)
     team.bots.b2.browserGrants = [{ site: entry.site, kinds: entry.kinds }]
-    const { stop } = start({
+    const { ctx, stop } = start({
       browserPlugin: 'refs',
       browserPluginApi: writer.plugin,
     }, { services: { approval, permissionPresets: permissionService('workspace-write') }, team })
     t.after(stop)
     const action = { ...WRITE_ACTION, host: entry.host }
     writer.setAction(action)
-    const tool = rt.teamTools.find(d => d.name === 'browser_write')
+    const tool = ctx.registeredTools.get('browser_write')
     if (entry.allowed) {
       assert.equal(await tool.execute({}, browserExec()), 'written')
       assert.equal(approval.requests.length, 0)
@@ -654,25 +655,25 @@ test('read-only permissions use the ordinary approval path', async (t) => {
   const writer = browserWriter()
   const team = structuredClone(TEAM)
   team.bots.b2.permission = 'read-only'
-  const { stop } = start({
+  const { ctx, stop } = start({
     browserPlugin: 'refs',
     browserPluginApi: writer.plugin,
   }, { services: { approval, permissionPresets: permissionService('workspace-write') }, team })
   t.after(stop)
-  assert.equal(await rt.teamTools.find(d => d.name === 'browser_write').execute({}, browserExec()), 'written')
+  assert.equal(await ctx.registeredTools.get('browser_write').execute({}, browserExec()), 'written')
   assert.equal(writer.runs(), 1)
   assert.equal(approval.requests.length, 1)
 })
 
 test('missing approval service is reported without running the write', async (t) => {
   const writer = browserWriter()
-  const { stop } = start({
+  const { ctx, stop } = start({
     browserPlugin: 'refs',
     browserPluginApi: writer.plugin,
   }, { services: { permissionPresets: permissionService('workspace-write') } })
   t.after(stop)
 
-  await assert.rejects(rt.teamTools.find(d => d.name === 'browser_write').execute({}, browserExec()), /needs the user's approval.*so nothing was done\./)
+  await assert.rejects(ctx.registeredTools.get('browser_write').execute({}, browserExec()), /needs the user's approval.*so nothing was done\./)
   assert.equal(writer.runs(), 0)
 })
 
@@ -696,12 +697,12 @@ test('approval cancellation, service failure, and missing Sessions are explicit'
   ]
   for (const entry of cases) {
     const writer = browserWriter()
-    const { stop } = start({
+    const { ctx, stop } = start({
       browserPlugin: 'refs',
       browserPluginApi: writer.plugin,
     }, { services: { approval: entry.approval, permissionPresets: permissionService('workspace-write') } })
     t.after(stop)
-    await assert.rejects(rt.teamTools.find(d => d.name === 'browser_write').execute({}, entry.exec), entry.message)
+    await assert.rejects(ctx.registeredTools.get('browser_write').execute({}, entry.exec), entry.message)
     assert.equal(writer.runs(), 0)
   }
 })
@@ -709,12 +710,12 @@ test('approval cancellation, service failure, and missing Sessions are explicit'
 test('approval verbs cover every gated action', async (t) => {
   const approval = fakeApproval('allowed-once')
   const writer = browserWriter()
-  const { stop } = start({
+  const { ctx, stop } = start({
     browserPlugin: 'refs',
     browserPluginApi: writer.plugin,
   }, { services: { approval, permissionPresets: permissionService('workspace-write') } })
   t.after(stop)
-  const tool = rt.teamTools.find(d => d.name === 'browser_write')
+  const tool = ctx.registeredTools.get('browser_write')
   for (const [kind, label, verb] of [
     ['post', 'Publish update', 'post'],
     ['upload', 'upload files', 'upload files'],
@@ -737,13 +738,13 @@ test('payment is refused even with a wildcard grant or full-access preset', asyn
     const team = structuredClone(TEAM)
     setup(team)
     writer.setAction({ ...WRITE_ACTION, kind: 'payment', label: 'Pay now' })
-    const { stop } = start({
+    const { ctx, stop } = start({
       browserPlugin: 'refs',
       browserPluginApi: writer.plugin,
     }, { services: { approval, permissionPresets: permissionService('workspace-write') }, team })
     t.after(stop)
     await assert.rejects(
-      rt.teamTools.find(d => d.name === 'browser_write').execute({}, browserExec()),
+      ctx.registeredTools.get('browser_write').execute({}, browserExec()),
       /call browser_handoff with reason "payment".*Nothing was done\./,
     )
     assert.equal(writer.runs(), 0)
@@ -756,12 +757,12 @@ test('expired grants do not authorize a write', async (t) => {
   const writer = browserWriter()
   const team = structuredClone(TEAM)
   team.bots.b2.browserGrants = [{ site: 'example.com', kinds: ['post'], until: Date.now() - 1 }]
-  const { stop } = start({
+  const { ctx, stop } = start({
     browserPlugin: 'refs',
     browserPluginApi: writer.plugin,
   }, { services: { approval, permissionPresets: permissionService('workspace-write') }, team })
   t.after(stop)
-  assert.equal(await rt.teamTools.find(d => d.name === 'browser_write').execute({}, browserExec()), 'written')
+  assert.equal(await ctx.registeredTools.get('browser_write').execute({}, browserExec()), 'written')
   assert.equal(writer.runs(), 1)
   assert.equal(approval.requests.length, 1)
 })

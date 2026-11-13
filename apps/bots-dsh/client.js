@@ -17439,18 +17439,6 @@ function GroupMessage({ bot, text: text2, texts: texts2 = [text2], room: room2, 
     (0, import_react46.createElement)(Bubbles, { texts: texts2, roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead: flat ? null : lead, whole })
   );
 }
-function stackReplies2(replies) {
-  const items = [];
-  replies.forEach((reply, index) => {
-    const last = items.at(-1);
-    if (last !== void 0 && reply.kind === void 0 && last.reply.kind === void 0 && last.reply.botId === reply.botId) {
-      last.texts.push(reply.text);
-      last.time = reply.time;
-      last.duration = reply.duration;
-    } else items.push({ reply, index, texts: reply.kind === void 0 ? [reply.text] : [], time: reply.time, duration: reply.duration });
-  });
-  return items;
-}
 function GroupEvent({ prefix, room: room2, name, roster, actions }) {
   return (0, import_react46.createElement)(
     "div",
@@ -18115,7 +18103,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
   return (0, import_react46.createElement)(
     "div",
     { className: "bt-group-replies" },
-    stackReplies2(replies).map(({ reply, index, texts: texts2, time, duration: duration2 }) => {
+    stackReplies(replies).map(({ reply, index, texts: texts2, time, duration: duration2 }) => {
       const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? "gray" };
       if (reply.kind === "user") {
         return (0, import_react46.createElement)(
