@@ -225,7 +225,9 @@ means the per-agent default (Contracts).
   first session start goes back to the release before it (`apps/acp-dsh/src/host/install.js`).
   That covers a release that cannot start, not one that starts and misbehaves. The exact names cover
   only the two adapters: their dependency tree (the agent SDKs, JSON-RPC and process helpers) is
-  resolved fresh at each install, with no lockfile. Also new: the adapter
+  resolved fresh for each new release. Since #970 the lockfile that resolution produced is kept,
+  and a reinstall of the same release (a repair from Retry, a held-back release tried again)
+  installs it frozen; a frozen install that fails resolves afresh once. Also new: the adapter
   carries its own copy of the agent's SDK (`claude-agent-acp` pins `@anthropic-ai/claude-agent-sdk`)
   and drives whatever CLI the person has, so the two can drift apart; nobody owns that pairing,
   and a mismatch shows as a failed turn, not a silent one. Turning `claude` or `codex` off in the

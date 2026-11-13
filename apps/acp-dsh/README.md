@@ -267,10 +267,10 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, previous?, rolledBack? }, signedIn?, signInCheck?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. A failed connector install always carries `error`; `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder) are optional, as for a failed CLI install. `signedIn` is absent while the sign-in is unknown; `signInCheck` then says why the last check of the CLI's status command could not tell: `timeout` (the CLI was ended after 8 seconds) or `unreadable` (it could not be run, or answered something this does not read). Neither field: nothing is known of a check (none has run yet, or the agent has no status command: a native agent's sign-in comes from its own ACP session). Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, startError?, previous?, rolledBack? }, signedIn?, signInCheck?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. `connector.startError` is the short reason an installed connector's last start failed, until a session opens or Retry reinstalls it; a connector being reinstalled reads `installing`. A failed connector install always carries `error`; `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder) are optional, as for a failed CLI install. `signedIn` is absent while the sign-in is unknown; `signInCheck` then says why the last check of the CLI's status command could not tell: `timeout` (the CLI was ended after 8 seconds) or `unreadable` (it could not be run, or answered something this does not read). Neither field: nothing is known of a check (none has run yet, or the agent has no status command: a native agent's sign-in comes from its own ACP session). Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe. An answer stands for 3 seconds, and a confirmed sign-in for 5 minutes, since the check starts the whole CLI; `refresh()` clears it, and so does the agent itself saying it is signed out (ACP `auth_required`). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
-| `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
+| `retry(id)` | Retries the required CLI and its connector, and answers at once. A connector whose last start or install failed, or that is missing, is reinstalled at the release in use (below); else the connector is checked for a newer release. Does not turn its model switch on. |
 | `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. An attempt that fails writes one line to the host log: a fixed class (no CLI found, no sign-in link in time, unsupported sign-in link, the CLI exited, the CLI could not be started, the CLI did not confirm the sign-in, device-code login is not enabled, device sign-in did not start, or unknown), where the attempt stood, how the CLI ended, and the version the CLI had when the attempt started. Never what the CLI printed. |
 | `loginCurrent(id)` | The attempt at work for that agent, from any view, or undefined. Never starts or cancels one. |
 | `loginStatus(id, attemptId)` / `loginAnswer(id, attemptId, value)` / `loginCancel(id, attemptId)` | Reads an attempt (an ended one stays readable for 60 seconds), sends Claude's pasted `code#state` to the CLI (which then has 90 seconds to confirm), or ends it. |
@@ -699,6 +699,28 @@ An install still running when DSH quits is killed with everything it started and
 removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
 adapter is being installed, with the last install error.
+
+**Repair (#970).** A connector folder can be damaged while its entry script is still there. Retry
+reinstalls the release in use (npm is not asked) into a fresh folder, asks it `initialize`, and
+only then selects it: `current.json` names the new folder (`dir`, `<version>_r<time>`; `previousDir`
+for the way back). The folder it moved off is never deleted or renamed while a Session may still
+run it: it is listed in `retired` and kept for one check window (20 hours), as a replaced release
+is. A repair that fails leaves everything as it was, records the failure, and never holds the
+release back. A session start that dies because Node could not find a module in the connector's
+own folder (the "Cannot find module/package" line or the first file of the require stack, never
+another program's frames), with no release to go back to, starts that repair by itself once per
+release per run, and the turn says so.
+
+**Lockfile (#970).** Each install records the lockfile its package manager wrote
+(`pnpm-lock.yaml`, or `package-lock.json` for npm) in
+`$AUTOMAGIK_HOME/acp/adapters/.locks/<package>/<version>/`, before the start check, so a release held back keeps it. A later install of the same release (a
+repair, a held-back release tried again) copies it in and installs frozen: `pnpm install
+--frozen-lockfile --prefer-offline`, or `npm ci --prefer-offline`. With the packages already in the
+package manager's store this needs no network. An install from before this change uses the
+lockfile in its own version folder. A new release resolves fresh and records its own. A frozen
+install that fails (not a quit or a timeout) resolves afresh once and records the new lockfile, so
+an app update whose pnpm cannot read an old lockfile does not stop Retry for good. Lockfiles of
+releases no longer kept are removed.
 
 **No network at the first start (#970).** The check for the newest release is a request to
 npm. When it gets no answer (a name that does not resolve, a refused or dropped connection,

@@ -9239,6 +9239,7 @@ var PT_BR = {
   "Installing its connector in the background. This takes a minute or two.": "Instalando o conector em segundo plano. Leva um ou dois minutos.",
   "The connector did not install: {error}": "O conector não foi instalado: {error}",
   "The connector did not install.": "O conector não foi instalado.",
+  "The connector did not start: {error}": "O conector não iniciou: {error}",
   "Install details": "Detalhes da instalação",
   "Log: {path}": "Registro: {path}",
   "Connector ready (version {version}).": "Conector pronto (versão {version}).",
@@ -12026,6 +12027,7 @@ function stateOf(agent) {
   if (!agent.cli.found) return "no-cli";
   if (!agent.on) return "off";
   if (agent.connector.state !== "ready") return agent.connector.state;
+  if (typeof agent.connector.startError === "string") return "failed";
   if (agent.restartNeeded) return "restart";
   if (agent.signedIn !== true) return agent.signedIn === false ? "login-required" : "sign-in-unknown";
   if (agent.consent === "needed") return "account";
@@ -12089,6 +12091,10 @@ function agentLines(agent) {
       // diagnostic that arrived unredacted still draws masked.
       ...diagnostic ? { details: { diagnostic: redactText(diagnostic), ...logPath ? { logPath } : {} } } : {}
     });
+  }
+  if (state === "ready" && typeof agent.connector.startError === "string") {
+    lines.push({ tone: "bad", text: t("The connector did not start: {error}", { error: redactText(agent.connector.startError) }), action: "retry" });
+    return lines;
   }
   if (state === "ready") {
     if (!isNative(agent)) lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });

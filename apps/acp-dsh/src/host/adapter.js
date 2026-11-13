@@ -1079,7 +1079,12 @@ export class AcpAdapter extends LlmAdapter {
               try { this.ctx.logger?.warn?.(`acp-dsh: ${agent.name} did not start on its newest connector (${error?.message ?? error}); trying the one before it`) } catch {}
               continue
             }
-            return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
+            let repairing = false
+            if (attempt === 0 && error?.code !== 'acp_bridge_missing' && options.signal?.aborted !== true) {
+              try { repairing = agent.repair?.(error) === true } catch {}
+            }
+            const repair = repairing ? ' Its connector looks damaged, so it is being reinstalled: send this again in a minute.' : ''
+            return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}${repair}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
           }
         }
         live = state
