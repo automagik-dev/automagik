@@ -256,7 +256,7 @@ export function install(rt) {
       // The provider's message may quote the request, its endpoint or its key, so the
       // card and the log say the kind only.
       const kind = failureKind(error)
-      rt.warn('omni-ui: side for %s failed (%s)', botId, kind)
+      rt.warn('ds-bot: side for %s failed (%s)', botId, kind)
       if (settle(botId, chat, entry, { status: 'failed', error: modelFailure(error, 'The side question failed'), answer: '' })) await persist(botId)
     }
   }

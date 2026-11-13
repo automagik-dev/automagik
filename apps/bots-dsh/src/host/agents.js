@@ -82,7 +82,7 @@ export function install(rt) {
       try {
         listener(list)
       } catch (error) {
-        rt.warn('omni-ui: a DSH bot listener failed: %s', error?.message ?? error)
+        rt.warn('ds-bot: a DSH bot listener failed: %s', error?.message ?? error)
       }
     }
   }
@@ -105,7 +105,7 @@ export function install(rt) {
     if (retryTimer !== undefined) clearInterval(retryTimer)
     retryTimer = undefined
   }
-  ctx.effect(() => stopRetry, 'omni-ui: agent tool restrict retry')
+  ctx.effect(() => stopRetry, 'ds-bot: agent tool restrict retry')
   const scheduleRetry = (agent) => {
     pendingRestrict.add(agent)
     if (retryTimer === undefined) {
@@ -138,7 +138,7 @@ export function install(rt) {
       pendingRestrict.delete(agent)
       if (typeof lift === 'function' && agent.session?.id !== undefined) restrictionLifts.set(agent.session.id, lift)
     } catch (error) {
-      rt.warn('omni-ui: team tools stay visible to DSH bot Session %s: %s', agent.session?.id, error)
+      rt.warn('ds-bot: team tools stay visible to DSH bot Session %s: %s', agent.session?.id, error)
       scheduleRetry(agent)
     }
   }
@@ -152,14 +152,14 @@ export function install(rt) {
     try {
       lift()
     } catch (error) {
-      rt.warn('omni-ui: the team tools of the adopted Session %s stay hidden until DSH restarts: %s', sessionId, error)
+      rt.warn('ds-bot: the team tools of the adopted Session %s stay hidden until DSH restarts: %s', sessionId, error)
     }
   }
   // Fires when a root Session resolves its agent, including sessions saved earlier.
   ctx.on('agent/created', ({ agent }) => {
     void rt.load()
       .then(() => restrictTeamTools(agent))
-      .catch(error => rt.warn('omni-ui: tool restrict on agent/created failed: %s', error))
+      .catch(error => rt.warn('ds-bot: tool restrict on agent/created failed: %s', error))
   })
 
   const writeCheck = () => {
@@ -188,7 +188,7 @@ export function install(rt) {
     // (the Agent's latest Session may live outside the team workspace after a workspace
     // switch); anything else gets the team's own.
     const own = typeof cwd === 'string' && isAbsolute(cwd) && await rt.isFolder(cwd)
-    if (cwd !== undefined && !own) rt.warn('omni-ui: the task folder %s is not an absolute path to a folder; the task starts in the team workspace', cwd)
+    if (cwd !== undefined && !own) rt.warn('ds-bot: the task folder %s is not an absolute path to a folder; the task starts in the team workspace', cwd)
     const place = own
       ? { cwd }
       : { workspaceId: typeof workspaceId === 'string' && ctx.workspaceRegistry.get(workspaceId) ? workspaceId : await rt.ensureWorkspace() }
@@ -300,11 +300,11 @@ export function install(rt) {
     } catch (error) {
       throw refusal(`Terminal creation receipt could not be published: ${error?.message ?? error}`, { cause: error })
     } finally {
-      await unlink(temp).catch(error => { if (error?.code !== 'ENOENT') rt.warn('omni-ui: creation receipt temp cleanup failed: %s', error) })
+      await unlink(temp).catch(error => { if (error?.code !== 'ENOENT') rt.warn('ds-bot: creation receipt temp cleanup failed: %s', error) })
     }
   }
   const discardCreation = async (creation) => {
-    await unlink(creationPath(creation)).catch(error => { if (error?.code !== 'ENOENT') rt.warn('omni-ui: creation receipt cleanup failed: %s', error) })
+    await unlink(creationPath(creation)).catch(error => { if (error?.code !== 'ENOENT') rt.warn('ds-bot: creation receipt cleanup failed: %s', error) })
   }
   const currentCreation = (creation, { cleanup = false } = {}) => {
     const agent = state.agents[creation.agentId]
@@ -362,7 +362,7 @@ export function install(rt) {
         try {
           await cleanupCreation(agent)
         } catch (error) {
-          rt.warn('omni-ui: creation cleanup pending for %s: %s', agent.id, error)
+          rt.warn('ds-bot: creation cleanup pending for %s: %s', agent.id, error)
         }
       }
     })()
@@ -792,7 +792,7 @@ export function install(rt) {
     if (typeof id !== 'string' || id === '') return undefined
     if ((await presets()).some(preset => preset.id === id)) return id
     if (strict) throw refusal(`The preset ${id} is not available in this DSH`)
-    rt.warn('omni-ui: the agent preset %s is not served here; the task takes DSH\'s default', id)
+    rt.warn('ds-bot: the agent preset %s is not served here; the task takes DSH\'s default', id)
     return undefined
   }
 
@@ -802,7 +802,7 @@ export function install(rt) {
     const agent = await ensureTasks()
     const sessionId = await createAgentSession(agent.id, undefined, { cwd, agentPreset })
     const clean = String(title ?? '').trim().slice(0, AGENT_SESSION_TITLE_MAX)
-    if (clean !== '') await renameAgentSession(agent.id, sessionId, clean).catch(error => rt.warn('omni-ui: task title not set: %s', error?.message ?? error))
+    if (clean !== '') await renameAgentSession(agent.id, sessionId, clean).catch(error => rt.warn('ds-bot: task title not set: %s', error?.message ?? error))
     return sessionId
   }
 
@@ -820,7 +820,7 @@ export function install(rt) {
       await rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
       return true
     } catch (error) {
-      rt.warn('omni-ui: the task keeps the default model, %s\'s was not applied: %s', bot.name, error?.message ?? error)
+      rt.warn('ds-bot: the task keeps the default model, %s\'s was not applied: %s', bot.name, error?.message ?? error)
       return false
     }
   }
@@ -886,7 +886,7 @@ export function install(rt) {
       try {
         await rt.revokeNewSchedules?.(from, [id])
       } catch (error) {
-        rt.warn('omni-ui: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
+        rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
       }
     }
     // Looked at again after the waits above, with nothing awaited before the delete: a task
@@ -898,7 +898,7 @@ export function install(rt) {
     await rt.save()
     for (const [id, ranAt] of forgotten) {
       await rt.forgetTaskPermission(id, ranAt)
-        .catch(error => rt.warn('omni-ui: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
+        .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
     }
     const selected = await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
@@ -914,16 +914,16 @@ export function install(rt) {
       await rt.assertNotOffCli(state.bots?.[from], sessionId, live.session, { unselected: !selected })
     } catch (error) {
       Object.assign(tasks()[sessionId] ?? {}, { status: 'failed', endedAt: Date.now(), summary: String(error?.message ?? error).slice(0, TASK_SUMMARY_MAX) })
-      await rt.save().catch(failure => rt.warn('omni-ui: saving a task failed: %s', failure))
+      await rt.save().catch(failure => rt.warn('ds-bot: saving a task failed: %s', failure))
       await ctx.workspaceRegistry.archiveSession(sessionId, { stopActivity: true })
-        .catch(failure => rt.warn('omni-ui: the task %s that did not start was not archived: %s', sessionId, failure))
+        .catch(failure => rt.warn('ds-bot: the task %s that did not start was not archived: %s', sessionId, failure))
       throw error
     }
     // The Session existed before this task record did, so the tool deny list could not be
     // resolved then (a task is a task only once it is written down). Apply it now, before
     // the first turn, to the same agent the turn will use.
     await rt.applyToolDeny?.(caller, [sessionId])
-      .catch(error => rt.warn('omni-ui: the task keeps tools %s denies: %s', caller?.name ?? from, error?.message ?? error))
+      .catch(error => rt.warn('ds-bot: the task keeps tools %s denies: %s', caller?.name ?? from, error?.message ?? error))
     // DSH's turn loop reads every input's source: the instructions arrive as the user's.
     live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
     await ctx.sessions.flush(live.session)
@@ -947,7 +947,7 @@ export function install(rt) {
         lastWords.set(id, text)
         task.said = text.replace(/\s+/g, ' ').slice(0, TASK_LINE_MAX)
       }
-      void rt.save().catch(error => rt.warn('omni-ui: saving a task failed: %s', error))
+      void rt.save().catch(error => rt.warn('ds-bot: saving a task failed: %s', error))
     } else if (event?.type === 'turn/end') {
       // A restart cut the turn: the task is not done. resume.js sets it going again, or
       // ends it as stopped when it will not.
@@ -962,7 +962,7 @@ export function install(rt) {
       lastWords.delete(id)
       const problem = event.data?.reason?.error?.message || 'unknown error'
       task.summary = (failed ? problem : words).slice(0, TASK_SUMMARY_MAX)
-      void rt.save().catch(error => rt.warn('omni-ui: saving a task failed: %s', error))
+      void rt.save().catch(error => rt.warn('ds-bot: saving a task failed: %s', error))
       if (rt.botOf(task.from) === undefined) return
       const said = failed ? `It failed: ${problem}`
         : stopped ? `It was stopped before it finished.${words ? ` Its last words: ${words}` : ''}`
@@ -973,7 +973,7 @@ export function install(rt) {
       const room = task.roomId === undefined ? undefined : rt.roomOf(task.roomId)
       const inRoom = room !== undefined && room.members?.includes(task.from) ? room.sessions?.[task.from] : undefined
       void rt.deliver({ toId: task.from, ...(inRoom !== undefined ? { sessionId: inRoom, roomId: room.id } : {}), text: said.slice(0, TASK_REPORT_MAX), role: 'task-done', note: task.title, taskSessionId: id })
-        .catch(error => rt.warn('omni-ui: the report of task %s did not reach its Bot: %s', task.title, error?.message ?? error))
+        .catch(error => rt.warn('ds-bot: the report of task %s did not reach its Bot: %s', task.title, error?.message ?? error))
     }
   })
 
@@ -985,7 +985,7 @@ export function install(rt) {
     if (agent?.kind !== DSH_BOT) throw refusal('Unknown DSH bot')
     const sessionId = await createAgentSession(agent.id)
     const clean = String(title ?? '').trim().slice(0, AGENT_SESSION_TITLE_MAX)
-    if (clean !== '') await renameAgentSession(agent.id, sessionId, clean).catch(error => rt.warn('omni-ui: session title not set: %s', error?.message ?? error))
+    if (clean !== '') await renameAgentSession(agent.id, sessionId, clean).catch(error => rt.warn('ds-bot: session title not set: %s', error?.message ?? error))
     const text = String(firstMessage ?? '').trim()
     if (text !== '') {
       const live = await rt.resolveAgent(sessionId)

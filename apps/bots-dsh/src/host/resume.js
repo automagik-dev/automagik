@@ -16,15 +16,12 @@ import { readFileSync } from 'node:fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { HISTORY_TIMEOUT_MS, MESSAGE_INLINE_MAX, SOURCE_KIND } from './constants.js'
+import { HISTORY_TIMEOUT_MS, MESSAGE_INLINE_MAX, SOURCE_KIND, STEER_CUT } from './constants.js'
 import { answerSender, cutOffText, failureLine, turnFailure } from './turns.js'
 import { textOf } from './text.js'
 
 // Long enough for DSH to finish opening its workspaces after a start.
 export const RESUME_DELAY_MS = 3000
-// A delivery waiting longer than this was not lost to a restart.
-const QUEUED_KEPT_MS = 24 * 60 * 60 * 1000
-const QUEUED_MAX = 50
 // A Session edited longer ago than this was not cut off by the last restart.
 const CUT_KEPT_MS = 24 * 60 * 60 * 1000
 // A Session picked up this often in a day stays stopped: a restart loop must not run it forever.
@@ -147,8 +144,8 @@ export function install(rt) {
   const resumables = new Map()
   rt.resumable = {
     register({ id, sessions, onResume } = {}) {
-      if (typeof id !== 'string' || id === '' || typeof sessions !== 'function') throw new Error('omni-ui: a resumable needs an id and sessions()')
-      if (resumables.has(id)) throw new Error(`omni-ui: resumable ${id} is already registered`)
+      if (typeof id !== 'string' || id === '' || typeof sessions !== 'function') throw new Error('ds-bot: a resumable needs an id and sessions()')
+      if (resumables.has(id)) throw new Error(`ds-bot: resumable ${id} is already registered`)
       const entry = { sessions, onResume }
       resumables.set(id, entry)
       return () => { if (resumables.get(id) === entry) resumables.delete(id) }
@@ -174,7 +171,7 @@ export function install(rt) {
       try {
         ids = entry.sessions()
       } catch (error) {
-        rt.warn('omni-ui: the Sessions of resumable %s could not be read: %s', id, error?.message ?? error)
+        rt.warn('ds-bot: the Sessions of resumable %s could not be read: %s', id, error?.message ?? error)
         continue
       }
       for (const sessionId of Array.isArray(ids) ? ids : []) {
@@ -192,7 +189,7 @@ export function install(rt) {
       try {
         entry.onResume?.({ sessionId })
       } catch (error) {
-        rt.warn('omni-ui: resumable %s failed on the resume of %s: %s', id, sessionId, error?.message ?? error)
+        rt.warn('ds-bot: resumable %s failed on the resume of %s: %s', id, sessionId, error?.message ?? error)
       }
     }
     await post()
@@ -353,31 +350,35 @@ export function install(rt) {
 
   // Where a queued note goes now: its Session if it still is one, else the
   // current Session of its Bot, or of its group when the message went to one.
+  // One no Bot owns any more (a run whose record is gone) has nowhere to go: it is dropped,
+  // not sent to the Bot's chat.
   const sessionFor = (sessionId, args) => (rt.isBotSession(sessionId) ? sessionId
-    : args?.roomId === undefined ? rt.chatOf(args?.toId) : rt.roomOf(args.roomId)?.sessions?.[args.toId])
+    : !rt.pastOwners.has(sessionId) ? undefined
+      : args?.roomId === undefined ? rt.chatOf(args?.toId) : rt.roomOf(args.roomId)?.sessions?.[args.toId])
 
   // A hard stop keeps the inbox, which the Session runs once it wakes; only what DSH
   // cancelled is sent again. The notes stay queued until a turn takes the messages
   // up, so a send that fails here, or a Session that cannot be opened, leaves them
   // for the next start instead of losing them.
   async function resendQueued(sessionId, list) {
-    // A Session that moved on to a new part since is reached at its current one. One no
-    // Bot owns any more (a run whose record is gone) is dropped, not sent to the Bot's chat.
-    const current = (args) => {
-      if (rt.isBotSession(sessionId)) return sessionId
-      if (!rt.pastOwners.has(sessionId)) return undefined
-      return args.roomId === undefined ? rt.chatOf(args.toId) : rt.roomOf(args.roomId)?.sessions?.[args.toId]
-    }
-    const fresh = list.filter(item => Date.now() - item.at < QUEUED_KEPT_MS && rt.botOf(item.args?.toId) !== undefined
-      && current(item.args) !== undefined && taken?.has(item.args.exchangeId) !== true)
+    const fresh = list.filter(item => rt.botOf(item.args?.toId) !== undefined
+      && sessionFor(sessionId, item.args) !== undefined && taken?.has(item.args.exchangeId) !== true)
     if (fresh.length === 0) return
     const target = sessionFor(sessionId, fresh[0].args)
     const agent = await rt.resolveAgent(target)
     const waiting = new Set([...(agent.inbox?.nextStep ?? []), ...(agent.inbox?.nextTurn ?? [])].map(message => message.source?.exchangeId))
     for (const { args } of fresh) {
-      if (waiting.has(args.exchangeId) || taken?.has(args.exchangeId) === true) continue
-      await rt.deliver({ ...args, sessionId: current(args), steer: false, resent: true })
-      resent.add(current(args))
+      if (waiting.has(args.exchangeId)) continue
+      if (taken?.has(args.exchangeId) === true) {
+        forgetQueued(args.exchangeId)
+        continue
+      }
+      // A request that waited through a restart reaches its target late: the work
+      // it is for is marked, so the answer that comes back says so.
+      if (args.role === 'request' || args.role === 'stopped') rt.lateWork?.(args.exchangeId)
+      await deliver({ ...args, sessionId: sessionFor(sessionId, args), steer: false, resent: true })
+        .catch(error => rt.warn('omni-ui: sending again what %s was sent failed: %s', sessionId, error))
+      resent.add(sessionFor(sessionId, args))
     }
   }
 
@@ -423,7 +424,7 @@ export function install(rt) {
           return ctx.sessions.flush(agent.session)
         })
       }
-      rt.warn('omni-ui: %s %s was cut off by a restart and goes on', target.kind === 'run' ? 'automation run' : target.kind === 'plain' ? 'Session' : 'task', id)
+      rt.warn('ds-bot: %s %s was cut off by a restart and goes on', target.kind === 'run' ? 'automation run' : target.kind === 'plain' ? 'Session' : 'task', id)
     }
     // A cut task this pass did not set going stays cut: past TASKS_CHECKED, RESUMES_MAX or
     // CUT_KEPT_MS nothing runs it again and no turn/end will come, so it would read Working
@@ -581,7 +582,7 @@ export function install(rt) {
       if (first?.type === 'turn/end') {
         // The turn ended while Omni was not watching it: what it did is settled from
         // the Session's durable log.
-        await reconcileEnded(sessionId, record).catch(error => rt.warn('omni-ui: settling the work of %s failed: %s', sessionId, error))
+        await reconcileEnded(sessionId, record).catch(error => rt.warn('ds-bot: settling the work of %s failed: %s', sessionId, error))
         continue
       }
       // Still running: noted again, as if it had started here.
@@ -597,6 +598,8 @@ export function install(rt) {
     for (const [sessionId, record] of cut) {
       await resumeTurn(sessionId, record).catch(error => rt.warn('omni-ui: picking up the turn of %s failed: %s', sessionId, error))
     }
+    // What a group's members were asked for and will not pick up is settled now.
+    await rt.settleRoomBatches?.()
     await healCutSessions(new Set(Object.keys(noted)))
     finish({})
   }
@@ -604,7 +607,7 @@ export function install(rt) {
   ctx.effect(() => {
     // Every start looks: the Sessions a restart cut need no notes to be found.
     const timer = setTimeout(() => void resumeAll().catch((error) => {
-      rt.warn('omni-ui: picking up interrupted work failed: %s', error)
+      rt.warn('ds-bot: picking up interrupted work failed: %s', error)
       finish({ failed: error?.message ?? String(error) })
     }), RESUME_DELAY_MS)
     timer?.unref?.()
@@ -612,7 +615,7 @@ export function install(rt) {
     return () => {
       stopped = true
       clearTimeout(timer)
-      finish({ failed: 'Omni stopped before the restart pass ended' })
+      finish({ failed: 'DS Bot stopped before the restart pass ended' })
       return writing
     }
   }, 'omni-ui: resume interrupted turns')

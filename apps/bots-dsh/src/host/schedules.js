@@ -40,29 +40,19 @@ export function reminderText(text) {
   return lines.length === 0 ? text : lines.map(prompt => `[Scheduled task] ${prompt}`).join('\n')
 }
 
-// The create request that gives a stored record its timing again, for a move. DSH 0.2.2
-// replaced the flat 0.2.1 request with a typed `timing` selector.
-function timingOf(record) {
-  switch (record.kind) {
-    case 'after':
-    case 'at': return { kind: 'at', at: record.scheduledAt }
-    case 'every': return { kind: 'every', every_seconds: record.everySeconds }
-    case 'daily': return { kind: 'daily', daily: { time: record.time, time_zone: record.timeZone } }
-    case 'weekly': return { kind: 'weekly', weekly: { time: record.time, time_zone: record.timeZone, weekdays: record.weekdays } }
-    case 'cron': return { kind: 'cron', cron: { expression: record.expression, time_zone: record.timeZone } }
-    // DSH 0.2.2's own schedule tools create rrule tasks; a move must carry them too.
-    case 'rrule': return { kind: 'rrule', rrule: record.rrule }
-    default: return null
-  }
-}
-
-function requestOf(record) {
-  const timing = timingOf(record)
-  return timing === null ? null : { title: record.title, prompt: record.prompt, timing }
-}
-
 // The Session a task delivers to; a `new` target has none until it creates one.
 const targetSessionOf = entry => (entry.target?.kind === 'new' ? undefined : entry.target?.sessionId)
+// DSH 0.2.2 keeps tasks Host-wide, each with a delivery target, and changes them through
+// edit(); DSH 0.2.1 keeps them by Session. Both are served.
+const hostWide = service => typeof service.edit === 'function'
+// The existing Session a task delivers to; a task that opens new Sessions has none.
+const sessionOf = entry => entry.target === undefined ? entry.sessionId : entry.target.kind === 'session' ? entry.target.sessionId : undefined
+const OWN_TASK_TOOLS = ['schedule_edit', 'schedule_view']
+// DSH 0.2.2's list page: 100 by default, at most 500.
+const LIST_PAGE = 100
+const LIST_READ_LIMIT = 500
+const OTHER_TASK_REFUSAL = 'This task belongs to another chat. A Bot reads and changes only the tasks of its own chat.'
+const sameOwner = (a, b) => a !== undefined && b !== undefined && a.botId === b.botId && a.roomId === b.roomId
 
 // The settings form's timing as DSH 0.2.2's typed create selector.
 function selectorOf(when) {
@@ -108,9 +98,9 @@ export function install(rt) {
   const attach = (sub) => {
     const own = sub.schedule
     service = own
-    sub.effect(() => () => { if (service === own) service = null }, 'omni-ui: schedule service')
+    sub.effect(() => () => { if (service === own) service = null }, 'ds-bot: schedule service')
     void revokeNewSchedules()
-      .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
+      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
   }
   if (typeof ctx.inject === 'function') ctx.inject(['schedule'], attach)
   else if (ctx.get?.('schedule') !== undefined) attach({ schedule: ctx.get('schedule'), effect: (execute, label) => ctx.effect(execute, label) })
@@ -183,7 +173,7 @@ export function install(rt) {
     if (typeof runtime?.requestDrive !== 'function') {
       if (!warnedNoDrive) {
         warnedNoDrive = true
-        rt.warn('omni-ui: the schedule service has no requestDrive hook; '
+        rt.warn('ds-bot: the schedule service has no requestDrive hook; '
           + 'a refused delivery waits for DSH\'s own next tick')
       }
       return
@@ -191,7 +181,7 @@ export function install(rt) {
     try {
       runtime.requestDrive()
     } catch (error) {
-      rt.warn('omni-ui: the schedule drive was not re-requested: %s', error?.message ?? error)
+      rt.warn('ds-bot: the schedule drive was not re-requested: %s', error?.message ?? error)
     }
   }
   let retryTimer
@@ -203,12 +193,12 @@ export function install(rt) {
     if (retryTimer !== undefined) return
     retryTimer = setInterval(() => {
       void revokeNewSchedules()
-        .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
+        .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
       if (stuck.size === 0) stopRetry()
     }, PAUSE_RETRY_MS)
     retryTimer.unref?.()
   }
-  ctx.effect(() => stopRetry, 'omni-ui: schedule pause retry')
+  ctx.effect(() => stopRetry, 'ds-bot: schedule pause retry')
 
   /**
    * Pause every active task with a fresh-Session target that a restricted Bot is involved
@@ -281,11 +271,11 @@ export function install(rt) {
         await service.edit({ id: entry.id, action: 'update', patch: { active: false } })
         stuck.delete(entry.id)
         paused.push(entry.id)
-        rt.warn('omni-ui: paused the scheduled task %s: '
+        rt.warn('ds-bot: paused the scheduled task %s: '
           + 'its fresh Session would run with no Bot lineage', entry.title ?? entry.id)
       } catch (error) {
         stuck.add(entry.id)
-        rt.warn('omni-ui: the scheduled task %s could not be paused (%s); '
+        rt.warn('ds-bot: the scheduled task %s could not be paused (%s); '
           + 'a delivery to a fresh Session is refused until it is', entry.title ?? entry.id,
         error?.message ?? error)
       }
@@ -322,12 +312,12 @@ export function install(rt) {
   void Promise.resolve(rt.load?.()).then(() => {
     teamLoaded = true
     return revokeNewSchedules()
-  }).catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
+  }).catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
   // A task armed later for a restricted Bot's Session (by the user, in DSH's own surface)
   // is checked the moment the service reports it.
   ctx.on('schedule/changed', () => {
     void revokeNewSchedules()
-      .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
+      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
   })
   // Whether one delivery still belongs to a task a restricted Bot is involved in. Reads the
   // catalog only: management writes are serialized behind a delivery, reads are not.
@@ -395,7 +385,7 @@ export function install(rt) {
           if ((await lineageOf(id)).bot !== undefined) { hasBot = true; break }
         }
         if (!hasBot) {
-          rt.warn('omni-ui: the fresh scheduled Session %s keeps its level: a task no Bot armed may be the one it is for', sessionId)
+          rt.warn('ds-bot: the fresh scheduled Session %s keeps its level: a task no Bot armed may be the one it is for', sessionId)
           return agent
         }
       }
@@ -410,8 +400,8 @@ export function install(rt) {
     try {
       await rt.lowerScheduledSession?.(agent.session, levels)
     } catch (cause) {
-      rt.warn('omni-ui: the fresh Session %s of a scheduled task was not lowered to its Bot\'s level: %s', sessionId, cause)
-      throw new Error('omni-ui: a scheduled delivery is held until its Session runs no wider than its Bot\'s permission level', { cause })
+      rt.warn('ds-bot: the fresh Session %s of a scheduled task was not lowered to its Bot\'s level: %s', sessionId, cause)
+      throw new Error('ds-bot: a scheduled delivery is held until its Session runs no wider than its Bot\'s permission level', { cause })
     }
     return agent
   }
@@ -425,8 +415,8 @@ export function install(rt) {
     const unsafe = teamLoaded ? await unsafeDelivery(sessionId) : true
     if (!unsafe) return openedLevel(sessionId, await next())
     void revokeNewSchedules()
-      .catch(error => rt.warn('omni-ui: fresh-Session tasks were not checked: %s', error))
-    throw new Error('omni-ui: a scheduled delivery is blocked until its task can be paused')
+      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+    throw new Error('ds-bot: a scheduled delivery is blocked until its task can be paused')
   })
 
   async function schedulesView() {
@@ -435,9 +425,14 @@ export function install(rt) {
     const tasks = []
     for (const entry of await service.catalog()) {
       const sessionId = targetSessionOf(entry)
-      const owner = ownerOf(sessionId)
+      const owner = sessionId === undefined ? undefined : ownerOf(sessionId)
       if (!known(owner)) continue
-      tasks.push({ ...entry, sessionId, ...owner })
+      // The state DSH derives for its own view: a task past its next firing reads
+      // overdue; a paused one stays paused; any other is finished. catalog() carries
+      // the status but not this state, so it is derived the same way here.
+      const state = entry.status === 'active' ? (now >= Date.parse(entry.scheduledAt) ? 'overdue' : 'scheduled')
+        : entry.status === 'paused' ? 'paused' : 'finished'
+      tasks.push({ ...entry, sessionId, ...owner, state })
     }
     return { available: true, tasks }
   }
@@ -454,7 +449,7 @@ export function install(rt) {
       if (title === '') throw invalid('Give the task a name')
       if (title.length > MAX_TITLE) throw invalid(`Keep the name under ${MAX_TITLE} characters`)
       if (prompt === '') throw invalid('Say what the Bot should do')
-      const sessionId = bot ? rt.chatOf(bot.id) : room.id
+      const sessionId = bot ? rt.chatOf(bot.id) : rt.sessionOfRoom(room)
       await service.create({ title, prompt, timing: selectorOf(body.when), target: { kind: 'session', sessionId } })
       return schedulesView()
     },
@@ -472,21 +467,69 @@ export function install(rt) {
   // the fresh Session before the old one goes, so a failure leaves it where it was.
   async function moveSchedules(fromId, toId) {
     if (service === null) return
-    const records = (await service.catalog()).filter(entry => targetSessionOf(entry) === fromId && entry.status === 'active')
-    for (const record of records) {
-      const request = requestOf(record)
-      if (request === null || (request.timing.kind === 'at' && Date.parse(request.timing.at) <= Date.now())) continue
-      // A failed read or copy must prevent stopActivity from deleting an unmoved
-      // task. Equal requests can be separate tasks; copy each source record.
-      await service.create({ ...request, target: { kind: 'session', sessionId: toId } })
-      try {
-        await service.edit({ id: record.id, action: 'delete' })
-      } catch (error) {
-        // The copy is safe; archiving the earlier part will remove its old task.
-        rt.warn('omni-ui: earlier copy of task %s not removed: %s', record.title, error?.message ?? error)
-      }
+    // A task changes its target in place and keeps its next firing; a paused one
+    // moves too, so it resumes in the Bot's current part.
+    for (const entry of await service.catalog()) {
+      if (entry.status === 'ended' || targetSessionOf(entry) !== fromId) continue
+      await service.edit({ id: entry.id, action: 'update', patch: { target: { kind: 'session', sessionId: toId } } })
     }
   }
+
+  // DSH 0.2.2's task ids are Host-wide, so a Bot's schedule tools reach only the tasks
+  // that deliver to its own chat, or to the same group place, in any of its parts.
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    const decision = await next()
+    if (decision.kind !== 'allow' || !OWN_TASK_TOOLS.includes(exec.name) || service === null || !hostWide(service)) return decision
+    await rt.load()
+    const caller = exec.agent?.id
+    if (!rt.isBotSession(caller)) return decision
+    const entry = (await service.catalog()).find(task => task.id === exec.arguments?.id)
+    // An unknown id gets DSH's own not-found result.
+    if (entry === undefined) return decision
+    const target = sessionOf(entry)
+    if (target !== undefined && sameOwner(ownerOf(caller), ownerOf(target))) return decision
+    return { kind: 'deny', reason: OTHER_TASK_REFUSAL }
+  })
+  // schedule_list pages over every Host task and cannot filter by Session, and only the
+  // tool formats its items. So the tool is asked for the Host range that holds the
+  // caller's page (catalog() keeps list()'s order), and the other chats' tasks in that
+  // range are dropped. A page whose tasks span more than one Host page comes back
+  // short; total still counts all of the caller's tasks, so the next offset goes on.
+  ctx.on('tools/execute', async function listOwnSchedules(exec, next) {
+    if (exec.name !== 'schedule_list' || service === null || !hostWide(service)) return next()
+    await rt.load()
+    const own = rt.isBotSession(exec.agent?.id) ? ownerOf(exec.agent.id) : undefined
+    if (own === undefined) return next()
+    const asked = exec.arguments ?? {}
+    const limit = asked.limit ?? LIST_PAGE
+    const offset = asked.offset ?? 0
+    const mine = entry => {
+      const target = sessionOf(entry)
+      return target !== undefined && sameOwner(own, ownerOf(target))
+    }
+    // An invalid page gets DSH's own input error; a page it accepts anyway is still narrowed.
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIST_READ_LIMIT || !Number.isSafeInteger(offset) || offset < 0) {
+      const result = await next()
+      if (result.isError || !Array.isArray(result.value?.items)) return result
+      const items = result.value.items.filter(mine)
+      const total = (await service.catalog()).filter(entry => mine(entry) && (asked.active === undefined || (entry.status === 'active') === asked.active)).length
+      return { ...result, value: { ...result.value, items, shown: items.length, total } }
+    }
+    const pool = (await service.catalog()).filter(entry => asked.active === undefined || (entry.status === 'active') === asked.active)
+    const positions = pool.flatMap((entry, at) => (mine(entry) ? [at] : []))
+    const page = positions.slice(offset, offset + limit)
+    const from = page[0] ?? pool.length
+    exec.arguments = { ...asked, offset: from, limit: page.length === 0 ? 1 : Math.min(LIST_READ_LIMIT, page.at(-1) - from + 1) }
+    let result
+    try {
+      result = await next()
+    } finally {
+      exec.arguments = asked
+    }
+    if (result.isError || !Array.isArray(result.value?.items)) return result
+    const items = result.value.items.filter(mine).slice(0, limit)
+    return { ...result, value: { ...result.value, items, shown: items.length, total: positions.length, limit, offset } }
+  })
 
   Object.assign(rt, {
     scheduleEndpoint: (endpoint, body) => endpoints[endpoint](body ?? {}),

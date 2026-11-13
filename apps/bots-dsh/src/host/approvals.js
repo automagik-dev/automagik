@@ -1,5 +1,5 @@
 // Approvals. A member's group Session is hidden, so DSH's approval card never shows
-// there and the turn would wait forever: Omni answers those requests itself, from
+// there and the turn would wait forever: DS Bot answers those requests itself, from
 // the group chat. A Bot's own chat keeps DSH's card; its requests are only noted, so
 // the team view can say who is waiting. So does a running task a Bot started
 // (start_task, agents.js): its approval is noted under that Bot with the task's id
@@ -30,6 +30,16 @@ export function install(rt) {
   const runningTask = (sessionId) => {
     const task = rt.state?.tasks?.[sessionId]
     return task?.status === 'working' && rt.botOf?.(task.from) !== undefined ? task : undefined
+  }
+  const approvalListeners = new Set()
+  const onApproval = (listener) => {
+    approvalListeners.add(listener)
+    return () => approvalListeners.delete(listener)
+  }
+  const emit = (kind, data) => {
+    for (const listener of approvalListeners) {
+      try { listener(kind, data) } catch (error) { rt.warn('omni-ui: approval listener failed: %s', error) }
+    }
   }
 
   // Ahead of DSH's own answerer, which would hold a hidden Session's request unseen.
@@ -115,13 +125,13 @@ export function install(rt) {
 
   ctx.effect(() => () => {
     for (const entry of pending.values()) if (entry.child) entry.answer?.('cancelled')
-  }, 'omni-ui: cancel held subagent asks')
+  }, 'ds-bot: cancel held subagent asks')
 
   function childAsk(request, sessionId, owner) {
     // Fail closed: nothing here can ask the person, so this is not their answer.
     if (!answerableOwner(rt, owner)) {
       rt.noteStop?.(sessionId, { why: 'unavailable', tool: request.toolName, callId: request.callId }, request.agent)
-      rt.warn('omni-ui: subagent approval has no answerable owner: %s', sessionId)
+      rt.warn('ds-bot: subagent approval has no answerable owner: %s', sessionId)
       return 'cancelled'
     }
     const id = randomUUID()

@@ -83,15 +83,16 @@ export const SECTION_COLORS = ['blue', 'orange', 'green', 'violet', 'rose']
 export const AGENT_NAME = 'Tasks'
 export const AGENT_SESSION_TITLE_MAX = 80
 export const DSH_BOT_NAME_MAX = 40
-// Every tool this plugin registers for Bots. `read_browser` only exists in the
-// Desktop profile, so a restriction filters this list down to registered names.
+// Every tool this plugin defines for Bot Sessions; tools.js registers them in
+// each Bot session's own scope. `read_browser` only exists in the Desktop
+// profile, so the list served to one session can be shorter.
 export const TEAM_TOOLS = [
   'list_bots', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'list_bot_models',
   'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'show_view',
   'request_secret', 'list_secrets', 'group_relay', 'read_own_chat',
   'read_group_chat', 'remember', 'forget', 'recall', 'read_browser',
   'list_capabilities', 'save_capability', 'delete_capability',
-  'attach_capability', 'detach_capability',
+  'attach_capability', 'detach_capability', 'group_goal', 'list_connectors', 'request_connector',
   'find_chats', 'list_automations', 'save_automation', 'pause_automation', 'delete_automation',
   'generate_image',
   'omni_endpoints', 'omni_call', 'omni_channels', 'omni_chats', 'omni_messages', 'omni_send', 'omni_react', 'omni_media', 'omni_delete', 'omni_connect', 'show_canvas', 'start_task',
@@ -99,6 +100,9 @@ export const TEAM_TOOLS = [
 // Team tools that take a while (an image takes up to two minutes): in a group they are work,
 // not a quick call.
 export const SLOW_TEAM_TOOLS = Object.freeze(['generate_image'])
+// Consecutive automatic admin wakes with no goal progress before the goal waits
+// for the user instead of waking the admin again.
+export const GOAL_IDLE_NUDGES = 2
 // A member still at work this long after its first tool call lets the round go on; it
 // posts its reply when the work is done.
 export const ROOM_WORK_GRACE_MS = 15_000
