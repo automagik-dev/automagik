@@ -1303,6 +1303,20 @@ for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
   });
 }
 
+test("mode #821: approved Antigravity worker refuses a different argv mode without a mode label", async (t) => {
+  const worker = { agent: "antigravity", agyMode: "auto" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const params = approvedParams(s, worker);
+  assert.equal(params.labels["worker.agyMode"], undefined);
+  const at = params.argv.indexOf("--mode");
+  assert.ok(at > 0);
+  assert.equal(params.argv[at + 1], "auto");
+  const argv = params.argv.map((word, i) => i === at + 1 ? "plan" : word);
+  const answer = await client.call("terminal.run", { ...params, argv });
+  assert.match(answer.error?.message ?? "", /approved worker argv refused.*exactly/);
+  assert.equal(fake.calls("terminal.run").length, 0);
+});
+
 test("approved Antigravity worker names the deterministic permission file; a forged path is refused", async (t) => {
   const worker = { agent: "antigravity", agyMode: "auto" };
   const { s, client } = await approvedWorkerScene(t, worker);

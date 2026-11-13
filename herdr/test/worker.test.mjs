@@ -596,6 +596,17 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   assert.ok(!Number.isNaN(Date.parse(row.at)));
 });
 
+test("mode #821: an empty worker mode launches auto without a mode label", (t) => {
+  const bot = { id: ID.dev, name: "A", agent: "antigravity", worker: { agyMode: "" } };
+  const plan = workerPlan(bot);
+  assert.equal(plan.error, undefined);
+  assert.equal(plan.agyMode, "auto");
+  assert.deepEqual(plan.argv.slice(-2), ["--mode", "auto"]);
+  const args = workerArgs({ botId: ID.dev, branch: "feat/task", role: "dev", name: "worker",
+    cwd: "/work/task", parent: "t1", ...plan, task: "Do the task", path: "/bin" });
+  assert.equal(args.some((word) => word.startsWith("worker.agyMode=")), false);
+});
+
 test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when set, one clear line for an unknown one", (t) => {
   const auto = team();
   auto.bots[2].worker = { agent: "antigravity" };
