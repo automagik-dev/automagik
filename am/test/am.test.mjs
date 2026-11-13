@@ -101,6 +101,17 @@ test("am update --rollback and --auto are the pack's own update, as its help say
     assert.doesNotMatch(got.stderr, /unknown option/, `am ${args.join(" ")}`);
   }
   assert.match(s.installed("update", "--auto", "status").stdout, /^Install updates automatically: (?:on|off)\.$/m);
+  // Named at am itself, the pack's switches do not run: nothing of the pack's is touched.
+  for (const args of [["update", "automagik.am", "--rollback"], ["update", "automagik.am", "--auto", "status"], ["update", "--rollback", "automagik.am"]]) {
+    const got = s.installed(...args);
+    assert.equal(got.status, 2, `am ${args.join(" ")}`);
+    assert.equal(got.stdout, "", `am ${args.join(" ")}`);
+    assert.match(got.stderr, /^am: --rollback and --auto are herdr\.pack's own update, not automagik\.am's/, `am ${args.join(" ")}`);
+  }
+  // Named at the pack, they are the pack's own.
+  const want = s.run(pack, ["update", "--auto", "status"]);
+  const named = s.installed("update", "herdr.pack", "--auto", "status");
+  assert.deepEqual([named.status, named.stdout], [want.status, want.stdout]);
   // An option neither knows is still am's usage error.
   const bad = s.installed("update", "--nope");
   assert.deepEqual([bad.status, bad.stdout, bad.stderr], [2, "", "am: unknown option --nope (am help)\n"]);

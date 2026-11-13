@@ -73,7 +73,7 @@ import {
 } from "./migrateHome.mjs";
 import { change, removePath } from "./layoutSafe.mjs";
 import { foldAttach, readAttach } from "./attach.js";
-import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks, tightenLedgers } from "./migrateHooks.mjs";
+import { AM_LINK, CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks, tightenLedgers } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
   noticeText, packOfPointer, parseSums, pickUpdate, sumsName, tarballName, updatesOff } from "./release.js";
@@ -1374,8 +1374,15 @@ export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app
  * repointed the link, else null; throws only when the swap itself fails.
  */
 export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir = binDirOf() } = {}) {
+  const first = relinkNamed({ modsDir, name, binDir, linkName: CLI_LINK });
+  // am, the same command under its own name, follows on the same rule; the result is the old link's.
+  const am = relinkNamed({ modsDir, name, binDir, linkName: AM_LINK });
+  return first ?? am;
+}
+
+function relinkNamed({ modsDir, name, binDir, linkName }) {
   if (!binDir) return null;
-  const link = join(binDir, CLI_LINK);
+  const link = join(binDir, linkName);
   if (!isLink(link)) return null;
   const from = readlinkSync(link);
   const entries = (m) => ["automagik-herdr", "automagik-herdr.mjs"].map((f) => join(resolve(modsDir), m, "bin", f));
@@ -1385,7 +1392,7 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
   if (now !== wrapper && now !== mjs && !old) return null;
   const to = isFile(wrapper) ? wrapper : mjs;
   if (now === to || (old && !isFile(to))) return null;
-  const tmp = join(binDir, `.${CLI_LINK}.relink-${process.pid}`);
+  const tmp = join(binDir, `.${linkName}.relink-${process.pid}`);
   // A leftover tmp link (a killed run, the same pid since) may dangle: unlinked, never followed (#550).
   removePath(tmp, { force: true });
   symlinkSync(to, tmp);

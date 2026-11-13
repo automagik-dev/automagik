@@ -33,7 +33,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE, hookDoctorLine } from "./briefingText.mjs";
-import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
+import { AM_LINK, CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
@@ -219,9 +219,11 @@ function linkCommand(ctx, name, entries, ours) {
 }
 /** The pack's automagik-herdr link removed where it is ours; another is reported. */
 function unlinkCommands(ctx) {
-  const link = join(ctx.binDir, CLI_LINK);
-  if (linkOurs(link, [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)])) { unlinkSync(link); return [`removed ${link}`]; }
-  return exists(link) ? [`left ${link}: it is not this install's`] : [];
+  return [CLI_LINK, AM_LINK].flatMap((name) => {
+    const link = join(ctx.binDir, name);
+    if (linkOurs(link, [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)])) { unlinkSync(link); return [`removed ${link}`]; }
+    return exists(link) ? [`left ${link}: it is not this install's`] : [];
+  });
 }
 
 /**

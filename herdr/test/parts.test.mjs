@@ -231,6 +231,26 @@ test("herdr.layout: uninstall removes the pack's copy and no update puts it back
   assert.match(doctorOf(m, "herdr.layout").checks.find((c) => c.check === "layout").detail, /is yours/);
 });
 
+test("herdr.pack uninstall removes the am link beside the old one, and leaves a user-owned am alone", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  const old = join(m.binDir, "automagik-herdr"), am = join(m.binDir, "am");
+  symlinkSync(readlinkSync(old), am);
+  uninstall(m.ctx(), P("herdr.pack"));
+  assert.ok(!existsSync(old) && !lstatSync(am, { throwIfNoEntry: false }), "both links go");
+  install(m.ctx(), P("herdr.pack"), packSource);
+  writeFileSync(am, "mine\n");
+  const r = uninstall(m.ctx(), P("herdr.pack"));
+  assert.ok(!existsSync(old));
+  assert.equal(readFileSync(am, "utf8"), "mine\n", "a file of the person's stays");
+  assert.ok(r.ok);
+  rmSync(am);
+  symlinkSync("/somewhere/else/am", am);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  uninstall(m.ctx(), P("herdr.pack"));
+  assert.equal(readlinkSync(am), "/somewhere/else/am", "a link elsewhere stays");
+});
+
 test("herdr.pack uninstall: the whole pack out; hooks, entry point, keys and links go; Herdr's and Pocket's files stay", (t) => {
   const m = machine(t);
   writeFileSync(join(m.app, "keys.json"), "{}\n"); // Herdr already initialized its key file.

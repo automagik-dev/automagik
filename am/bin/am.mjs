@@ -83,7 +83,13 @@ const lineOf = (r) => ({
 const PACK_SWITCH = /^--(?:rollback|auto)(?:=|$)/;
 
 async function update(args) {
-  if (args.some((a) => PACK_SWITCH.test(a))) return cli(["update", ...args]).code;
+  if (args.some((a) => PACK_SWITCH.test(a))) {
+    // The pack's own switches act on the pack only: a named other part (am itself) is refused.
+    // (a switch's own value, like --auto status, is no part id: an id has a dot)
+    const named = args.filter((a) => /^[a-z][a-z0-9-]*\.[a-z][a-z0-9.-]*$/.test(a));
+    if (named.some((a) => a !== PACK)) throw new Usage(`--rollback and --auto are ${PACK}'s own update, not ${named.filter((a) => a !== PACK).join(" ")}'s (am update ${PACK} --rollback)`);
+    return cli(["update", ...args]).code;
+  }
   const { words, flags } = parse(args, ["--check", "--json"]);
   const [id, extra] = words;
   if (extra || (id && id !== PART && id !== PACK)) throw new Usage(`am update takes ${PART} or ${PACK}, not ${words.join(" ")}`);
