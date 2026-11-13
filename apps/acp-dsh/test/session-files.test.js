@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, unlinkSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, unlinkSync, readFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -50,7 +50,13 @@ test('canonical regular file identity detects symlink swaps and replacement with
   const identity = fileIdentity(link)
   assert.equal(identity.canonical, file); assert.equal(sameFiles([identity]), true)
   unlinkSync(link); symlinkSync(sibling, link); assert.equal(sameFiles([identity]), false)
-  const old = fileIdentity(file); unlinkSync(file); writeFileSync(file, 'replacement')
+  const old = fileIdentity(file)
+  const replacement = join(root, 'outside', 'replacement.png')
+  writeFileSync(replacement, 'replacement')
+  const replacementIdentity = fileIdentity(replacement)
+  assert.equal(replacementIdentity.dev, old.dev)
+  assert.notEqual(replacementIdentity.ino, old.ino)
+  renameSync(replacement, file)
   assert.equal(sameFiles([old]), false)
   assert.throws(() => fileIdentity(root), /regular/)
 })
