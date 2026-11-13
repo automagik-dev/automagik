@@ -1294,23 +1294,12 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   bot shows the model its pane runs: the one its command line names, else the agent's own
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
-- `codexAuto` is optional and says whether a Codex seat and its Codex workers get Codex's auto
-  mode, `--approve-for-me --disable hooks`: approval requests go to Codex's own reviewer instead
-  of a person, and commands still run in Codex's workspace-write sandbox (it is not full access
-  and does not widen the sandbox). `--disable hooks` (the same as `-c features.hooks=false`)
-  turns Codex's hooks off at launch, so its TUI never stops at the startup dialog "Hooks need
-  review" for a person to answer: herdr-core reads a Codex pane's state from the PTY and does
-  not need `hooks.json`, and the pack never passes `--dangerously-bypass-hook-trust` (that would
-  run an untrusted `.codex/hooks.json` command in a worktree outside the sandbox). `true` (the
-  default) passes both; `false` leaves Codex its default approvals for that bot, so its panes
-  can stop at a prompt or a hook review only a person can answer. Set it in the bot's entry in
-  `.herdr/bots.json`; `create` and `edit` have no option for it, and either keeps the
-  field. It applies to a Codex seat, its Start and Restart, and its Codex workers; every other
-  agent's launch line is unchanged, and a worker that runs an hc template keeps the template's
-  command. Inside that sandbox (no network by default) `hc` can't connect to its socket and the
-  git folder of a worktree is read-only, so an `hc` call or a commit goes out as an approval
-  request: with the flag Codex's reviewer answers it, without it a person must. The worktree
-  itself and the temp folder stay writable, so a gate that runs there needs no approval.
+- `codexAuto` is retired (#1125). It used to opt a bot's Codex seat and workers out of Codex's
+  auto mode; the owner's ruling (10 and 12 Nov) is that every Codex seat and worker runs in it,
+  so `false` no longer opts out: the field is kept as written, ignored, and loading the bots
+  file warns once ("codexAuto false no longer opts out"); remove it. A value that isn't a boolean
+  is still dropped with a warning (and refused by `check`). See
+  [Codex's launch mode](#codexs-launch-mode).
 - `agyMode` is optional: the Antigravity execution mode Start and Restart pass as
   `agy --mode <mode>`. One of `auto` (the default when absent), `accept-edits` or `plan`; any
   other value is refused at launch with one line and never passed to agy. It applies only to
@@ -1350,8 +1339,8 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   `worker.agyMode` adds no mode flag to a template worker.
   `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template/--worker-agy-mode` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
-  with a warning. A Codex worker passes `--approve-for-me --disable hooks` like its bot's seat,
-  unless the bot's `codexAuto` is false; a `template` owns the command and gets no flag.
+  with a warning. A Codex worker runs [Codex's launch mode](#codexs-launch-mode) like its bot's
+  seat; a `template` owns the command and gets no flag.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
@@ -1361,13 +1350,14 @@ The launcher starts every bot and every worker in its agent's automatic mode, so
 pane never stops at an approval prompt only a person can answer (#955). The words come from the
 agent's definition on every start, restart, linked-machine start, worker and Restart --tree
 helper, never from an old pane's command. A `programs.json` run that already names one of an
-agent's own approval flags is left as the person wrote it, and an hc template owns its command:
-the pack adds nothing to either.
+agent's own approval flags is left as the person wrote it (Codex's excepted: its approval and
+sandbox words are left out, by name, #1125), and an hc template owns its command: the pack adds
+nothing to it (a Codex seat's template excepted, see [Codex's launch mode](#codexs-launch-mode)).
 
 | Agent | What its launch adds | What that does |
 | --- | --- | --- |
 | Claude Code (`claude`) | `--permission-mode auto` | Claude Code's auto mode: its classifier answers permission requests. |
-| Codex (`codex`) | `--approve-for-me --disable hooks` | Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox (#946), and its hooks are off (#1045), so startup never stops at "Hooks need review" and never runs an untrusted `.codex/hooks.json` command in an unattended pane. A bot's `codexAuto: false` turns it off. |
+| Codex (`codex`) | `--approve-for-me --disable hooks --no-daemon -c sandbox_workspace_write.network_access=true`, `--add-dir <folder>` per derived folder | Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox (#946), its hooks are off (#1045), so startup never stops at "Hooks need review" and never runs an untrusted `.codex/hooks.json` command in an unattended pane, and it runs in its pane, with network and the folders it needs (#1125). No opt-out. |
 | Antigravity (`agy`) | `--dangerously-skip-permissions`, `--mode <agyMode>`, `--settings <file>` | No permission prompt and no classifier: everything the file's deny list does not name runs (see [what runs without a prompt](#antigravitys-permission-list)). The file's `trustedWorkspaces` answers the folder-trust question. |
 | dsh-TUI (`dsh-tui`) | nothing | Its DSH profile on the machine it runs on sets the approval policy; dsh-tui takes no such flag. |
 | Oh My Pi (`omp`) | nothing | omp 18.14.2 has only skip-all flags (`--auto-approve`, `--approval-mode=yolo`). |
@@ -1390,6 +1380,140 @@ rule"). So an Antigravity launch gets the flag only beside that file: a launch w
 helper with no bot to write one for, a command that takes no words) has the flag taken out. The
 flag does not answer the folder-trust question; the file's `trustedWorkspaces` does (#953).
 `dsh-tui doctor`'s `agy-sandbox` row and `show` say when this computer can't run `--mode auto`.
+
+### Codex's launch mode
+
+The owner's ruling (10 Nov, reaffirmed 12 Nov, #1125): every Codex seat and every worker the pack
+starts with `--agent codex` runs Codex's auto mode with its sandbox on, and the pack never
+passes `--dangerously-bypass-approvals-and-sandbox`. One mode on every machine, built from the
+definition on a start, a restart (resume, fresh, agent or model swap), a linked machine's start,
+a worker and a Restart --tree helper:
+
+- `--approve-for-me --disable hooks`: the auto mode above. Codex 0.167 refuses it beside
+  `-a`/`--ask-for-approval`, `-s`/`--sandbox` or the bypass flag, and it wins over a config
+  file's `sandbox_mode` and `approval_policy`.
+- `--no-daemon`: `hc --skill` says Codex must run with it, templates included, or its commands
+  run in Codex's shared background server, outside hc and with the environment of whichever pane
+  started that server (`HC_TERMINAL_ID` included). That is a strong candidate cause of a restarted
+  Codex captain's `isn't a terminal hc knows` refusal; it was not reproduced in isolation.
+- `-c sandbox_workspace_write.network_access=true`: the sandbox's own network switch, so `hc`'s
+  socket and GitHub (`gh`, git's transport) answer. It is off by default under the auto mode.
+- `--add-dir <folder>`, derived per launch and only for folders that are there: the launch
+  folder's git dirs, which Codex otherwise keeps read-only (`git rev-parse --git-dir
+  --git-common-dir`: a checkout's own `.git`; for a linked worktree its own folder under the main
+  checkout's `.git/worktrees`, where its index and lock live, then that `.git`), herdr-core's
+  state and data folders (`$XDG_STATE_HOME/herdr-core`, `$XDG_DATA_HOME/herdr-core`, else under
+  the home folder: `hc` needs them to reach its core), and the tool caches a build writes: Go's
+  module and build caches (`GOMODCACHE`, `GOCACHE`), npm's (`npm_config_cache`, else `~/.npm`),
+  pnpm's store and cache, and Bun's install cache (`BUN_INSTALL_CACHE_DIR`). Never the root, the
+  home folder, a folder above it, the app home (its attach binding, locks and ledgers), a folder
+  inside it or above it, or a whole XDG, cache, `GOPATH` or Bun folder. Each folder is weighed in
+  its canonical form where the launch runs (#1142), resolved the filesystem's way: symlinks
+  followed through the nearest folder that is there, then each `..` from where they led (never
+  as text: `link/..` is the parent of the link's target), so an alias of the home folder or the app
+  home goes too; a path whose place can't be proved (a dangling link, a file in the way, a `..`
+  after a part that isn't there) is withheld (below). Codex is passed that canonical value, the
+  one checked, never the path as written. The app home is
+  the launch's effective one (`HERDR_APP_HOME`, a linked project's pane-env) and the default under
+  the home folder both. A linked machine's folders are read and resolved there (its environment,
+  git and realpaths, through `hc exec`), never against this computer. Anything else the sandbox
+  blocks goes to Codex's reviewer, which may refuse it.
+- One inventory (#1142): the same environment words (`HOME`, `HERDR_APP_HOME`, the four XDG
+  folders, `GOPATH`, `GOMODCACHE`, `GOCACHE`, `npm_config_cache`, `NPM_CONFIG_CACHE`,
+  `BUN_INSTALL`, `BUN_INSTALL_CACHE_DIR`) name the folders a linked machine is asked about, the
+  folders granted and the assignments a seat's template may not make (below), and the folders are
+  derived once, from the home folder as the launch spells it, then resolved. An XDG, cache or
+  `GOPATH` value that isn't an absolute path is ignored and its default used, as the XDG spec says.
+- Each folder is then proved outside the app home on its own (#1142), by object identity as well
+  as by path: the folder and every folder above it, the home folder and every folder above it,
+  and each app home and every folder above it are observed where the launch runs with `stat`
+  (device and inode, symlinks followed: here by the pack's own `stat`, on a linked machine by its
+  `stat -L` through `hc exec`). A folder may not be the same object as the home folder or a folder
+  above it, an app home or a folder above one, or a general folder (a whole XDG, cache, `GOPATH` or
+  Bun folder) or a folder above one, nor have an app home among the folders above it. A cache
+  folder named at or above a general folder (`GOCACHE` set to the XDG cache's parent, say) is no
+  cache and is not granted.
+- A failed observation proves nothing and is never read as "different": any `stat` that fails (a
+  missing folder, permission denied, a dangling link, a loop), and a linked machine's answer that
+  is unsupported, short, malformed or missing. A folder whose own resolution or observation fails
+  is withheld alone, and the others are still granted. A derived folder that isn't there is just
+  not granted, and an optional general folder that isn't there or can't be resolved keeps nothing
+  else out: only a folder derived under one that can't be resolved is withheld. The home folder
+  or an app home that can't be resolved or observed (an empty or relative `HOME`, a machine that
+  doesn't answer for it, a resolver error, an app home that isn't there, the default
+  `~/.config/herdr-app` included) withholds every folder: that launch passes no `--add-dir` and no
+  derived folder. Unsupported or unproven layouts get no extra folders.
+- A launch that withheld folders says so once, counting each folder once. When it still passes
+  some: "Codex extra folders withheld: the pack cannot prove N of them are outside the Herdr app
+  home and passes no grant for those; writes outside permitted locations may require automatic
+  review or fail. See #1151." When it passes none: "Codex extra folders withheld: the pack cannot
+  prove they are outside the Herdr app home. It passes no additional folder grants; writes outside
+  permitted locations may require automatic review or fail. See #1151." The mode words,
+  `--no-daemon` and the network switch stay either way. A template worker runs its own command
+  and gets neither the pack's folders nor this warning.
+- Known limit (tracked in #1151): a bind mount that shows a folder inside an app home
+  under another path has that folder's own device and inode, and no folder above it is an app
+  home, so the pack can't tell it apart and may grant it. The pack claims no bind containment. (A
+  bind of an app home itself, or of a folder above one, is the same object and is refused.)
+  Case-insensitive disks are not tested.
+
+A source that picks its own approvals or sandbox loses those words, named in one warning with
+flag names only (never a value): a `programs.json` Codex run naming the bypass flag or `--yolo`,
+`-a`/`--ask-for-approval` or `-s`/`--sandbox` (separate, joined or `=` forms), `--remote` (another
+app server, outside the pane), an `--add-dir` the folder rules above refuse (by any alias, or a
+relative one; one only withheld is counted by the warning above instead), or a `-c`/`--config`
+for `sandbox_mode`, `approval_policy`, `approvals_reviewer`, `sandbox_workspace_write`,
+`default_permissions`, `permission_profile` or `permissions` (on 0.167 a
+`-c default_permissions=":danger-full-access"` overrides `--approve-for-me`). Every other word stays.
+Only a Codex run's words before its `--` are options: after it, Codex reads them as prompt text.
+
+Templates keep their command. A worker started with `--template`, or by a bot's
+`worker.template`, runs its hc template exactly as written, in hc's template form, so the
+template's instructions still reach the task: the owner's exception for template workers,
+bypass included, and never with the pack's folders. One that runs Codex without `--no-daemon`
+among its options starts as before with one warning naming the template and the fix (add
+`--no-daemon` to its command). One whose Codex run puts a Codex option after its `--` (the mode
+words, an approval, sandbox or bypass word, `-c`, `--add-dir`) is refused before anything starts,
+by name (#1142): Codex would read that option as prompt text, so the launch it means can't be
+proved. Restart --tree keeps that exception, and that refusal, only for a pane with the
+`worker.template` label (or a ledger row naming its template); any other Codex helper runs the
+launch mode, and one whose shell command picks its own approvals, names a refused `--add-dir`
+or can't be shown to pass words to Codex as options is refused by name, as is a Codex pane whose
+command runs Codex where the pack can't read it (inside an `if` or a group, say). A bot's seat
+never runs a template's bypass: a Codex seat's template is kept (a seat's template has run through
+`sh -c` with words after it through `"$@"` since #213) only when it names no approval, sandbox or
+refused `--add-dir` word of its own, writes each `--add-dir` as the canonical value it is checked
+as (a template's text is never rewritten), and Codex provably gets words after it as options.
+That proof reads one shape only (#1142): literal assignments (`NAME=value`) or `export` of them,
+joined by `;`, `&&` or a newline, then one Codex run (optionally behind `exec`) whose words are
+literals, with exactly one `"$@"`, its own or the one the pack appends, and no `--` (a quoted
+`'--'` included). Anything else (`set --`, `shift`, `eval`, `.`, a function, `cd` or any other
+program before Codex, a pipe, a subshell, a redirection, a substitution, `$*`, a variable in a
+Codex word) proves nothing. Nor does an assignment that could move the launch's folders or its
+program (`HOME`, `PATH`, `HERDR_APP_HOME`, `GOPATH`, `GOMODCACHE`, `GOCACHE`, any `XDG_`,
+`CODEX_`, `npm_config_` or `BUN_INSTALL` word): the folders were weighed for the pane's own. And
+every Codex word before and after `"$@"` must be one of Codex's options of known arity with its
+value in place: a flag that takes none (`--oss`, `--search`, the mode words), or one that takes a
+value, given joined (`--model=x`, `-mx`) or as the next word, which may not be `"$@"` or start
+with `-`, and may not be missing at the end. A subcommand (`exec`, `resume`), a prompt word or an
+unknown flag proves nothing. That reads Codex 0.167's options as the pack lists them; it is not a
+proof by Codex's own parser. Then the mode words it lacks and the folders go after it; any other is
+set aside for the agent row, and the restart says which template and why, by flag name.
+
+Migration: nothing restarts on its own and a running pane keeps its launch. A Codex seat gets the
+mode at its next start or restart; a `programs.json` Codex run with its own approval words gets
+them left out (said once per launch; remove them to quiet it); `codexAuto: false` is warned
+about; a Codex template without `--no-daemon` is named at each worker start until the file has it.
+
+Known limit: once a sandboxed Codex seat can reach `hc` it can have herdr-core run commands
+outside its sandbox (`hc run`, `hc exec`): the workspace-write sandbox does not contain commands
+delegated through hc. The hc guard is a guardrail, not a boundary (#624, #628); the boundary is
+the per-pane hc proxy sandbox (#631), opt-in and off by default.
+
+Under that proxy, a Codex worker gets the mode words without the `--add-dir` folders: the proxy
+starts only the approved command, which names no per-launch folder, and its contract is
+unchanged. The worker says so in one warning. Its writes to the git dirs, herdr-core's folders or
+the caches go to Codex's reviewer, and the proxy's own sandbox may still refuse them.
 
 ### Antigravity's permission list
 
