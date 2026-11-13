@@ -595,9 +595,9 @@ test('Arca\'s page is Arca\'s own: Pages carries no /arca page and nothing under
     assert.deepEqual(said, [arca.line], `${route}: the menu says Arca's line`)
   }
   // THE SITE LINKS TO IT, in the same tab, by the one address: the Products menu, the
-  // drawer's row and the footer on every page, the home card, and the product pages' way to
-  // the next or the earlier product. Nothing links to a place under it, to the installer or
-  // to Arca's repository.
+  // drawer's row and the footer on every page, and the home card. The product pages' way to
+  // the next or the earlier product does not: it passes Arca by. Nothing links to a place
+  // under it, to the installer or to Arca's repository.
   for (const [route, html] of generated) {
     const links = [...html.matchAll(/<a\b[^>]*href="(\/arca[^"]*)"[^>]*>/g)]
     for (const [link, href] of links) { assert.equal(href, arcaPath, route); assert.doesNotMatch(link, /target=|aria-current/, route) }

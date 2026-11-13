@@ -501,6 +501,9 @@ try {
         const walked = [order[0]]
         for (let step = 0; step < round.length; step++) {
           const link = page.locator(`.pager a[rel="${rel}"]`), href = await link.getAttribute('href')
+          // Said before the click: a link that leaves this site's pages would otherwise be
+          // found only by the wait for a page that never loads.
+          assert.ok(round.includes(href), `The pager's ${rel} leads to a product page this site builds: ${href} from ${walked.at(-1)} ${width}px`)
           await link.click()
           await page.waitForURL(origin + href, { waitUntil: 'load' })
           walked.push(new URL(page.url()).pathname)
