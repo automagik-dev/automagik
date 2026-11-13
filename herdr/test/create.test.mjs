@@ -1579,3 +1579,32 @@ test("a repeated Restart anyway click does not read a cleared retry choice", asy
   await cx.settle();
   assert.equal(args().length, 1);
 });
+
+// Herdr ends a mod's program at 30 s unless exec gets a timeout; a tree restart runs each helper in
+// turn (26.5 s with 4 helpers, 36.8 s with 6), so the button must pass the long one (or not run).
+for (const machine of [null, "vm"]) test(`menu Restart with its helpers on ${machine ?? "local"}: the CLI runs with the 600 s exec timeout`, async (t) => {
+  seed([MAIN, OMP]);
+  const args = fakeCli({ terminal: "t100", replaced: "t5" });
+  Object.assign(state, { timeoutProbe: "honours", execTimeouts: [] });
+  t.after(() => { delete state.timeoutProbe; delete state.execTimeouts; });
+  const { form, cx } = await menu({ machine });
+  form.restart({ key: project, machine }, OMP, cx, { tree: true, force: true });
+  await cx.settle();
+  assert.match(args().at(-1), /--tree/);
+  assert.deepEqual(state.execTimeouts.filter((x) => x.command === "env"), [{ command: "env", timeout: 600_000 }]);
+});
+
+test("menu Restart with its helpers on a Herdr that takes no exec timeout: not run, nothing restarted, a terminal command", async (t) => {
+  seed([MAIN, OMP]);
+  const args = fakeCli({ terminal: "t100", replaced: "t5" });
+  Object.assign(state, { timeoutProbe: "ignores", execTimeouts: [] });
+  t.after(() => { delete state.timeoutProbe; delete state.execTimeouts; });
+  const { form, cx } = await menu();
+  form.restart({ key: project }, OMP, cx, { tree: true, force: true });
+  await cx.settle();
+  assert.equal(state.execTimeouts.some((x) => x.command === "env"), false, "the CLI never ran");
+  assert.throws(() => args(), /ENOENT/, "no restart reached the CLI");
+  assert.match(form.error, /Nothing was restarted/);
+  assert.match(form.error, /automagik-herdr restart .*--tree/);
+  assert.equal(form.busy, false);
+});

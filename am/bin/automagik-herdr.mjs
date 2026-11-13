@@ -1463,8 +1463,8 @@ keys to (its git main checkout), or --project's. With --machine, --project is an
 folder on that machine and the file is read and written there by the same rule (a file
 changed since it was read is never overwritten); its panes run there (M/tN). A pane that
 reports no status to hc can't say it is waiting for an approval: restart refuses it unless
---force, which still sends it no keys. restart --tree is this computer's only for now: with
---machine it is refused before anything is read or started there, and a bot whose helpers
+--force, which still sends it no keys. restart --tree works on this computer and, with
+--machine, on that machine (there it needs --force, since it runs at once); a bot whose helpers
 end with its pane there is refused until each helper's pane is ended (hc kill M/tN).`;
 
 /** `proxy approve`'s own help: the residual is part of the command's contract. */

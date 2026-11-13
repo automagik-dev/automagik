@@ -545,7 +545,7 @@ export class BotForm {
       // On a linked machine: past Herdr's 30 s exec limit, or refused where Herdr has only that (#444).
       const args = restartArgs({ botId: bot.id, projectKey: project.key, agent, force, fresh, tree, machine: project.machine ?? null });
       let result;
-      try { result = await (project.machine ? machineCli(args, "restart") : runCli(args)); }
+      try { result = await (project.machine || tree ? machineCli(args, "restart") : runCli(args)); }
       catch (e) {
         console.error(e?.stack ?? e);
         result = { code: 1, err: String(e?.message ?? e) };

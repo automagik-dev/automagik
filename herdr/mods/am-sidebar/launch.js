@@ -71,7 +71,8 @@ export async function honoursTimeout() {
 const shellWord = (w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${String(w).replace(/'/g, "'\\''")}'`);
 
 /**
- * runCli for `start` or `restart` with --machine (`what`), with MACHINE_EXEC_MS. On a Herdr that
+ * runCli for `start` or `restart` with --machine (`what`), or this computer's `restart --tree`
+ * (it runs each helper in turn: 26.5 s with 4 helpers, 36.8 s with 6), with MACHINE_EXEC_MS. On a Herdr that
  * doesn't take it, or can't say, Herdr ends the CLI at 30 s: a start runs with that deadline
  * (AUTOMAGIK_HERDR_DEADLINE, an absolute time taken before exec, so it counts run.sh and node's
  * startup), and the CLI starts nothing when too little of it is left to finish; a restart isn't
@@ -82,7 +83,8 @@ const shellWord = (w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${String(w).replace
  */
 export async function machineCli(args, what) {
   const at = args.indexOf("--machine");
-  const machine = at >= 0 ? args[at + 1] : "that machine";
+  const machine = at >= 0 ? args[at + 1] : "this computer";
+  const onMachine = at >= 0 ? ` --machine ${shellWord(machine)}` : "";
   const command = `automagik-herdr ${args.map(shellWord).join(" ")}`;
   const long = await honoursTimeout();
   if (!long && what === "restart") {
@@ -97,8 +99,8 @@ export async function machineCli(args, what) {
   const bot = shellWord(args[1]);
   const project = args.indexOf("--project") >= 0 ? ` --project ${shellWord(args[args.indexOf("--project") + 1])}` : "";
   const check = what === "restart"
-    ? `its old pane and a new one may both run it: check ${machine}'s panes (hc ls) and end the one automagik-herdr whois --bot ${bot}${project} --machine ${shellWord(machine)} doesn't name with hc kill`
-    : `a pane may run it with no attach row: check with automagik-herdr whois --bot ${bot}${project} --machine ${shellWord(machine)} and ${machine}'s panes (hc ls), and end a pane of it the attach ledger doesn't name with hc kill`;
+    ? `its old pane and a new one may both run it: check ${machine}'s panes (hc ls) and end the one automagik-herdr whois --bot ${bot}${project}${onMachine} doesn't name with hc kill`
+    : `a pane may run it with no attach row: check with automagik-herdr whois --bot ${bot}${project}${onMachine} and ${machine}'s panes (hc ls), and end a pane of it the attach ledger doesn't name with hc kill`;
   return { code: 1, out: null, asIs: true,
     err: `Herdr ended automagik-herdr ${what} on ${machine} (${r.err}), and it may have stopped part-way: ${check}. `
       + `Then ${what} it from a terminal if it isn't running: ${command}` };

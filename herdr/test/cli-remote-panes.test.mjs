@@ -1411,7 +1411,20 @@ for (const failure of ["timeout", "invalid-reply"]) test(`linked tree ${failure}
   const r = s.cli(["restart", "Atlas", ...s.on, "--tree", "--force", "--json"]);
   assert.equal(r.code, 1);
   assert.match(r.err, /inspect its panes before retrying/);
+  if (failure === "invalid-reply") assert.match(r.err, /returned an invalid pane/, "the shape check answers, not the later pane lookup");
   assert.equal(s.calls().filter((c) => c[0] === "exec" && c.includes("--tree")).length, 1);
   assert.equal(s.calls().some((c) => c[0] === "run" || c[0] === "kill"), false);
   assert.equal(s.rows().at(-1).terminal, "t8");
+});
+
+test("linked tree reply naming a live pane that is not the bot's replacement: not confirmed, no ledger move or kill", (t) => {
+  const stranger = atlasPane({ address: "vm/t9", created_ms: 1700000000009 });
+  const s = scene(t, { terminals: [atlasPane(), stranger] });
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+  exe(join(s.root, "vm-bin", "automagik-herdr"), `#!/bin/sh\nprintf '%s\\n' '{"terminal":"t9"}'\n`);
+  const r = s.cli(["restart", "Atlas", ...s.on, "--tree", "--force", "--json"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /its replacement pane could not be confirmed/);
+  assert.equal(s.calls().some((c) => c[0] === "run" || c[0] === "kill"), false);
+  assert.equal(s.rows().at(-1).terminal, "t8", "the controller attachment stays on the old pane");
 });
