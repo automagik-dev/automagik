@@ -5,6 +5,9 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  '1 approval waiting': '1 项批准请求待处理',
+  '{count} approvals waiting': '{count} 项批准请求待处理',
+  '{count} requests to use {tool}': '{count} 个使用 {tool} 的请求',
   "Pair Hermes Bot": "配对 Hermes Bot",
   "Not paired": "未配对",
   "Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it.": "使用此配置现有的 Bot Chat。其他 Bot、群组和任务不能使用此配对。更改前请先取消配对。",

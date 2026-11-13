@@ -43,6 +43,9 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "1 approval waiting": "1 项批准请求待处理",
+  "{count} approvals waiting": "{count} 项批准请求待处理",
+  "{count} requests to use {tool}": "{count} 个使用 {tool} 的请求",
   "Pair Hermes Bot": "配对 Hermes Bot",
   "Not paired": "未配对",
   "Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it.": "使用此配置现有的 Bot Chat。其他 Bot、群组和任务不能使用此配对。更改前请先取消配对。",
@@ -4045,7 +4048,7 @@ function Crown() {
     )
   );
 }
-function BotAvatar({ bot, size, state = "idle", main, admin, crown = false, badge = true, live = true, gaze = false, pokeable = false }) {
+function BotAvatar({ bot, size, state = "idle", count, main, admin, crown = false, badge = true, live = true, gaze = false, pokeable = false }) {
   const settled = useSettled(state);
   if (bot === void 0) return (0, import_react6.createElement)(BotMark, { size });
   const badgeKind = !badge ? null : state === "alert" ? "alert" : WORK.includes(state) ? "working" : admin ? "admin" : main && !crown ? "main" : null;
@@ -4055,7 +4058,7 @@ function BotAvatar({ bot, size, state = "idle", main, admin, crown = false, badg
     (0, import_react6.createElement)(BotMark, { bot, size, state: settled ? "done" : state, live, gaze, pokeable }),
     crown ? (0, import_react6.createElement)(Crown) : null,
     badgeKind === "working" ? (0, import_react6.createElement)("span", { className: "bt-badge bt-badge-working", "aria-label": t("Working"), role: "img" }) : null,
-    badgeKind === "alert" ? (0, import_react6.createElement)("span", { className: "bt-badge bt-badge-alert", "aria-label": t("Waiting for your answer"), role: "img" }, "?") : null,
+    badgeKind === "alert" ? (0, import_react6.createElement)("span", { className: "bt-badge bt-badge-alert", "aria-label": count > 0 ? count === 1 ? t("1 approval waiting") : t("{count} approvals waiting", { count }) : t("Waiting for your answer"), role: "img" }, count > 0 ? count > 9 ? "9+" : String(count) : "?") : null,
     badgeKind === "admin" ? (0, import_react6.createElement)("span", { className: "bt-badge bt-badge-admin", "aria-label": t("Admin"), role: "img" }, (0, import_react6.createElement)(StarIcon)) : null,
     badgeKind === "main" ? (0, import_react6.createElement)("span", { className: "bt-badge bt-badge-main", "aria-label": t("Main Bot"), role: "img" }, (0, import_react6.createElement)(MainStar)) : null
   );
@@ -6924,6 +6927,51 @@ var COMPOSER_PACK_CSS = `
 [data-composer-card] [class*="_trailing"]:has(>[class*="_standardControls"]:not([hidden]) .bt-composer-model),[data-composer-card] [class*="_standardControls"]:has(.bt-composer-model){flex:0 1 auto!important;min-width:0!important}
 `;
 
+// src/client/approvals.js
+var useApproval = (useWork, match) => useWork ? useWork((work) => (work.approvals ?? []).some(match)) : false;
+var approvalCount = (work, match) => (work?.approvals ?? []).filter(match).length;
+function groupApprovals(entries2) {
+  const keyed = /* @__PURE__ */ new Map();
+  return entries2.slice().sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map((entry) => {
+    const key = entry.capabilityKey;
+    const group = key === void 0 ? void 0 : keyed.get(key);
+    if (group) {
+      group.entries.push(entry);
+      return void 0;
+    }
+    const first = { key: key ?? entry.id, entries: [entry] };
+    if (key !== void 0) keyed.set(key, first);
+    return first;
+  }).filter(Boolean);
+}
+function nativeAsk(statusMap, entry) {
+  const pending = statusMap.get(entry.sessionId)?.pendingInteraction;
+  return pending?.kind === "approval" && typeof pending.answer === "function" && pending.answerable !== false && entry.callId !== void 0 && pending.callId === entry.callId && pending.toolName === entry.tool && String(pending.reason ?? "") === String(entry.reason ?? "") ? pending : void 0;
+}
+async function answerGroup(entries2, choice, { actions, statusMap }) {
+  const snapshot = [...entries2];
+  const results = await Promise.allSettled(snapshot.map(async (entry) => {
+    if (entry.answerable) await actions.answerApproval(entry.id, choice);
+    else {
+      const ask = nativeAsk(statusMap, entry);
+      if (!ask) return false;
+      await ask.answer(choice === "allow" ? "allowed-once" : "rejected");
+    }
+    return true;
+  }));
+  let answered = 0;
+  let skipped = 0;
+  for (const result of results) {
+    if (result.status === "rejected") actions.reportError?.(result.reason, "approval");
+    else if (result.value) answered += 1;
+    else skipped += 1;
+  }
+  return { answered, skipped };
+}
+var approvalPlace = (entry, roster) => roster?.roomsById?.[entry.roomId]?.name ?? (entry.taskId !== void 0 ? roster?.tasks?.[entry.taskId]?.title ?? entry.label : void 0) ?? "";
+var approvalWhere = (entry, roster) => approvalPlace(entry, roster) || (entry.roomId === void 0 && entry.taskId === void 0 ? t("in its own chat") : "");
+var approvalDetail = (entry) => entry.detail?.code || (entry.tool === "acp_tool" ? String(entry.reason ?? "") : "");
+
 // src/shared/held.js
 var HELD_NOT_SET = "The permission level of this conversation could not be set, so the agent is not running here. Restarting DeepSeek Harness, or changing the permission level, tries again.";
 var HELD_UNREAD = "DeepSeek Harness could not check where this conversation comes from, so the agent is not running here. Send the message again; if this goes on, restart DeepSeek Harness.";
@@ -7009,6 +7057,12 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
   const pending = useSessionStatus ? useSessionStatus((map) => map.get(taskId)?.pendingInteraction) : void 0;
   const ask = pending?.kind === "approval" && typeof pending.answer === "function" ? pending : void 0;
   const approval = useWork ? useWork((work) => approvalFor(work, taskId)) : false;
+  const askCall = ask?.callId;
+  const detail = useWork ? useWork((work) => {
+    const mine = (work.approvals ?? []).filter((entry2) => entry2.taskId === taskId);
+    const entry = askCall !== void 0 ? mine.find((item) => item.sessionId === taskId && item.callId === askCall) : ask === void 0 && mine.length === 1 ? mine[0] : void 0;
+    return entry ? approvalDetail(entry) : "";
+  }) : "";
   const stop3 = useWork ? useWork((work) => {
     const entry = taskId === null ? void 0 : openStops(work).filter((item) => item.taskId === taskId).sort((a, b) => b.at - a.at)[0];
     return entry ? stopLine(entry) : "";
@@ -7069,6 +7123,7 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
         ),
         (0, import_react18.createElement)("div", { className: "op-task-bar", "aria-hidden": true }, (0, import_react18.createElement)("i"))
       ) : task?.summary ? (0, import_react18.createElement)("p", { className: "op-task-summary" }, task.summary) : null,
+      status === "waiting" && detail ? (0, import_react18.createElement)("span", { className: "op-task-said" }, detail) : null,
       sessionId ? (0, import_react18.createElement)("button", { type: "button", className: "op-task-open", onClick: onOpen }, ask ? t("Open task") : status === "waiting" ? t("Answer it") : working ? t("Watch it work") : t("Open task"), " →") : null
     )
   );
@@ -12161,15 +12216,28 @@ function liveOf(work, roster, now = Date.now()) {
   const byId = roster?.byId ?? {};
   const roomsById = roster?.roomsById ?? {};
   const tasks = roster?.tasks ?? {};
-  const needs = (work?.approvals ?? []).filter((entry) => byId[entry.botId]).map((entry) => {
-    const task = entry.taskId === void 0 ? void 0 : tasks[entry.taskId];
-    return {
+  const needs = groupApprovals((work?.approvals ?? []).filter((entry) => byId[entry.botId])).map(({ entries: entries2 }) => {
+    const entry = entries2[0];
+    const detail = approvalDetail(entry);
+    const item = {
       key: `ask:${entry.id}`,
       bot: byId[entry.botId],
-      place: entry.roomId ? roomsById[entry.roomId]?.name : task?.title ?? entry.label,
+      place: entry.roomId ? roomsById[entry.roomId]?.name : tasks[entry.taskId]?.title ?? entry.label,
       tool: entry.tool,
-      ...entry.child ? { line: t("A subagent wants to use {tool}", { tool: entry.tool }) } : {},
-      open: entry.taskId ?? entry.roomId ?? entry.botId
+      ...entry.child ? { line: t("A subagent wants to use {tool}", { tool: entry.tool }) } : detail && entry.tool !== "keep_working" ? { line: `${t("Wants to use {tool}", { tool: entry.tool })} · ${detail}` } : {},
+      open: entry.taskId ?? entry.roomId ?? entry.botId,
+      count: entries2.length,
+      entries: entries2,
+      detail
+    };
+    if (entries2.length === 1) return item;
+    const places = [...new Set(entries2.map((entry2) => approvalWhere(entry2, roster)).filter(Boolean))];
+    return {
+      ...item,
+      places,
+      place: places.join(", "),
+      reason: entry.reason ?? "",
+      line: t("{count} requests to use {tool}", { count: entries2.length, tool: entry.tool })
     };
   });
   for (const entry of openStops(work)) {
@@ -12213,7 +12281,8 @@ function liveOf(work, roster, now = Date.now()) {
 }
 function liveSummary({ needs, working }) {
   const parts = [];
-  if (needs.length > 0) parts.push(t("{count} needs you", { count: needs.length }));
+  const count = needs.reduce((sum, item) => sum + (item.count ?? 1), 0);
+  if (count > 0) parts.push(t("{count} needs you", { count }));
   parts.push(working.length > 0 ? t("{count} working", { count: working.length }) : t("nothing working"));
   return parts.join(" · ");
 }
@@ -12235,6 +12304,40 @@ function Entry({ item, tone, line, actions }) {
     (0, import_react29.createElement)("span", { className: "bt-live-go" }, t("Open"))
   );
 }
+function GroupEntry({ item, actions, statusMap }) {
+  const [answering, setAnswering] = (0, import_react29.useState)(false);
+  const canAnswer = item.entries.every((entry) => entry.answerable || nativeAsk(statusMap, entry));
+  const answer = async (choice) => {
+    if (answering) return;
+    setAnswering(true);
+    try {
+      await answerGroup(item.entries, choice, { actions, statusMap });
+    } finally {
+      setAnswering(false);
+    }
+  };
+  const what = [item.line, item.detail].filter(Boolean).join(" · ");
+  return (0, import_react29.createElement)(
+    "div",
+    { className: "bt-live-card bt-live-need", role: "group", "aria-label": `${item.bot.name} · ${what}`, "aria-busy": answering || void 0 },
+    (0, import_react29.createElement)("span", { className: "bt-live-face" }, (0, import_react29.createElement)(BotMark, { bot: item.bot, size: 28, state: "alert" })),
+    (0, import_react29.createElement)(
+      "span",
+      { className: "bt-live-text" },
+      (0, import_react29.createElement)("span", { className: "bt-live-name" }, item.bot.name, item.place ? (0, import_react29.createElement)("span", { className: "bt-live-place" }, ` · ${item.place}`) : null),
+      (0, import_react29.createElement)("span", { className: "bt-live-line" }, item.line),
+      item.reason && item.reason !== item.detail ? (0, import_react29.createElement)("span", { className: "bt-live-line" }, hostText(item.reason)) : null,
+      item.detail ? (0, import_react29.createElement)("span", { className: "bt-live-line" }, item.detail) : null
+    ),
+    (0, import_react29.createElement)(
+      "div",
+      { className: "bt-q-foot" },
+      canAnswer ? (0, import_react29.createElement)("button", { type: "button", className: "bt-q-btn", disabled: answering, "aria-label": `${t("Reject")} · ${what}`, onClick: () => answer("reject") }, t("Reject")) : null,
+      canAnswer ? (0, import_react29.createElement)("button", { type: "button", className: "bt-q-submit", disabled: answering, "aria-label": `${t("Allow once")} · ${what}`, onClick: () => answer("allow") }, t("Allow once")) : null,
+      (0, import_react29.createElement)("button", { type: "button", className: "bt-live-go", onClick: () => actions.openSession(item.open) }, t("Open"))
+    )
+  );
+}
 function Section({ label, dot, children, empty }) {
   return (0, import_react29.createElement)(
     "section",
@@ -12243,7 +12346,8 @@ function Section({ label, dot, children, empty }) {
     children.length > 0 ? children : (0, import_react29.createElement)("p", { className: "bt-live-empty" }, empty)
   );
 }
-function LiveRail({ roster, actions, useWork }) {
+function LiveRail({ roster, actions, useWork, useSessionStatus }) {
+  const statusMap = useSessionStatus?.((map) => map) ?? /* @__PURE__ */ new Map();
   const work = useWork((value) => value);
   const [now, setNow] = (0, import_react29.useState)(Date.now());
   (0, import_react29.useEffect)(() => {
@@ -12263,7 +12367,7 @@ function LiveRail({ roster, actions, useWork }) {
     (0, import_react29.createElement)(
       Section,
       { label: t("Needs you"), dot: "need", empty: t("Nothing waiting for you.") },
-      live.needs.map((item) => (0, import_react29.createElement)(Entry, { key: item.key, item, tone: "need", actions, line: item.line ?? (item.tool ? t("Wants to use {tool}", { tool: item.tool }) : t("Waiting for your answer")) }))
+      live.needs.map((item) => item.count > 1 ? (0, import_react29.createElement)(GroupEntry, { key: item.key, item, actions, statusMap }) : (0, import_react29.createElement)(Entry, { key: item.key, item, tone: "need", actions, line: item.line ?? (item.tool ? t("Wants to use {tool}", { tool: item.tool }) : t("Waiting for your answer")) }))
     ),
     (0, import_react29.createElement)(
       Section,
@@ -12306,6 +12410,11 @@ var LIVE_CSS = `
 .bt-live-dot-done i{display:block;background:var(--st-okdot,var(--bt-green))}
 .bt-live-empty{margin:0;font-size:12px;line-height:16px;color:var(--bt-ink-2)}
 .bt-live-card{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border:1px solid var(--bt-line-2);border-radius:16px;background:var(--bt-sidebar);color:inherit;font:inherit;text-align:left;cursor:pointer}
+div.bt-live-card.bt-live-need{flex-wrap:wrap;cursor:default}
+div.bt-live-card.bt-live-need>.bt-q-foot{flex-basis:100%;align-items:center}
+div.bt-live-card .bt-live-name{white-space:normal}
+div.bt-live-card .bt-live-line{display:block;overflow:visible;overflow-wrap:anywhere;white-space:pre-wrap}
+div.bt-live-card .bt-live-go{padding:0 4px;border:0;background:none;font:inherit;font-weight:600;cursor:pointer}
 .bt-live-card:hover{background:var(--bt-card)}
 .bt-live-need{border-color:color-mix(in srgb,var(--st-warndot,var(--bt-accent)) 60%,transparent);background:var(--bt-card)}
 .bt-live-bad .bt-live-line{color:var(--st-bad-strong,var(--bt-danger))}
@@ -14255,9 +14364,6 @@ function showsDshRow(dsh, app) {
   return dsh.kind === "app" && APP_OFFER.has(app?.phase) && sameVersion(app.version, dsh.verified);
 }
 
-// src/client/approvals.js
-var useApproval = (useWork, match) => useWork ? useWork((work) => (work.approvals ?? []).some(match)) : false;
-
 // src/client/work-code-switch.js
 var import_react32 = require("react");
 var NOTE_PATTERNS = [
@@ -14508,6 +14614,7 @@ var waitingFor = (roster, waits) => {
   const names = [...(waits?.bots ?? []).map((id) => roster.byId[id]?.name), ...(waits?.rooms ?? []).map((id) => roster.roomsById[id]?.name)].filter(Boolean);
   return names.length === 0 ? "" : t("Waiting for {names}", { names: names.join(t(" and ")) });
 };
+var waitingLabel = (count) => count === 1 ? `${t("Waiting for your approval")} · ${t("1 approval waiting")}` : count > 0 ? t("{count} approvals waiting", { count }) : t("Waiting for your approval");
 function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked }) {
   const id = bot.id;
   const part = currentPart(bot);
@@ -14519,6 +14626,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const main = isMainOf(roster, id);
   const crowned = roster.mainBotId === id;
   const approval = useApproval(useWork, (entry) => entry.botId === id);
+  const waitingCount = useWork ? useWork((work) => approvalCount(work, (e) => e.botId === id)) : 0;
   const blockedTask = useWork ? useWork((work) => (work.approvals ?? []).some((entry) => entry.taskId !== void 0 && entry.botId === id)) : false;
   const blockedLine = blockedTask ? t("A task needs your approval") : "";
   const stopped = useWork ? useWork((work) => openStops(work).some((entry) => entry.botId === id)) : false;
@@ -14543,7 +14651,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   };
   const pinned = bot.pinned === true && !crowned;
   const role = crowned ? bot.role : "";
-  const label = [bot.name, role, main ? t("Main Bot") : "", ...pillLabels(roster, bot), pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, stoppedLine, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
+  const label = [bot.name, role, main ? t("Main Bot") : "", ...pillLabels(roster, bot), pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, stoppedLine, approval ? waitingLabel(waitingCount) : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
   return (0, import_react34.createElement)(
     "button",
     {
@@ -14556,7 +14664,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       onClick: () => actions.openSession(id),
       onContextMenu
     },
-    (0, import_react34.createElement)(BotAvatar, { bot, size: crowned && wide ? 42 : 36, state, main, crown: crowned }),
+    (0, import_react34.createElement)(BotAvatar, { bot, size: crowned && wide ? 42 : 36, state, count: waitingCount, main, crown: crowned }),
     pinned && !wide ? (0, import_react34.createElement)(PinMark) : null,
     wide ? (0, import_react34.createElement)(
       "span",
@@ -14602,6 +14710,7 @@ function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, useWo
   const ids = tasks.map((task) => task.sessionId);
   const askedKey = useSessionStatus((map) => ids.filter((id) => waitsForUser(map, id)).join(","));
   const approvalKey = useWork ? useWork((work) => ids.filter((id) => approvalFor(work, id)).join(",")) : "";
+  const approvals = useWork ? useWork((work) => work.approvals) : void 0;
   const waitingKey = `${askedKey},${approvalKey}`;
   const shownId = useSessions((list) => ids.find((id) => (list.byId[id]?.retainedBy?.mainView ?? 0) > 0) ?? "");
   const [open, setOpen] = (0, import_react34.useState)(false);
@@ -14616,7 +14725,9 @@ function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, useWo
     { className: "bt-threads", role: "group", "aria-label": t("Tasks {name} started", { name: bot.name }) },
     shown.map((task) => {
       const state = taskState(task, waiting.has(task.sessionId));
-      const label = [task.title, state === "waiting" ? t("Waiting for you") : t("Working")].join(", ");
+      const asks = state === "waiting" ? (approvals ?? []).filter((entry) => entry.taskId === task.sessionId) : [];
+      const detail = asks.length === 1 ? approvalDetail(asks[0]) : "";
+      const label = [task.title, state === "waiting" ? t("Waiting for you") : t("Working"), detail].filter(Boolean).join(", ");
       return (0, import_react34.createElement)(
         "button",
         {
@@ -14625,7 +14736,7 @@ function BotThreads({ bot, roster, actions, useSessions, useSessionStatus, useWo
           className: "bt-thread",
           "data-state": state,
           "aria-label": label,
-          title: task.title,
+          title: detail ? `${task.title} · ${detail}` : task.title,
           "aria-current": shownId === task.sessionId ? "page" : void 0,
           onClick: () => actions.openSession(task.sessionId)
         },
@@ -14645,12 +14756,13 @@ function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, 
   const unread = useSessionStatus((map) => map.get(id)?.completionUnread === true) || marked && !active;
   useMarkedUnread(id, active, marked, actions);
   const approval = useApproval(useWork, (entry) => entry.roomId === id);
+  const waitingCount = useWork ? useWork((work) => approvalCount(work, (entry) => entry.roomId === id)) : 0;
   const members = workKeys(useGroupWork(useWork, (rooms) => (rooms[id] ?? []).map((entry) => ({ id: entry.botId, ...doingOf(entry) }))));
   const first = roster.byId[members[0]?.id];
   const workingLine = first ? workLine(first.name, members[0], members.length - 1) : null;
   if (room2.hidden && !active) return null;
   const pinned = room2.pinned === true;
-  const label = [room2.name, pinned ? t("Pinned") : "", members.length > 0 ? t("Working") : "", approval ? t("Waiting for your approval") : ""].filter(Boolean).join(", ");
+  const label = [room2.name, pinned ? t("Pinned") : "", members.length > 0 ? t("Working") : "", approval ? waitingLabel(waitingCount) : ""].filter(Boolean).join(", ");
   return (0, import_react34.createElement)(
     "button",
     {
@@ -14670,7 +14782,7 @@ function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, 
     wide ? (0, import_react34.createElement)(
       "span",
       { className: "bt-row-body" },
-      (0, import_react34.createElement)("span", { className: "bt-row-name" }, (0, import_react34.createElement)("span", { className: "bt-row-title" }, room2.name), pinned ? (0, import_react34.createElement)(PinMark) : null),
+      (0, import_react34.createElement)("span", { className: "bt-row-name" }, (0, import_react34.createElement)("span", { className: "bt-row-title" }, room2.name), waitingCount > 0 ? (0, import_react34.createElement)("span", { className: "bt-tag" }, String(waitingCount)) : null, pinned ? (0, import_react34.createElement)(PinMark) : null),
       workingLine ? (0, import_react34.createElement)("span", { className: "bt-row-preview" }, workingLine) : preview ? (0, import_react34.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     wide && approval && !active ? (0, import_react34.createElement)("span", { className: "bt-unread bt-unread-wait", "aria-hidden": true }) : wide && unread && !active ? (0, import_react34.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : null
@@ -29125,10 +29237,10 @@ function noticeApprovals({ work, roster, shownSession, openSession, since: since
       if ((entry.at ?? 0) < since2) continue;
       const place = entry.roomId ?? entry.ownerSessionId ?? entry.sessionId;
       if (document.visibilityState === "visible" && shownSession() === place) continue;
-      const { byId, roomsById } = roster.getSnapshot();
-      const room2 = entry.roomId ? roomsById[entry.roomId] : void 0;
+      const team = roster.getSnapshot();
+      const { byId } = team;
       const note = new Notification(t("{name} is waiting for your approval", { name: byId[entry.botId]?.name ?? t("A Bot") }), {
-        body: [room2?.name, entry.tool === "keep_working" ? t("Let it keep working?") : entry.child ? t("A subagent wants to use {tool}", { tool: entry.tool }) : entry.tool].filter(Boolean).join(" · "),
+        body: [approvalPlace(entry, team), entry.tool === "keep_working" ? t("Let it keep working?") : entry.child ? t("A subagent wants to use {tool}", { tool: entry.tool }) : entry.tool, approvalDetail(entry).slice(0, 120)].filter(Boolean).join(" · "),
         tag: `omni-ui-approval-${entry.id}`
       });
       note.onclick = () => {
