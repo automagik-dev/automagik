@@ -55,7 +55,11 @@ function scheduleService() {
       tasks.set(id, entry)
       return entry
     },
-    async catalog() { return [...tasks.values()].map(entry => ({ ...entry })) },
+    // As DSH lists them: by the next firing, then by id.
+    async catalog() {
+      return [...tasks.values()].map(entry => ({ ...entry }))
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt) || a.id.localeCompare(b.id))
+    },
     async edit({ id, action, patch }) {
       if (!tasks.has(id)) return { id, deleted: false, code: 'schedule_not_found' }
       if (action === 'delete') {
@@ -64,9 +68,36 @@ function scheduleService() {
       }
       if (action !== 'update') throw new Error(`unexpected edit ${action}`)
       const entry = tasks.get(id)
+      if (patch?.target !== undefined) entry.target = patch.target
       if (patch?.active === false) entry.status = 'paused'
       else if (patch?.active === true) entry.status = 'active'
       return entry
+    },
+  }
+}
+
+// The Host-wide service of DSH 0.2.2: each task has a delivery target and changes through edit().
+function hostSchedule() {
+  const tasks = new Map()
+  let next = 1
+  const edits = []
+  return {
+    tasks,
+    edits,
+    async create({ title, prompt, timing, target }) {
+      const id = `schedule-${next++}`
+      const [selector] = Object.keys(timing).filter(key => key !== 'kind')
+      tasks.set(id, { record: { id, kind: timing.kind, title, prompt, scheduledAt: timing.at ?? '2030-01-01T01:00:00.000Z' }, timing: timing[selector], target, status: 'active' })
+      return { id }
+    },
+    async catalog() {
+      return [...tasks.values()].map(task => ({ ...task.record, target: task.target, status: task.status }))
+    },
+    async edit(request) {
+      edits.push(request)
+      if (request.action === 'delete') tasks.delete(request.id)
+      else Object.assign(tasks.get(request.id), request.patch)
+      return { id: request.id }
     },
   }
 }
@@ -197,6 +228,9 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
 
   await schedule.create({ title: 'Old part', prompt: 'x', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'w1' } })
   await schedule.create({ title: 'Not ours', prompt: 'x', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'outside' } })
+  // A task past its firing reads overdue; an inactive one is finished.
+  schedule.tasks.set('schedule-late', { id: 'schedule-late', kind: 'at', title: 'Late', prompt: 'x', scheduledAt: '2020-01-01T00:00:00.000Z', target: { kind: 'session', sessionId: 'w2' }, involvedSessionIds: ['w2'], status: 'active' })
+  schedule.tasks.set('schedule-done', { id: 'schedule-done', kind: 'at', title: 'Done', prompt: 'x', scheduledAt: '2020-01-01T00:00:00.000Z', target: { kind: 'session', sessionId: 'w2' }, involvedSessionIds: ['w2'], status: 'inactive' })
   const listed = (await call('schedules', {})).value
   assert.equal(listed.available, true)
   assert.deepEqual(listed.tasks.map(task => [task.title, task.botId]), [['Done', 'w1'], ['Late', 'w1'], ['Briefing', 'w1'], ['Old part', 'w1']])
@@ -220,7 +254,7 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
   assert.match((await call('schedule-create', { target: 'm1', title: '', prompt: 'y', when: { kind: 'every', minutes: 5 } })).error.message, /name/)
 
   const removed = await call('schedule-delete', { sessionId: 'w2', id: created.id })
-  assert.deepEqual(removed.value.tasks.map(task => task.title), ['Old part', 'Week', 'Ping'])
+  assert.deepEqual(removed.value.tasks.map(task => task.title), ['Done', 'Late', 'Old part', 'Week', 'Ping'])
   assert.match((await call('schedule-delete', { sessionId: 'outside', id: 'schedule-3' })).error.message, /No such task/)
 })
 
@@ -289,7 +323,7 @@ test('on DSH 0.2.2 a Bot reads and changes only the tasks of its own chat', asyn
   schedule.tasks.set('own', { record: { id: 'own', kind: 'at', title: 'Mine', prompt: 'x', scheduledAt: '2030-01-01T00:00:00.000Z' }, target: { kind: 'session', sessionId: 'w1' }, status: 'active' })
   schedule.tasks.set('chief', { record: { id: 'chief', kind: 'at', title: 'Chief', prompt: 'x', scheduledAt: '2030-01-01T00:00:00.000Z' }, target: { kind: 'session', sessionId: 'm1' }, status: 'active' })
   schedule.tasks.set('elsewhere', { record: { id: 'elsewhere', kind: 'at', title: 'New', prompt: 'x', scheduledAt: '2030-01-01T00:00:00.000Z' }, target: { kind: 'new_once' }, status: 'active' })
-  const [gate] = ctx.listeners.get('tools/pre-execute')
+  const gate = ctx.listeners.get('tools/pre-execute').find(listener => listener.name === 'ownTasksGate')
   const check = (name, id, sessionId) => gate({ name, arguments: { id, action: 'delete' }, agent: { id: sessionId } }, async () => ({ kind: 'allow' }))
   assert.deepEqual(await check('schedule_edit', 'own', 'w2'), { kind: 'allow' })
   assert.deepEqual(await check('schedule_view', 'own', 'w2'), { kind: 'allow' })
@@ -347,18 +381,19 @@ test('a failed task move can resume without losing identical remaining tasks', a
   // The Bot's own schedule tool makes rrule tasks on 0.2.2; a rotation must carry them too.
   await schedule.create({ title: 'Bot task', prompt: 'Check the build', timing: { kind: 'rrule', rrule: 'DTSTART:20300101T090000Z\nRRULE:FREQ=DAILY' }, target: { kind: 'session', sessionId: 'w2' } })
 
-  const create = schedule.create
+  // A task moves in place (its target changes), so a failure leaves the rest where they were.
+  const edit = schedule.edit
   let attempts = 0
-  schedule.create = async (...args) => {
+  schedule.edit = async (...args) => {
     if (++attempts === 2) throw new Error('down')
-    return create(...args)
+    return edit(...args)
   }
   await assert.rejects(rt.moveSchedules('w2', 's9'), /down/)
   const on = id => [...schedule.tasks.values()].filter(task => task.target.sessionId === id)
   assert.equal(on('s9').length, 1)
   assert.equal(on('w2').length, 2)
 
-  schedule.create = create
+  schedule.edit = edit
   await rt.moveSchedules('w2', 's9')
   assert.equal(on('s9').length, 3)
   assert.equal(on('w2').length, 0)

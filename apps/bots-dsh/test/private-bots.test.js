@@ -104,8 +104,9 @@ async function start({ services = {}, privateBot = true, archives, memberPick = 
   }))).json()
   const state = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: agentOf(sessionId), name, callId: 'c1' })
-  // The privacy listener alone, which runs first; the last step stands for the tool.
-  const guard = ctx.listeners.get('tools/execute')[0]
+  // The privacy listener alone, which runs right after the tool-deny gate (the first one);
+  // the last step stands for the tool.
+  const guard = ctx.listeners.get('tools/execute')[1]
   const run = async (name, args, sessionId, agent = agentOf(sessionId)) => {
     let ran = false
     const exec = { name, arguments: args, agent, callId: 'c1', signal: AbortSignal.timeout(60_000) }

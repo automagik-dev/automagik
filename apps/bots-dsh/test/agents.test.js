@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createRuntime } from '../index.js'
+import { apply } from '../index.js'
 import { TEAM_TOOLS } from '../src/host/constants.js'
 import { fakeContext } from './fake-ctx.js'
 
@@ -11,6 +11,7 @@ const flush = async () => { for (let index = 0; index < 8; index += 1) await Pro
 
 // Enough of the dsh services for the roster and the agents module; tool restrict
 // calls and archived Sessions are recorded for the assertions.
+let rt
 function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-agents-')) } = {}) {
   if (team !== undefined) writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const ctx = fakeContext()
@@ -67,7 +68,8 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
     route = options
     return register(options)
   }
-  rt = createRuntime(ctx, { home, ...config })
+  apply(ctx, { home, ...config })
+  rt = ctx.provided.get('omniTeam')
   const call = async (endpoint, payload) => {
     const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
@@ -78,7 +80,7 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
   return {
-    call, stop, home, created, archived, failArchive, restricted, renamed, createdAgents, ctx,
+    call, stop, home, created, archived, failArchive, restricted, scoped, renamed, createdAgents, ctx,
   }
 }
 
@@ -628,14 +630,14 @@ test('UI DSH creation adds native team membership usable by roster, messages, gr
   assert.equal(rt.selfOf(entry.sessions[0]), bot.id)
   assert.equal(created.length, 1)
   assert.deepEqual((await call('state', {})).value.agents, [])
-  assert.match(await ctx.registeredTools.get('list_bots').execute({}, { agent: { id: 'm1' } }), /Native newcomer/)
+  assert.match(await rt.teamTools.find(d => d.name === 'list_bots').execute({}, { agent: { id: 'm1' } }), /Native newcomer/)
   const delivered = []
   rt.deliver = async message => { delivered.push(message) }
-  await ctx.registeredTools.get('message_bot').execute({ to: bot.name, message: 'Welcome' }, { agent: { id: 'm1' } })
+  await rt.teamTools.find(d => d.name === 'message_bot').execute({ to: bot.name, message: 'Welcome' }, { agent: { id: 'm1' } })
   assert.equal(delivered[0].toId, bot.id)
   const room = await rt.createRoom({ members: ['m1', bot.id], name: 'Native team' })
   assert.ok(room.members.includes(bot.id))
-  assert.equal(await ctx.registeredTools.get('browser_native_test').execute({}, { agent: { id: bot.id }, signal: new AbortController().signal }), 'native browser ready')
+  assert.equal(await rt.teamTools.find(d => d.name === 'browser_native_test').execute({}, { agent: { id: bot.id }, signal: new AbortController().signal }), 'native browser ready')
 })
 
 test('UI DSH creation fails without leaving a plain orphan if membership cannot be saved', async (t) => {
@@ -1266,7 +1268,9 @@ test('TEAM_TOOLS names exactly the tools ds-bot registers, and those of the othe
   const { stop, ctx } = start(TEAM, { config: { browser: true } })
   t.after(stop)
   const browser = name => name.startsWith('browser_')
-  assert.deepEqual([...ctx.registeredTools.keys()].filter(name => !browser(name)).sort(), TEAM_TOOLS.filter(name => !CHANNEL_TOOLS.includes(name)).sort())
+  // The team's own tools, and the ones still registered for every Session (start_task).
+  const named = new Set([...rt.teamTools.map(d => d.name), ...ctx.registeredTools.keys()])
+  assert.deepEqual([...named].filter(name => !browser(name)).sort(), TEAM_TOOLS.filter(name => !CHANNEL_TOOLS.includes(name)).sort())
   for (const name of CHANNEL_TOOLS) assert.ok(TEAM_TOOLS.includes(name), name)
 })
 
@@ -1292,8 +1296,8 @@ test('agent-adopt takes an unowned Session and refuses team-owned ones', async (
   const adopted = (await call('agent-adopt', { agentId: agent.id, sessionId: 'fresh' })).value
   assert.equal(adopted.sessionId, 'fresh')
   assert.deepEqual((await call('state', {})).value.agents[0].sessions, [...agent.sessions, 'fresh'])
-  // The team tools live on Bot scopes only, so the adopted Session needs no mask.
-  assert.equal(restricted.length, 0)
+  // It gets the mask for the tools every Session is offered, and no team tool of its own.
+  assert.equal(restricted.at(-1).sessionId, 'fresh')
   assert.equal(scoped.some(entry => entry.sessionId === 'fresh'), false)
   // Adopting again is a no-op.
   assert.equal((await call('agent-adopt', { agentId: agent.id, sessionId: 'fresh' })).ok, true)
@@ -1302,8 +1306,8 @@ test('agent-adopt takes an unowned Session and refuses team-owned ones', async (
   assert.equal((await call('agent-adopt', { agentId: 'none', sessionId: 'fresh2' })).error.message, 'Unknown DSH bot')
 })
 
-test('team tools are restricted on DSH bot Sessions but not on Bot Sessions', async (t) => {
-  const { call, stop, restricted, createdAgents } = start(TEAM)
+test('a Bot Session gets the team tools in its own scope; a DSH Agent Session gets none', async (t) => {
+  const { call, stop, restricted, scoped, createdAgents } = start(TEAM)
   t.after(stop)
   await call('state', {})
   // A Bot resolving its agent gets every team tool scoped to it and no mask.
@@ -1320,45 +1324,33 @@ test('team tools are restricted on DSH bot Sessions but not on Bot Sessions', as
     },
   })
   await flush()
-  assert.deepEqual(scoped.filter(entry => entry.sessionId === 'm1').map(entry => entry.name).sort(),
-    [...TEAM_TOOLS].filter(name => name !== 'read_browser').sort())
+  // Every tool the team defines itself; the channel tools and start_task are registered for
+  // every Session, and read_browser only in the Desktop profile.
+  const own = name => !CHANNEL_TOOLS.includes(name) && !['start_task', 'read_browser'].includes(name)
+  assert.deepEqual(scoped.filter(entry => entry.sessionId === 'm1').map(entry => entry.name).filter(name => !name.startsWith('browser_')).sort(),
+    TEAM_TOOLS.filter(own).sort())
   assert.equal(restricted.length, 0)
-  // An Agent Session is a plain dsh conversation: nothing is scoped onto it and
-  // nothing is masked, because the team tools never reach the global layer.
-  const plainAgent = (await call('add-agent')).value
+  // A DSH bot Session gets no team tool in its scope, and the mask for the ones every
+  // Session is offered (start_task, the channel tools).
+  const agent = (await call('add-agent', { name: 'Notes' })).value
+  assert.equal(restricted.length, 1)
+  assert.equal(restricted[0].sessionId, agent.sessions[0])
+  assert.deepEqual([...restricted[0].filter.deny].sort(), [...TEAM_TOOLS].sort())
   createdAgents({
     agent: {
-      session: { id: plainAgent.sessions[0] },
+      session: { id: agent.sessions[0] },
       ctx: {
         tools: {
-          register: tool => { scoped.push({ sessionId: plainAgent.sessions[0], name: tool.name }) },
-          restrict: filter => { restricted.push({ sessionId: plainAgent.sessions[0], filter }) },
+          register: tool => { scoped.push({ sessionId: agent.sessions[0], name: tool.name }) },
+          restrict: filter => { restricted.push({ sessionId: agent.sessions[0], filter }) },
         },
         effect: execute => execute(),
       },
     },
   })
   await flush()
-  assert.equal(restricted.length, 0)
-  // Creating the agent records the session, then restrict fires on its own agent.
-  const agent = (await call('add-agent', { name: 'Notes' })).value
-  assert.equal(restricted.length, 1)
-  assert.equal(restricted[0].sessionId, agent.sessions[0])
-  assert.deepEqual([...restricted[0].filter.deny].sort(), [...TEAM_TOOLS].sort())
-  // A later agent/created for that session does not restrict a second time.
-  const listener = {
-    session: { id: agent.sessions[0] },
-    ctx: {
-      tools: { restrict: filter => { restricted.push({ sessionId: agent.sessions[0], filter }) } },
-      effect: execute => execute(),
-    },
-  }
-  createdAgents({ agent: listener })
-  await flush()
-  // The listener path resolves through rt.load() + the session index; because the
-  // fake resolveAgent is not consulted here, the WeakSet does not know this agent
-  // object, so the event does restrict — but still only for the agent session.
   assert.equal(restricted.every(entry => entry.sessionId === agent.sessions[0]), true)
+  assert.equal(scoped.some(entry => entry.sessionId === agent.sessions[0]), false)
 })
 
 test('a task started with a folder of its own runs there, with a preset this DSH serves', async (t) => {

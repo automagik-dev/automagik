@@ -5,13 +5,15 @@ import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
-import { createRuntime } from '../index.js'
+import { apply } from '../index.js'
 import { SOURCE_KIND } from '../src/host/constants.js'
 import { dshHomeOf } from '../src/host/folders.js'
 import { escapeRegExp } from '../src/host/text.js'
-import { fakeContext } from './fake-ctx.js'
+import { fakeApproval, fakeContext } from './fake-ctx.js'
 import { until } from './until.js'
 import { createUnfold } from './fake-unfold-bot.js'
+
+let rt
 
 // A Main Bot and a Bot, with the Bot in the group Ops through its group Session 'gb'.
 const TEAM = {
@@ -81,7 +83,7 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
       list: () => [...registry.values()],
       resolveByPath: async path => [...registry.values()].find(workspace => workspace.path === path),
       create: async (path) => {
-        const workspace = { id: 'w-new', path, title: 'DS Bot' }
+        const workspace = { id: 'w-new', path, title: 'Omni' }
         registry.set(workspace.id, workspace)
         return workspace
       },
@@ -109,7 +111,8 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
     return register(options)
   }
   apply(ctx, { home, browserPlugin: false })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
+  rt = ctx.provided.get('omniTeam')
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: agentOf(sessionId), name, callId: 'c1' })
@@ -1539,7 +1542,7 @@ test('adopting a host root with a model starts no model setup or greeting', asyn
   const env = await start()
   t.after(env.stop)
   const rt = env.ctx.provided.get('omniTeam')
-  rt.defaultModel = async () => 'provider:model'
+  rt.defaultBotModel = async () => 'provider:model'
   rt.defaultEffort = async () => undefined
   rt.waitForModel = () => { throw new Error('adoption must not start model setup') }
   const bot = await rt.createBot({ name: 'Unfold', existingSessionId: 'adapter-root' })
@@ -1547,4 +1550,214 @@ test('adopting a host root with a model starts no model setup or greeting', asyn
   assert.equal(bot.kickoff, undefined)
   assert.deepEqual(env.agentOf(bot.id).calls, [])
   assert.equal(env.created.length, 0)
+})
+
+// A folder a member picks inside a group is kept on the room, per member: it holds
+// for that conversation's next parts, and nowhere else.
+const TWO_ROOMS = {
+  ...TEAM.rooms,
+  r2: { id: 'r2', name: 'Cuda', members: ['a', 'b'], mode: 'admin', admin: 'a', named: true, sessions: { b: 'gb2' } },
+}
+
+test('a folder a member picks in one group holds only there, not in its other groups or its own chat', async (t) => {
+  const { service } = folderService()
+  const { requests, services } = approvalServices('allowed-once')
+  const { ctx, call, agentOf, created, root, state, preStep, stop } = await start({ services: { ...services, workingDirectory: service }, team: { ...TEAM, rooms: TWO_ROOMS } })
+  t.after(stop)
+  const own = join(root, 'cuda')
+  const ascend = join(root, 'ascend')
+  mkdirSync(own)
+  mkdirSync(ascend)
+  assert.equal((await call('update-bot', { id: 'b', workDir: own })).ok, true)
+  await until(() => state().bots.b.sessionId === 's1')
+  // The member's group Sessions were made in its own folder.
+  agentOf('gb').session.header.cwd = own
+  agentOf('gb2').session.header.cwd = own
+
+  const moved = await changeDirectory(ctx, service, agentOf('gb'), ascend)
+  assert.equal(moved.ran, true)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].toolName, 'working_directory')
+  assert.equal(state().rooms.r1.memberDirs.b, ascend)
+  // Neither the Bot's folder, its conversation in the other group, nor its own chat moved.
+  assert.equal(state().bots.b.workDir, own)
+  assert.equal(state().rooms.r1.workDir, undefined)
+  assert.equal(await preStep('gb2'), 'next')
+  assert.equal(await preStep('s1'), 'next')
+  assert.deepEqual(created.map(options => options.cwd).filter(Boolean), [own])
+
+  // Its conversation in this group moves on to a fresh part in the new folder.
+  assert.deepEqual(await preStep('gb'), { kind: 'enter', messages: [] })
+  await until(() => state().rooms.r1.sessions.b === 's2')
+  assert.deepEqual(created.at(-1), { cwd: ascend })
+  assert.equal(state().rooms.r2.sessions.b, 'gb2')
+  assert.equal(state().bots.b.sessionId, 's1')
+})
+
+test('a member that changes to the team workspace in a group stays there, not back in its own folder', async (t) => {
+  const { service } = folderService()
+  const { services } = approvalServices('allowed-once')
+  const { ctx, call, agentOf, created, root, team, state, preStep, stop } = await start({ services: { ...services, workingDirectory: service } })
+  t.after(stop)
+  const own = join(root, 'cuda')
+  mkdirSync(own)
+  assert.equal((await call('update-bot', { id: 'b', workDir: own })).ok, true)
+  await until(() => state().bots.b.sessionId === 's1')
+  agentOf('gb').session.header.cwd = own
+
+  const moved = await changeDirectory(ctx, service, agentOf('gb'), team)
+  assert.equal(moved.ran, true)
+  assert.equal(state().rooms.r1.memberDirs.b, null)
+  assert.equal(state().bots.b.workDir, own)
+  assert.deepEqual(await preStep('gb'), { kind: 'enter', messages: [] })
+  await until(() => state().rooms.r1.sessions.b === 's2')
+  assert.deepEqual(created.at(-1), { workspaceId: 'w1' })
+})
+
+test('a member\'s folder pick in a group goes with the group\'s folder setting or the member', async (t) => {
+  const { service } = folderService()
+  const { services } = approvalServices('allowed-once')
+  const three = {
+    ...TEAM,
+    bots: { ...TEAM.bots, c: { id: 'c', name: 'Tester', role: 'Test', sessionId: 'c', createdAt: 3 } },
+    rooms: { r1: { ...TEAM.rooms.r1, members: ['a', 'b', 'c'] } },
+  }
+  const { ctx, call, agentOf, project, state, stop } = await start({ services: { ...services, workingDirectory: service }, team: three })
+  t.after(stop)
+  assert.equal((await changeDirectory(ctx, service, agentOf('gb'), project)).ran, true)
+  assert.equal(state().rooms.r1.memberDirs.b, project)
+  // Setting the group's folder overrides every pick, and clearing it does not bring one back.
+  assert.equal((await call('update-room', { id: 'r1', workDir: project })).ok, true)
+  assert.equal(state().rooms.r1.memberDirs, undefined)
+  assert.equal((await call('update-room', { id: 'r1', workDir: '' })).ok, true)
+  assert.equal((await changeDirectory(ctx, service, agentOf('gb'), project)).ran, true)
+  assert.equal(state().rooms.r1.memberDirs.b, project)
+  assert.equal((await call('update-room', { id: 'r1', remove: ['b'] })).ok, true)
+  assert.equal(state().rooms.r1.memberDirs?.b, undefined)
+})
+
+test('a member cannot pick the folder of a private Bot inside a group', async (t) => {
+  const { service } = folderService()
+  const { services } = approvalServices('allowed-once')
+  const three = {
+    ...TEAM,
+    bots: { ...TEAM.bots, c: { id: 'c', name: 'Diary', role: 'Notes', sessionId: 'c', createdAt: 3 } },
+  }
+  const { ctx, call, agentOf, project, state, stop } = await start({ services: { ...services, workingDirectory: service }, team: three })
+  t.after(stop)
+  assert.equal((await call('update-bot', { id: 'c', private: true, workDir: project })).ok, true)
+  const moved = await changeDirectory(ctx, service, agentOf('gb'), project)
+  assert.equal(moved.ran, false)
+  assert.match(moved.error, /Diary is a private Bot/)
+  assert.equal(state().rooms.r1.memberDirs, undefined)
+})
+
+test('a group folder change moves the group\'s own Session to a part in the folder', async (t) => {
+  const { call, created, archived, agentOf, project, team, state, stop } = await start()
+  t.after(stop)
+  assert.equal((await call('update-room', { id: 'r1', workDir: project })).ok, true)
+  // The group keeps its identity while its own Session moves to a fresh part in the
+  // folder, the way a Bot's own chat does: the next turn runs in the new Session.
+  await until(() => state().rooms.r1.sessionId === 's1')
+  await until(() => handoffOf(agentOf('s1')) !== undefined)
+  assert.deepEqual(created, [{ cwd: project }])
+  assert.equal(state().rooms.r1.id, 'r1')
+  assert.equal(agentOf('s1').session.header.cwd, project)
+  // The earlier part stays in the record and is archived, never written again.
+  assert.deepEqual(state().rooms.r1.parts.map(segment => [segment.sessionId, segment.fallback]), [['r1', 'whole']])
+  assert.deepEqual(archived.filter(([id]) => id === 'r1').length, 1)
+  assert.equal(agentOf('r1').session.header.cwd, team)
+  // The member's own chat and its group Session are untouched.
+  assert.equal(state().bots.b.sessionId, 'b')
+  assert.equal(state().rooms.r1.sessions.b, 'gb')
+  assert.equal(agentOf('b').session.header.cwd, team)
+
+  // The group's Session goes back to the team workspace when the folder is cleared.
+  assert.equal((await call('update-room', { id: 'r1', workDir: '' })).ok, true)
+  assert.equal(state().rooms.r1.workDir, undefined)
+  await until(() => state().rooms.r1.sessionId === 's2')
+  assert.deepEqual(created.map(options => options.cwd ?? options.workspaceId), [project, 'w1'])
+  assert.deepEqual(state().rooms.r1.parts.map(segment => segment.sessionId), ['r1', 's1'])
+  assert.equal(state().rooms.r1.id, 'r1')
+})
+
+test('a group\'s earlier parts page like a Bot\'s own chat', async (t) => {
+  const { ctx, call, project, state, stop } = await start()
+  t.after(stop)
+  // The earlier part's record is a real group round the way DSH logs it on the
+  // group's own Session (rc.4): the user's question and a member's posted line as
+  // user/message events, then the synthesized group_relay tool/call paired by call
+  // id with a tool/result whose message holds the round's replies — the tool name
+  // is on the call, never on the result.
+  const session = Session.create('r1')
+  const events = []
+  const record = (type, data, opts) => {
+    const event = session.append(type, data, opts)
+    events.push(event)
+    return event
+  }
+  record('user/message', createUserMessage({
+    source: { kind: 'user' },
+    content: [{ type: 'text', text: '@Writer 文档在哪' }],
+  }), { surfaceOp: 'append' })
+  record('user/message', createUserMessage({
+    source: { kind: SOURCE_KIND, form: 'relay', role: 'post', senderName: 'Writer', senderSessionId: 'b', roomId: 'r1' },
+    content: [{ type: 'text', text: '[Group post from Writer]\nDone.' }],
+  }), { surfaceOp: 'append' })
+  for (const [step, callId, arguments_] of [[1, 'toolu_relay_1', '{}'], [3, 'toolu_relay_2', '{"roundId":"1-round-2"}']]) {
+    const relay = record('tool/call', { turn: 1, step, callId, name: 'group_relay', arguments: arguments_ })
+    record('tool/result', {
+      turn: 1, step,
+      message: createToolResultMessage({
+        callId,
+        isError: false,
+        content: [{ type: 'text', text: JSON.stringify({ replies: [{ botId: 'b', name: 'Writer', color: 'blue', text: '在 docs/ 下面', time: 1000 }, { kind: 'missed', botId: 'a', name: 'Omni', color: 'gray', time: 2000 }] }) }],
+      }),
+    }, { surfaceOp: 'append', sourceEventSeqs: [relay.seq] })
+  }
+  // A result whose call named another tool is not the group's conversation.
+  const other = record('tool/call', { turn: 1, step: 2, callId: 'toolu_2', name: 'remember', arguments: '{}' })
+  record('tool/result', {
+    turn: 1, step: 2,
+    message: createToolResultMessage({ callId: 'toolu_2', isError: false, content: [{ type: 'text', text: 'Saved to memory' }] }),
+  }, { surfaceOp: 'append', sourceEventSeqs: [other.seq] })
+  ctx.sessionController.page = async ({ address }) => (address?.sessionId === 'r1'
+    ? { records: events.map(event => ({ event })), hasMore: false }
+    : { records: [], hasMore: false })
+  assert.equal((await call('update-room', { id: 'r1', workDir: project })).ok, true)
+  await until(() => state().rooms.r1.sessionId === 's1')
+  // The current part's earlier page reads the part it moved on from.
+  const page = (await call('earlier', { sessionId: 's1' })).value
+  assert.deepEqual(page.items.map(item => [item.kind, item.name ?? item.reply?.kind ?? null, item.text ?? item.texts?.[0] ?? null]), [
+    ['user', null, '@Writer 文档在哪'],
+    ['post', 'Writer', 'Done.'],
+    ['post', 'Writer', '在 docs/ 下面'],
+    ['relay', 'missed', null],
+    ['post', 'Writer', '在 docs/ 下面'],
+    ['relay', 'missed', null],
+  ])
+  assert.equal(page.cursor, null)
+  assert.equal(typeof page.startedAt, 'number')
+  // The first part itself has nothing before it.
+  assert.deepEqual((await call('earlier', { sessionId: 'r1' })).value.items, [])
+})
+
+test('the file panel of a group with a folder lists the Session\'s own folder', async (t) => {
+  // DSH's file panel lists a Session at the folder the Session was made in, so no
+  // lookup override is needed once the group's own Session moved there.
+  const { call, agentOf, project, state, stop } = await start()
+  t.after(stop)
+  assert.equal((await call('update-room', { id: 'r1', workDir: project })).ok, true)
+  await until(() => state().rooms.r1.sessionId === 's1')
+  assert.equal(agentOf(state().rooms.r1.sessionId).session.header.cwd, project)
+})
+
+test('a group Session that cannot be opened still saves the folder', async (t) => {
+  const env = await start()
+  t.after(env.stop)
+  env.ctx.sessionController.resolveAgent = async () => { throw new Error('down') }
+  assert.equal((await env.call('update-room', { id: 'r1', workDir: env.project })).ok, true)
+  assert.equal(env.state().rooms.r1.workDir, env.project)
+  assert.equal(env.state().rooms.r1.id, 'r1')
+  assert.equal((await env.call('state', {})).ok, true)
 })

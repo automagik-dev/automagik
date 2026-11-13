@@ -4,6 +4,7 @@
 // a shell can still reach any file the account can (see docs/plans).
 import { join, resolve } from 'node:path'
 import { within } from './folders.js'
+import { refusal } from './refusal.js'
 import { unquote } from './text.js'
 
 const FILE_TOOLS = { read: 'file_path', write: 'file_path', edit: 'file_path', read_image: 'file_path', str_replace_editor: 'path' }
@@ -324,14 +325,14 @@ export function install(rt) {
     const dir = moving ? workDir : bot.workDir
     if (!makes) {
       const clash = moving && dir !== undefined ? await privateClash(dir, { except: bot.id }) : undefined
-      if (clash) throw new Error(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${bot.name} cannot work there`)
+      if (clash) throw refusal(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${bot.name} cannot work there`)
       return
     }
-    if (rt.isMain(bot.id)) throw new Error(`${bot.name} is a Main Bot, so it cannot be private`)
-    if (dir === undefined) throw new Error(`${bot.name} needs a folder of its own to be private`)
-    if (Object.values(state.rooms).some(room => room.members.includes(bot.id))) throw new Error(`${bot.name} is in a group chat, where every member reads what is said. Remove it from its groups first`)
+    if (rt.isMain(bot.id)) throw refusal(`${bot.name} is a Main Bot, so it cannot be private`)
+    if (dir === undefined) throw refusal(`${bot.name} needs a folder of its own to be private`)
+    if (Object.values(state.rooms).some(room => room.members.includes(bot.id))) throw refusal(`${bot.name} is in a group chat, where every member reads what is said. Remove it from its groups first`)
     const clash = await privateClash(dir, { except: bot.id })
-    if (clash) throw new Error(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${bot.name} cannot work there`)
+    if (clash) throw refusal(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${bot.name} cannot work there`)
     const keys = await spellings(dir)
     const others = [
       ['the team workspace', teamFolder()],
@@ -343,20 +344,20 @@ export function install(rt) {
     ]
     for (const [what, path] of others) {
       const spelled = await spellings(path)
-      if (keys.some(key => spelled.some(other => overlap(key, other)))) throw new Error(`${dir} is in or around ${what}, so ${bot.name} cannot be private there. Give it a folder of its own`)
+      if (keys.some(key => spelled.some(other => overlap(key, other)))) throw refusal(`${dir} is in or around ${what}, so ${bot.name} cannot be private there. Give it a folder of its own`)
     }
   }
 
   const checkNoPrivate = (ids) => {
     const found = ids.map(id => rt.botOf(id)).find(bot => bot?.private === true)
-    if (found) throw new Error(`${found.name} is a private Bot and cannot be in a group chat: what is said in a group is read by every member`)
+    if (found) throw refusal(`${found.name} is a private Bot and cannot be in a group chat: what is said in a group is read by every member`)
   }
 
   // Deleting a private Bot keeps its places closed (see roster.js deleteBot); only the
   // user opens them again, one Bot at a time. The files stay where they are.
   async function releaseArchive(id) {
     const kept = state.privateArchives ?? []
-    if (!kept.some(entry => entry.id === id)) throw new Error('Nothing kept closed for this Bot')
+    if (!kept.some(entry => entry.id === id)) throw refusal('Nothing kept closed for this Bot')
     state.privateArchives = kept.filter(entry => entry.id !== id)
     await rt.save()
   }

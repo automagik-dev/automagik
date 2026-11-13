@@ -237,6 +237,7 @@ export function install(rt) {
     if (owned) throw refusal('Session already belongs to the team')
     agent.sessions.push(sessionId)
     await rt.save()
+    await restrictTeamTools(await rt.resolveAgent(sessionId))
     return sessionId
   }
 

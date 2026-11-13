@@ -12,9 +12,6 @@ const PRESETS = { 'workspace-write': {}, 'danger-full-access': {} }
 
 function runtime({ presets = true, fail = false } = {}) {
   const writes = []
-  const releases = []
-  const bots = {}
-  const control = { fail }
   const service = {
     catalog: () => ({ options: Object.keys(PRESETS).map(value => ({ value, name: value })), defaultOptions: [], defaultPreset: 'workspace-write' }),
     resolve: (name) => { if (!(name in PRESETS)) throw new Error(`permission: unknown preset "${name}"`); return PRESETS[name] },
@@ -27,24 +24,11 @@ function runtime({ presets = true, fail = false } = {}) {
     groupSessionsOf: id => [`${id}-group`],
     groupOwners: new Map(),
     roomOf: () => undefined,
-    botOf: id => bots[id],
-    resolveAgent: sessionId => (hold ? new Promise((resolve, reject) => releases.push({ sessionId, resolve, reject })) : Promise.resolve({ session: sessionId })),
+    resolveAgent: async sessionId => ({ session: sessionId }),
     warn() {},
   }
   install(rt)
-  // With `hold`, every Session's agent resolves only when its index here is settled,
-  // so an earlier request can be made to apply after a later one.
-  const settle = async (index) => {
-    const [{ sessionId, resolve }] = releases.splice(index, 1)
-    resolve({ session: sessionId })
-    await new Promise(done => setImmediate(done))
-  }
-  const drop = async (index) => {
-    const [{ reject }] = releases.splice(index, 1)
-    reject(new Error('permission: session went away'))
-    await new Promise(done => setImmediate(done))
-  }
-  return { rt, writes, releases, bots, settle, drop, control }
+  return { rt, writes }
 }
 
 test('a Bot\'s preset is set on its chat and its group Sessions', async () => {
@@ -736,7 +720,7 @@ test('create_bot hands createBot only its declared parameters', async (t) => {
   const calls = []
   const create = rt.createBot
   rt.createBot = async options => { calls.push(options); return create(options) }
-  const declared = ['avatar', 'brief', 'createdBy', 'effort', 'instructions', 'model', 'name', 'role', 'workDir']
+  const declared = ['avatar', 'brief', 'createdBy', 'effort', 'instructions', 'model', 'name', 'role', 'section', 'workDir']
   const undeclared = {
     existingSessionId: 'live', main: true, pickModel: true, copyOf: 'b2',
     permission: 'danger-full-access', color: 'red', kind: 'omni',

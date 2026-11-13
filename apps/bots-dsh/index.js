@@ -85,7 +85,7 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // installed: channels are Omni's, and a local CLI runs a Bot through the ACP plugin's routes only.
 const MODULES = [
   diagnostics, extend, store, ledger, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions, auto, ladder, autoJudge, permissionDiagnostics,
-  turns, steer, handoffs, requests, delivery, roster, folders, privateBots, agents, toolDeny, prompt, timeContext,
+  turns, steer, handoffs, requests, delivery, roster, folders, agents, toolDeny, privateBots, prompt, timeContext,
   tools, chatIndex, groups, goals, approvals, stops, whoRefused, subagentAsks, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
   avatarLibrary, secrets, connectors, capabilities, learning, schedules, browser, browserPlugins, computer, usage,
   update, dshUpdate, thinking, agentSpace, feed, channel, appManifest, pocketChat, hermesRemote, officeSkills, goalSkills,

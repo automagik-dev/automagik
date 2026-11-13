@@ -477,7 +477,7 @@ export function install(rt) {
 
   // DSH 0.2.2's task ids are Host-wide, so a Bot's schedule tools reach only the tasks
   // that deliver to its own chat, or to the same group place, in any of its parts.
-  ctx.on('tools/pre-execute', async (exec, next) => {
+  ctx.on('tools/pre-execute', async function ownTasksGate(exec, next) {
     const decision = await next()
     if (decision.kind !== 'allow' || !OWN_TASK_TOOLS.includes(exec.name) || service === null || !hostWide(service)) return decision
     await rt.load()

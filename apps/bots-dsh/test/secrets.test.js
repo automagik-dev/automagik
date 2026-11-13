@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createRuntime } from '../index.js'
+import { apply } from '../index.js'
 import { canUse, encodeUrlComponent, normalizeName, redactDeep, redactor, SECRET_NAME } from '../src/host/secrets.js'
 import { fakeContext } from './fake-ctx.js'
 
@@ -91,6 +91,7 @@ const TEAM = {
   questions: {},
 }
 
+let rt
 function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')), warnings, team = TEAM } = {}) {
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const contributors = []
@@ -122,7 +123,8 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')), warnings
   }
   let route
   ctx.connection.fetch.register = (options) => { route = options; return () => {} }
-  rt = createRuntime(ctx, { home })
+  apply(ctx, { home })
+  rt = ctx.provided.get('omniTeam')
   const call = async (endpoint, payload) => {
     const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
@@ -315,7 +317,28 @@ test('tool results and model requests lose the values', async (t) => {
   // registers after this one.
   const execute = bench.listeners['tools/execute'].filter(listener => listener.name !== 'listOwnSchedules' && listener.name !== 'computerTrack').at(-1)
   const ok = await execute({}, async () => ({ isError: false, value: { kind: 'foreground', stdout: { text: `${value}\n`, truncated: false } }, content: [{ type: 'text', text: value }], meta: { stdout: value } }))
-  assert.deepEqual(ok, { isError: false, value: { kind: 'foreground', stdout: { text: '[secret:DEMO_TOKEN]\n', truncated: false } }, content: [{ type: 'text', text: '[secret:DEMO_TOKEN]' }], meta: { stdout: '[secret:DEMO_TOKEN]' } })
+  assert.equal(ok.isError, false)
+  assert.deepEqual(ok.value, { kind: 'foreground', stdout: { text: '[secret:DEMO_TOKEN]\n', truncated: false } })
+  // The rest of a changed result stays whole and loses the values too: a wrapper
+  // further out still reads its content and meta, and they are already redacted.
+  assert.deepEqual(ok.content, [{ type: 'text', text: '[secret:DEMO_TOKEN]' }])
+  assert.equal(ok.meta.stdout, '[secret:DEMO_TOKEN]')
+  const logged = await (async () => {
+    const result = await execute({}, async () => ({
+      isError: false,
+      value: { text: value },
+      content: [{ type: 'text', text: `out ${value}` }],
+      meta: { stdout: value },
+      additionalContexts: [{ role: 'user', content: [{ type: 'text', text: value }] }],
+    }))
+    // A logging wrapper reads `content` right after its next() — before the
+    // registry re-renders a success result from its value.
+    assert.equal(result.content.length, 1)
+    return result
+  })()
+  assert.equal(logged.content[0].text, 'out [secret:DEMO_TOKEN]')
+  assert.equal(logged.meta.stdout, '[secret:DEMO_TOKEN]')
+  assert.equal(logged.additionalContexts[0].content[0].text, '[secret:DEMO_TOKEN]')
   const failed = await execute({}, async () => ({ isError: true, error: { message: `bad ${value}` }, content: [{ type: 'text', text: `bad ${value}` }] }))
   assert.equal(failed.content[0].text, 'bad [secret:DEMO_TOKEN]')
   assert.equal(failed.error.message, 'bad [secret:DEMO_TOKEN]')
@@ -349,7 +372,7 @@ test('whole tool results preserve fields and redact auxiliary values on success 
   t.after(bench.stop)
   const value = fresh()
   await bench.call('secret-set', { name: 'DEMO_TOKEN', value })
-  const execute = bench.listeners['tools/execute'].at(-1)
+  const execute = bench.listeners['tools/execute'].filter(listener => listener.name !== 'listOwnSchedules' && listener.name !== 'computerTrack').at(-1)
   for (const isError of [false, true]) {
     for (const primary of ['clean', value]) {
       const result = {
@@ -398,6 +421,19 @@ test('a restarted host resolves team Sessions and scoped keys before the first s
   assert.deepEqual(bench.env('c3'), { DSH_SECRET_SHARED: shared })
   assert.deepEqual(bench.env('elsewhere'), {})
   assert.ok(bench.contributors.filter(entry => entry.live).every(entry => !('DSH_SECRET_HELD' in entry.variables)))
+})
+
+test('a restarted host resolves its team Sessions and their keys before the first shell call', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-'))
+  const value = fresh()
+  writeFileSync(join(home, 'secrets.json'), JSON.stringify({ version: 1, secrets: [{ name: 'DEMO_TOKEN', value, purpose: 'p', scope: 'all', requestedBy: 'b2', createdAt: 1, updatedAt: 1 }] }))
+  const bench = start({ home })
+  t.after(bench.stop)
+  // apply() has just returned: no endpoint or tool has run yet, but a restored
+  // Session's first shell call already resolves its Bot and its variables.
+  assert.deepEqual(bench.env('b2'), { DSH_SECRET_DEMO_TOKEN: value })
+  assert.deepEqual(bench.env('g-b2'), { DSH_SECRET_DEMO_TOKEN: value })
+  assert.deepEqual(bench.env('elsewhere'), {})
 })
 
 test('a secrets file that cannot be read blocks every write instead of being overwritten', async (t) => {

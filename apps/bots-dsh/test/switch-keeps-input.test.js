@@ -152,8 +152,8 @@ async function start({ fail = {}, services = {}, home: reuse, state: seed = TEAM
     route = options
     return register(options)
   }
-  const rt = createRuntime(ctx, { home, browserPlugin: false })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
+  rt = createRuntime(ctx, { home, browserPlugin: false })
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: agentOf(sessionId), name, callId: 'c1' })

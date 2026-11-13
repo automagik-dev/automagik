@@ -43,12 +43,26 @@ export function fakeApproval(outcome = 'allowed-once') {
   }
 }
 
+// The team's tools live in each Bot Session's own scope (rt.teamTools), not in the registry
+// every Session reads. A test that asks the registry for one by name still finds it, once
+// apply() has provided the team.
+class ToolRegistry extends Map {
+  constructor(team) {
+    super()
+    this.team = team
+  }
+
+  get(name) { return super.get(name) ?? this.team()?.find(tool => tool.name === name) }
+
+  has(name) { return super.has(name) || this.team()?.some(tool => tool.name === name) === true }
+}
+
 // A stand-in for the plugin context that records what apply() registers, in order,
 // without starting any service.
 export function fakeContext({ services = {} } = {}) {
   const calls = []
   const disposers = []
-  const registeredTools = new Map()
+  const registeredTools = new ToolRegistry(() => ctx.provided.get('omniTeam')?.teamTools)
   const guards = []
   // Listeners by event name, in registration order.
   const listeners = new Map()
@@ -63,6 +77,10 @@ export function fakeContext({ services = {} } = {}) {
     // dsh 0.2.2 plugins may ask the running fiber whether it is still active.
     fiber: { assertActive() {} },
     get: name => services[name] ?? ctx.provided.get(name),
+    // As in real cordis: the plugin does not inject this service, so reading it throws.
+    get subagents() { throw new Error('cannot get property "subagents" without inject') },
+    // The real ctx guards plain access with `inject`; service() reads this.
+    reflect: { get: name => ctx.get(name) },
     on(name, listener, options) {
       calls.push(`on ${name}${options?.prepend ? ' (prepend)' : ''}`)
       listeners.set(name, [...(listeners.get(name) ?? []), listener])
@@ -135,7 +153,15 @@ export function fakeContext({ services = {} } = {}) {
         },
       },
     },
-    llm: { listProviders: () => [] },
+    llm: {
+      listProviders: () => [],
+      registerAdapter: (routes, adapter) => {
+        ctx.adapters = [...(ctx.adapters ?? []), { routes, adapter }]
+        const handle = () => {}
+        handle.replace = (next) => { ctx.adapters.at(-1).routes = next }
+        return handle
+      },
+    },
     provided: new Map(),
     provide(name, value) {
       calls.push(`provide ${name}`)
