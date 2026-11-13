@@ -791,11 +791,20 @@ export function relink({ binDir, modsDir, owned }) {
 function relinkOne({ binDir, modsDir, owned, name }) {
   const link = join(binDir, name);
   const st = lstat(link);
-  if (!st) return null;
-  if (!st.isSymbolicLink()) return `left ${link} alone: it is a file, not a link (remove it and run install.sh again to link ${name})`;
   const bin = (m) => join(resolve(modsDir), m, "bin");
   const entries = (m) => [join(bin(m), "automagik-herdr"), join(bin(m), "automagik-herdr.mjs")];
   const cli = (m) => entries(m).find((p) => isFile(p)) ?? null;
+  if (!st) {
+    // am's link, missing on an install from before it: made, for the sidebar folder the record lists.
+    const made = name === AM_LINK ? SIDEBARS.find((m) => owned.has(m) && cli(m)) : null;
+    if (!made) return null;
+    mkdirSync(binDir, { recursive: true });
+    const tmp = join(binDir, `.${name}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`);
+    symlinkSync(cli(made), tmp);
+    try { renameSync(tmp, link); } catch (error) { removePath(tmp, { force: true }); throw error; }
+    return `linked ${link} to ${cli(made)}`;
+  }
+  if (!st.isSymbolicLink()) return `left ${link} alone: it is a file, not a link (remove it and run install.sh again to link ${name})`;
   const to = resolve(binDir, readlinkSync(link));
   if (!SIDEBARS.some((m) => entries(m).includes(to))) return null;
   const want = SIDEBARS.find((m) => owned.has(m) && cli(m));

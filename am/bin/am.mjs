@@ -85,8 +85,13 @@ const PACK_SWITCH = /^--(?:rollback|auto)(?:=|$)/;
 async function update(args) {
   if (args.some((a) => PACK_SWITCH.test(a))) {
     // The pack's own switches act on the pack only: a named other part (am itself) is refused.
-    // (a switch's own value, like --auto status, is no part id: an id has a dot)
-    const named = args.filter((a) => /^[a-z][a-z0-9-]*\.[a-z][a-z0-9.-]*$/.test(a));
+    // The only word allowed besides the switches is the pack's own id (--auto's value, as in
+    // --auto status, is no word of this kind).
+    const named = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--auto") i++;
+      else if (!args[i].startsWith("-")) named.push(args[i]);
+    }
     if (named.some((a) => a !== PACK)) throw new Usage(`--rollback and --auto are ${PACK}'s own update, not ${named.filter((a) => a !== PACK).join(" ")}'s (am update ${PACK} --rollback)`);
     return cli(["update", ...args]).code;
   }

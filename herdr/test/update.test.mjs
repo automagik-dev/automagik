@@ -680,6 +680,15 @@ test("relinkCli: the am link follows the pack's entry the same way, and a link e
   symlinkSync("/somewhere/else/am", link);
   assert.equal(relinkCli({ modsDir: mods, binDir }), null);
   assert.equal(readlinkSync(link), "/somewhere/else/am");
+  // Missing: made quietly (an install from before am's link).
+  unlinkSync(link);
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  assert.equal(readlinkSync(link), wrapper);
+  // A file of the person's is never replaced.
+  unlinkSync(link);
+  writeFileSync(link, "mine\n");
+  assert.equal(relinkCli({ modsDir: mods, binDir }), null);
+  assert.equal(readFileSync(link, "utf8"), "mine\n");
 });
 
 test("relinkCli: our link follows the pack's entry (the wrapper, or the .mjs before it); any other is left", (t) => {

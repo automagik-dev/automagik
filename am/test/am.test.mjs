@@ -108,6 +108,15 @@ test("am update --rollback and --auto are the pack's own update, as its help say
     assert.equal(got.stdout, "", `am ${args.join(" ")}`);
     assert.match(got.stderr, /^am: --rollback and --auto are herdr\.pack's own update, not automagik\.am's/, `am ${args.join(" ")}`);
   }
+  // Any word but the pack's own id is refused, whatever its form.
+  for (const word of ["am", "usagemeter", "Automagik.am", "AUTOMAGIK.AM", "herdr.am-quota"]) {
+    for (const args of [["update", word, "--rollback"], ["update", "--rollback", word], ["update", "--auto=status", word], ["update", "--auto", "status", word]]) {
+      const got = s.installed(...args);
+      assert.equal(got.status, 2, `am ${args.join(" ")}`);
+      assert.equal(got.stdout, "", `am ${args.join(" ")}`);
+      assert.match(got.stderr, /^am: --rollback and --auto are herdr\.pack's own update/, `am ${args.join(" ")}`);
+    }
+  }
   // Named at the pack, they are the pack's own.
   const want = s.run(pack, ["update", "--auto", "status"]);
   const named = s.installed("update", "herdr.pack", "--auto", "status");
@@ -283,6 +292,33 @@ test("links: am takes the pack's automagik-herdr, leaves a foreign one, and hand
   assert.ok(lstatSync(join(bin, "automagik-herdr")).isSymbolicLink());
   assert.equal(readlinkSync(join(bin, "automagik-herdr")), "/usr/bin/true");
   assert.equal(s.installed("self", "doctor").status, 1);
+});
+
+test("links: the pack's am link (install.sh) goes to am on self install, both names run am, doctor passes, uninstall hands both back", (t) => {
+  const s = scratch(t);
+  const bin = join(s.home, ".local", "bin");
+  const packCli = join(s.app, "mods", "am-sidebar", "bin", "automagik-herdr");
+  mkdirSync(dirname(packCli), { recursive: true });
+  writeFileSync(packCli, "#!/bin/sh\necho pack\n");
+  mkdirSync(bin, { recursive: true });
+  // The pack first, as install.sh leaves it: both names on the pack's wrapper.
+  for (const name of ["am", "automagik-herdr"]) symlinkSync(packCli, join(bin, name));
+  assert.equal(s.am("self", "install").status, 0);
+  for (const name of ["am", "automagik-herdr"]) {
+    assert.equal(readlinkSync(join(bin, name)), join(s.store, "current", "bin", name), `${name} is am's`);
+  }
+  assert.equal(s.installed("self", "doctor").status, 0);
+  assert.match(s.run(join(bin, "automagik-herdr"), ["--version"]).stdout, /^am \d/, "the old name runs am");
+  assert.match(s.run(join(bin, "am"), ["--version"]).stdout, /^am \d/);
+  // Uninstall: the pack's entry back under both names, so the pack is not without am.
+  assert.equal(s.installed("self", "uninstall").status, 0);
+  for (const name of ["am", "automagik-herdr"]) assert.equal(readlinkSync(join(bin, name)), packCli, `${name} handed back`);
+  // A person's own am (a link elsewhere) is still left alone.
+  rmSync(join(bin, "am"));
+  symlinkSync("/usr/bin/true", join(bin, "am"));
+  const again = s.am("self", "install");
+  assert.match(again.stdout, /am: left \(it points at \/usr\/bin\/true\)/);
+  assert.equal(readlinkSync(join(bin, "am")), "/usr/bin/true");
 });
 
 test("a machine with no pack (work only): am update is am's alone, and herdr.pack is not applicable", (t) => {

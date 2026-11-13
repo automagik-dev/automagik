@@ -264,6 +264,14 @@ export function install(ctx, part, source) {
     const cli = linkCommand(ctx, CLI_LINK, cliEntries(ctx), [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)]);
     if (cli.changed) { ctx.log(`linked ${cli.link}`); changed = true; }
     if (!cli.done) ctx.log(cli.why === "not shipped" ? `${join(ctx.modsDir, PACK_NAME, "bin")} has no automagik-herdr command: not linked` : cli.why);
+    // am, the same command under its own name (install.sh links both): the same rule. A link into
+    // am's own store is am's and stays.
+    const amLink = join(ctx.binDir, AM_LINK);
+    if (!(isLink(amLink) && within(amLink, amStoreOf(ctx.env)))) {
+      const am = linkCommand(ctx, AM_LINK, cliEntries(ctx), [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)]);
+      if (am.changed) { ctx.log(`linked ${am.link}`); changed = true; }
+      if (!am.done && am.why !== "not shipped") ctx.log(am.why);
+    }
     if (!(ctx.env.PATH ?? "").split(":").includes(ctx.binDir)) ctx.log(`add ${ctx.binDir} to your PATH: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
     return { ok: true, changed, detail: `the pack ${record.version} is installed (${record.mods.join(", ")})` };
   } finally {
@@ -483,9 +491,11 @@ const within = (p, dir) => { const r = realOf(p), d = realOf(dir); return Boolea
 export function sidebarCarries(ctx) {
   const reasons = [];
   const folder = join(ctx.modsDir, PACK_NAME);
-  const link = join(ctx.binDir, CLI_LINK);
-  if (isLink(link) && (within(link, folder) || resolve(dirname(link), readlinkSync(link)).startsWith(folder + sep))) {
-    reasons.push(`the command (${link} runs mods/${PACK_NAME}/bin)`);
+  for (const name of [CLI_LINK, AM_LINK]) {
+    const link = join(ctx.binDir, name);
+    if (isLink(link) && (within(link, folder) || resolve(dirname(link), readlinkSync(link)).startsWith(folder + sep))) {
+      reasons.push(`the command (${link} runs mods/${PACK_NAME}/bin)`);
+    }
   }
   const entry = stableBriefingPath(ctx.appHome);
   if (!within(entry, amStoreOf(ctx.env))) reasons.push(`every bot's briefing (${entry} is not am's: it ${isFile(entry) ? "runs the sidebar's briefing.mjs" : "is missing"})`);
@@ -608,6 +618,12 @@ export function doctor(ctx, part) {
     else if (!to) note("command", `${link} is a file of yours, not the pack's link: left alone`, `rm ${link} && ${reinstall}`);
     else if (!cliEntries(ctx).includes(to)) note("command", `${link} points at ${to}, not this install: left alone`, `rm ${link} && ${reinstall}`);
     else add("command", isFile(to), isFile(to) ? `${link} → ${to}` : `${link} points at ${to}, which is gone`, reinstall);
+    // am's link, the same command under its own name: a missing one is a notice (an install from
+    // before it), never a failure; one of the person's, or am's own, stays.
+    const amLink = join(ctx.binDir, AM_LINK);
+    const amTo = isLink(amLink) ? resolve(dirname(amLink), readlinkSync(amLink)) : null;
+    if (!exists(amLink)) note("am command", `${amLink} is missing`, reinstall);
+    else if (amTo && cliEntries(ctx).includes(amTo)) add("am command", isFile(amTo), isFile(amTo) ? `${amLink} → ${amTo}` : `${amLink} points at ${amTo}, which is gone`, reinstall);
     const onPath = (ctx.env.PATH ?? "").split(":").includes(ctx.binDir);
     if (onPath) add("path", true, `${ctx.binDir} is on PATH`);
     else note("path", `${ctx.binDir} is not on PATH: run automagik-herdr by its full path, or add it`, `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);

@@ -1383,10 +1383,22 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
 function relinkNamed({ modsDir, name, binDir, linkName }) {
   if (!binDir) return null;
   const link = join(binDir, linkName);
-  if (!isLink(link)) return null;
-  const from = readlinkSync(link);
   const entries = (m) => ["automagik-herdr", "automagik-herdr.mjs"].map((f) => join(resolve(modsDir), m, "bin", f));
   const [wrapper, mjs] = entries(name);
+  if (!exists(link)) {
+    // am's link, missing on an install from before it: made here, never over a file or a link of
+    // the person's (that is the isLink / readlink rule below), and never for a pack with no command.
+    if (linkName !== AM_LINK || !(isFile(wrapper) || isFile(mjs))) return null;
+    const made = isFile(wrapper) ? wrapper : mjs;
+    mkdirSync(binDir, { recursive: true });
+    const tmp = join(binDir, `.${linkName}.relink-${process.pid}`);
+    removePath(tmp, { force: true });
+    symlinkSync(made, tmp);
+    try { renameSync(tmp, link); } catch (error) { removePath(tmp, { force: true }); throw error; }
+    return null; // quiet: the report is for a link that moved
+  }
+  if (!isLink(link)) return null;
+  const from = readlinkSync(link);
   const now = resolve(dirname(link), from);
   const old = name !== OLD_PACK_NAME && entries(OLD_PACK_NAME).includes(now);
   if (now !== wrapper && now !== mjs && !old) return null;

@@ -258,6 +258,16 @@ link_ours() {
   return 1
 }
 
+# Whether $AM_LINK is a link into am's own store (am self install took it from the pack): am's,
+# so this script leaves it as it is and says nothing about removing it.
+am_link_is_am() {
+  [ -L "$AM_LINK" ] || return 1
+  case $(readlink "$AM_LINK" 2>/dev/null) in
+    */parts/automagik.am/*) return 0 ;;
+  esac
+  return 1
+}
+
 # The command the link points at, in the sidebar folder the ownership record lists (am-sidebar,
 # else $OLD, a rollback's): its bin/automagik-herdr wrapper when the pack ships one (it finds a node
 # where PATH has none), else bin/automagik-herdr.mjs; empty when the record lists neither folder.
@@ -669,6 +679,7 @@ uninstall() {
   if link_ours; then rm -f "$LINK"; say "Removed $LINK."
   elif [ -L "$LINK" ]; then say "Left $LINK: it points at $(readlink "$LINK"), not this install."; fi
   if link_ours "$AM_LINK"; then rm -f "$AM_LINK"; say "Removed $AM_LINK."
+  elif am_link_is_am; then say "Left $AM_LINK: am's own link; am self uninstall hands it back."
   elif [ -L "$AM_LINK" ]; then say "Left $AM_LINK: it points at $(readlink "$AM_LINK"), not this install."; fi
   uninstall_meter
   uninstall_scheduler
@@ -1599,6 +1610,8 @@ install() {
   if [ -n "$target" ] && [ "$(readlink "$AM_LINK" 2>/dev/null || true)" != "$target" ]; then
     if [ -e "$AM_LINK" ] && [ ! -L "$AM_LINK" ]; then
       say "Left $AM_LINK alone: it is a file, not a link. Remove it and run this again to link am."
+    elif am_link_is_am; then
+      :
     elif [ -L "$AM_LINK" ] && ! link_ours "$AM_LINK"; then
       say "Left $AM_LINK alone: it points at $(readlink "$AM_LINK"), not this install. Remove it and run this again to link am."
     else

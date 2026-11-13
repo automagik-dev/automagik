@@ -321,9 +321,29 @@ test("am is linked beside automagik-herdr: same wrapper, followed on update, rem
   assert.equal(v.status, 0, v.stderr);
   const gone = s.run("--uninstall");
   assert.equal(gone.code, 0, gone.err);
-  assert.equal(existsSync(s.link), false);
-  assert.equal(existsSync(am), false);
+  assert.equal(lstatSync(s.link, { throwIfNoEntry: false }), undefined);
+  assert.equal(lstatSync(am, { throwIfNoEntry: false }), undefined);
   assert.match(gone.out, /Removed .*\/am\./);
+});
+
+test("am's own link (am self install first) stays am's: no advice to remove it, uninstall leaves it", (t) => {
+  const s = scratch(t);
+  const am = join(dirname(s.link), "am");
+  const store = join(s.home, ".automagik", "parts", "automagik.am", "3.0.0", "bin");
+  mkdirSync(store, { recursive: true });
+  writeFileSync(join(store, "am"), "#!/bin/sh\n");
+  mkdirSync(dirname(am), { recursive: true });
+  symlinkSync(join(store, "am"), am);
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /\/am alone|Remove it and run this again to link am/);
+  assert.equal(readlinkSync(am), join(store, "am"));
+  assert.equal(readlinkSync(s.link), cliTarget(s));
+  const gone = s.run("--uninstall");
+  assert.equal(gone.code, 0, gone.err);
+  assert.match(gone.out, /Left .*\/am: am's own link/);
+  assert.equal(readlinkSync(am), join(store, "am"));
 });
 
 test("an am link or file that is not the pack's stays the person's, on install and uninstall", (t) => {
