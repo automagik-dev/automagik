@@ -6897,8 +6897,8 @@ var agentRowSessions = (agent, roster, now) => {
     return now !== void 0 && task.status !== "working" && !inRail.has(id);
   });
 };
-var waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== void 0;
-var approvalFor = (work, sessionId) => (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
+var waitsForUser = (status, sessionId) => sessionId != null && status?.get(sessionId)?.pendingInteraction !== void 0;
+var approvalFor = (work, sessionId) => sessionId != null && (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
 var taskState = (task, waiting) => {
   const status = task?.status ?? "working";
   return status === "working" && waiting ? "waiting" : status;
@@ -6911,12 +6911,13 @@ var endLabel = (task) => {
   return task?.status === "stopped" ? t("Stopped") : t("Task finished");
 };
 function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
-  const asked2 = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
-  const pending = useSessionStatus && sessionId ? useSessionStatus((map) => map.get(sessionId)?.pendingInteraction) : void 0;
+  const taskId = sessionId ?? null;
+  const asked2 = useSessionStatus ? useSessionStatus((map) => waitsForUser(map, taskId)) : false;
+  const pending = useSessionStatus ? useSessionStatus((map) => map.get(taskId)?.pendingInteraction) : void 0;
   const ask = pending?.kind === "approval" && typeof pending.answer === "function" ? pending : void 0;
-  const approval = useWork && sessionId ? useWork((work) => approvalFor(work, sessionId)) : false;
-  const stop3 = useWork && sessionId ? useWork((work) => {
-    const entry = openStops(work).filter((item) => item.taskId === sessionId).sort((a, b) => b.at - a.at)[0];
+  const approval = useWork ? useWork((work) => approvalFor(work, taskId)) : false;
+  const stop3 = useWork ? useWork((work) => {
+    const entry = taskId === null ? void 0 : openStops(work).filter((item) => item.taskId === taskId).sort((a, b) => b.at - a.at)[0];
     return entry ? stopLine(entry) : "";
   }) : "";
   const waiting = asked2 || approval;
