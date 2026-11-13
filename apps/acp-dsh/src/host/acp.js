@@ -165,7 +165,11 @@ export class AgentRun {
         this.exited = { code, signal }
         // Whatever it left running goes too, however it ended: nothing reports to it any more.
         this.endTree()
-        fail(new Error(`${this.spec.name} exited (${signal ?? code})${this.stderr ? `: ${this.stderr.trim().split('\n').slice(-3).join(' ')}` : ''}`))
+        const error = new Error(`${this.spec.name} exited (${signal ?? code})${this.stderr ? `: ${this.stderr.trim().split('\n').slice(-3).join(' ')}` : ''}`)
+        // Keep the import origin for repair detection without changing the displayed tail.
+        const missing = /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|Cannot find module|Cannot find package/.exec(this.stderr)
+        if (missing !== null) error.missingModule = this.stderr.slice(missing.index, missing.index + 2000)
+        fail(error)
       })
     })
     gone.catch(() => {})

@@ -13,7 +13,7 @@
 // whether its model is in the picker. Provisioning keeps its own CLI store; switches remain
 // this plugin's live settings, written through DSH's settings service.
 import { execFile, spawn } from 'node:child_process'
-import { dirname, join, sep } from 'node:path'
+import { dirname, join, posix, sep } from 'node:path'
 import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { accountOf, accountView } from './src/host/account.js'
@@ -26,7 +26,7 @@ import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { CliHomes, HOME_ENV, stopRuns } from './src/host/cli-homes.js'
 import { canRunProfile, ensureChatProfiles } from './src/host/codex-chat-profiles.js'
 import { CONSENT_FILE, ConsentStore } from './src/host/consent.js'
-import { adaptersHome, AdapterStore, CHECK_TICK_MS } from './src/host/install.js'
+import { adaptersHome, AdapterStore, CHECK_TICK_MS, homeRelativeText, redactInstallerOutput } from './src/host/install.js'
 import { handshake } from './src/host/handshake.js'
 import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
@@ -298,13 +298,13 @@ export function apply(ctx, config = {}, {
   // The connectors that wait for the account record (see `install`): connector package -> what
   // the status and a turn say meanwhile. Without it the wait showed as "installing" for good.
   const recordWaits = new Map()
-  const install = (spec) => {
+  const install = (spec, { repair = false } = {}) => {
     // A native agent has no connector: its CLI is the ACP server.
     if (isNative(spec)) return Promise.resolve()
     // The first-run account record is on disk before this version installs a connector, so a
     // connector found with no record always means an earlier version (consent.js).
     consents?.settle()
-    const before = store.binOf(spec.adapter, spec.bin)?.version
+    const before = store.binOf(spec.adapter, spec.bin)?.path
     // A record that could not be written: a connector installed now would look, at the next
     // start, like one an earlier version left, and its vendor would be carried unasked. The
     // connector waits for the record (every later install tries the write again). One already
@@ -319,11 +319,16 @@ export function apply(ctx, config = {}, {
       return Promise.resolve()
     }
     recordWaits.delete(spec.adapter)
-    return store.update(spec.adapter, spec.bin).then(
+    const job = repair && typeof store.repair === 'function'
+      ? store.repair(spec.adapter, spec.bin)
+      : store.update(spec.adapter, spec.bin, ...(repair ? [{ force: true }] : []))
+    return job.then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
       () => {
         forgetCheckRetry(spec)
-        if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish()
+        // A reinstalled connector has not failed a start yet.
+        if (repair) startFailed.delete(spec.adapter)
+        if (store.binOf(spec.adapter, spec.bin)?.path !== before && agents.has(idOf(spec))) publish()
       },
       // The store's short message is already redacted and home-relative; the raw installer
       // error is not, so it never reaches the host log.
@@ -376,6 +381,23 @@ export function apply(ctx, config = {}, {
   // How `spec` starts now (agents.js launchOf): the adapter installed at this moment, or the
   // CLI itself for a native agent.
   const launch = (spec, cli, id = idOf(spec)) => launchOf(spec, cli, { store, node: nodeCommand(), cliEnv: cliEnvironment(spec, cliDetails.get(id)), stamp: cliStamp })
+  // Auto-repairs started in this run, one per connector release: a reinstall that did not help
+  // is not started again by every failed turn (Retry still is). And the connectors whose last
+  // start failed: Retry reinstalls those, while a Retry pressed for a CLI error leaves a
+  // connector that works alone.
+  const repaired = new Set()
+  // connector package -> the short reason its last start failed, for the status (redacted).
+  const startFailed = new Map()
+  // The lines of Node's missing-module output that name where the missing file was wanted: the
+  // "Cannot find ..." line (ESM's "imported from <file>") and the first file of CJS's
+  // "Require stack". Stack frames of whatever printed it do not count.
+  const missingFrom = (evidence) => {
+    const lines = evidence.replace(/\\/g, '/').replace(/\/+/g, '/').split(/\r?\n/)
+    const at = lines.findIndex(line => /Cannot find (?:module|package)/.test(line))
+    if (at < 0) return []
+    const stack = lines.findIndex((line, index) => index > at && /^\s*Require stack:/.test(line))
+    return [lines[at], ...(stack < 0 || lines[stack + 1] === undefined ? [] : [lines[stack + 1]])]
+  }
   const agentOf = (spec, cli, id = idOf(spec)) => ({
     name: spec.name,
     modeFor: spec.modeFor,
@@ -411,7 +433,29 @@ export function apply(ctx, config = {}, {
     // goes back to the release before it, when that is still here (install.js). A native agent
     // has no connector in the store, so it has neither: a failed start is only reported.
     ...(isNative(spec) ? {} : {
-      proven: () => store.markGood?.(spec.adapter),
+      proven: () => { startFailed.delete(spec.adapter); return store.markGood?.(spec.adapter) },
+      repair: (error) => {
+        if (disposed) return false
+        startFailed.set(spec.adapter, homeRelativeText(redactInstallerOutput(String(error?.message ?? error ?? 'it did not start'))).split('\n')[0].slice(0, 300))
+        if (typeof error?.missingModule !== 'string') return false
+        const installed = store.binOf(spec.adapter, spec.bin)
+        if (installed === undefined) return false
+        const normalized = posix.normalize(installed.path.replace(/\\/g, '/'))
+        const at = normalized.lastIndexOf('/node_modules/')
+        if (at < 0) return false
+        const folder = normalized.slice(0, at)
+        // A CLI elsewhere can lose a module too; only this connector's folder is evidence.
+        const names = line => {
+          const found = line.indexOf(folder)
+          return found >= 0 && (found === 0 || /[\s'"`(:]/.test(line[found - 1])) && /^(?:[/\s'"`)]|$)/.test(line.slice(found + folder.length))
+        }
+        const key = `${spec.adapter}@${installed.version}`
+        if (!missingFrom(error.missingModule).some(names) || repaired.has(key)) return false
+        repaired.add(key)
+        void install(spec, { repair: true })
+        warn(ctx, `${spec.adapter}: its connector looks damaged; reinstalling it`)
+        return true
+      },
       rollback: (reason) => {
         const back = store.rollback?.(spec.adapter, spec.bin, reason) !== undefined
         if (back && !disposed) warn(ctx, `${spec.adapter}: the newest release did not start; running the one before it`)
@@ -646,9 +690,12 @@ export function apply(ctx, config = {}, {
     const cliFailure = managed ? cliStore.lastFailure(spec.cliPackage) : undefined
     const cliBusy = managed && cliStore.busy(spec.cliPackage) === true
     const detail = cliDetails.get(id)
+    // A connector being reinstalled (Retry, or a start that showed it damaged) is installing:
+    // the settings page says so and follows it until it is back.
+    const repairing = busy && store.repairing?.has?.(spec.adapter) === true
     const connector = !on ? 'off'
       : cli === undefined ? 'no-cli'
-        : bin !== undefined || native ? 'ready'
+        : (bin !== undefined || native) && !repairing ? 'ready'
           : busy || failure === undefined ? 'installing'
             : 'failed'
     // In the picker: DSH serves the route. Read from the registry, never the model list, which may
@@ -688,6 +735,8 @@ export function apply(ctx, config = {}, {
           }
           : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
+        // Installed, but its last start failed and no session opened since: Retry reinstalls it.
+        ...(connector === 'ready' && startFailed.has(spec.adapter) ? { startError: startFailed.get(spec.adapter) } : {}),
         // The release before the one in use, and a rollback while the failed release is held
         // back: "running the previous connector; the newest failed to start".
         ...(bin && connectorState?.previous ? { previous: connectorState.previous } : {}),
@@ -1283,7 +1332,11 @@ export function apply(ctx, config = {}, {
       if (spec === undefined) throw new Error(`no ACP agent ${String(id).slice(0, 40)}`)
       reconcile({ kick: false })
       void ensureCli(spec, { force: true })
-      if (agents.has(id)) void install(spec)
+      // The connector is reinstalled when it is why the agent fails: its last start failed, its
+      // last install failed (not only for want of npm), or it is missing; else Retry checks for a
+      // release as before.
+      // A native agent has no connector (install does nothing for it).
+      if (agents.has(id)) void install(spec, { repair: !isNative(spec) && (startFailed.has(spec.adapter) || (store.lastFailure?.(spec.adapter) !== undefined && store.lastFailure(spec.adapter).unreachable === undefined) || store.binOf(spec.adapter, spec.bin) === undefined) })
       return status()
     },
   }
