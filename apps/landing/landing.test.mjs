@@ -542,8 +542,9 @@ test('Arca\'s page is Arca\'s own: Pages carries no /arca page and nothing under
     assert.match(html, /<a class="menu-item" href="\/arca\/"/, `${route}: the Products menu links to Arca's page`)
     assert.match(html, /<a class="fam-item is-logo" href="\/arca\/"/, `${route}: the drawer's row links to Arca's page`)
     assert.ok(footer.includes('<a href="/arca/">Arca</a>'), `${route}: the footer links to Arca's page`)
-    const beside = ['/cloud/', '/mykes/'].includes(route) ? 1 : 0
-    assert.equal(links.length, 3 + beside + (route === '/' ? 1 : 0), `${route}: ${links.map(([, href]) => href)}`)
+    // Three links a page (the menu, the drawer, the footer) and the home card: the pager on
+    // Cloud's and Mykes's pages is not one of them, it passes Arca by.
+    assert.equal(links.length, 3 + (route === '/' ? 1 : 0), `${route}: ${links.map(([, href]) => href)}`)
     assert.doesNotMatch(html, /href="[^"]*(?:get\.automagik\.si|automagik-si\/arca)/, `${route}: neither the installer nor Arca's repository is a link`)
   }
   const card = htmlAt('/').match(/<article class="product-card" data-block="arca">[\s\S]*?<\/article>/)?.[0]
@@ -950,8 +951,13 @@ test('navigation: menus, footer sitemap, breadcrumb and previous/next on every p
     assert.equal(current, 4, route)
     // The way back, and the neighbours in the product order.
     assert.ok(html.includes(`<nav class="crumbs wrap" aria-label="Breadcrumb"><ol><li><a href="/#blocks">All products</a></li><li><span aria-current="page">${name}</span></li></ol></nav>`), route)
-    const at = productOrder.indexOf(route), step = by => productOrder[(at + by + productOrder.length) % productOrder.length]
-    assert.ok(html.includes(`rel="prev" href="${step(-1)}"`) && html.includes(`rel="next" href="${step(1)}"`), route)
+    // The pager walks the pages this site builds: Arca's page is Arca's own and has no pager
+    // that leads back, so the round passes it by (after Cloud comes Mykes).
+    const round = productOrder.filter(href => href !== arcaPath)
+    const at = round.indexOf(route), step = by => round[(at + by + round.length) % round.length]
+    const pager = html.match(/<nav class="pager"[^>]*>.*?<\/nav>/s)[0]
+    assert.deepEqual(hrefs(pager), [step(-1), '/#blocks', step(1)], `${route}: previous and next are the neighbours among this site's pages`)
+    assert.ok(pager.includes(`rel="prev" href="${step(-1)}"`) && pager.includes(`rel="next" href="${step(1)}"`), route)
     assert.match(html, /<a class="pager-all" href="\/#blocks">All products<\/a>/, route)
   }
 })

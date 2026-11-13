@@ -122,7 +122,8 @@ function constellation() {
 }
 
 // The site's navigation: three groups, the same in the header menus, the phone menu and the
-// footer. Products keep one order everywhere, which is also the previous/next order.
+// footer. Products keep one order everywhere, which is also the previous/next order (the
+// pager walks the pages this site builds, so it passes Arca by: see more()).
 const products = [
   { href: '/desktop/', name: 'Desktop', image: 'app-icon', line: 'Your agent team, in your chats.' },
   { href: '/mobile/', name: 'Mobile', image: 'app-icon', line: 'Your agents on your Android phone.' },
@@ -369,7 +370,11 @@ ${family(route)}
 // The other blocks, each with its own art: the way on from every page.
 function more(route) {
   const items = blocks.filter(([href]) => href !== route).map(([href, label, image, line]) => `<li><a href="${href}">${art(image, '', { cls: `more-art more-${image}` })}<span><strong>${label}</strong><span>${line}</span></span></a></li>`).join('')
-  const at = products.findIndex(({ href }) => href === route), step = by => products[(at + by + products.length) % products.length]
+  // Previous and next walk the pages this site builds, in the products' order. Arca's page is
+  // Arca's own and has no pager that leads back, so the round passes it by: after Cloud comes
+  // Mykes. The menus, the drawer, the footer and the home card still lead to Arca.
+  const round = products.filter(({ href }) => routes.includes(href))
+  const at = round.findIndex(({ href }) => href === route), step = by => round[(at + by + round.length) % round.length]
   const previous = step(-1), next = step(1)
   const pager = `<nav class="pager" aria-label="Previous and next product"><a class="pager-link" rel="prev" href="${previous.href}"><small><span aria-hidden="true">←</span> Previous</small><strong>${previous.name}</strong></a><a class="pager-all" href="/#blocks">All products</a><a class="pager-link next" rel="next" href="${next.href}"><small>Next ${arrow}</small><strong>${next.name}</strong></a></nav>`
   return `<section class="more wrap" aria-labelledby="more-title"><h2 id="more-title" class="more-title">More building blocks</h2><ul class="more-list">${items}</ul>${pager}</section>`

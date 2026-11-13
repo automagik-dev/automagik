@@ -488,6 +488,30 @@ try {
     }
     console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links; the family drawer by click, Enter, Space and Escape, the page pushed and out of reach, its art, script off`)
   }
+  // The pager, by real clicks: Next from the first product page walks every product page this
+  // site builds, once each, and comes back; Previous walks the same round the other way. No
+  // step leaves the site's own pages: Arca's page is Arca's own and has no pager that leads
+  // back, so the round passes it by.
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context), page = await context.newPage(), round = routes.filter(route => route !== '/')
+      for (const [rel, order] of [['next', round], ['prev', [...round].reverse()]]) {
+        await page.goto(origin + order[0], { waitUntil: 'load' })
+        const walked = [order[0]]
+        for (let step = 0; step < round.length; step++) {
+          const link = page.locator(`.pager a[rel="${rel}"]`), href = await link.getAttribute('href')
+          await link.click()
+          await page.waitForURL(origin + href, { waitUntil: 'load' })
+          walked.push(new URL(page.url()).pathname)
+          assert.equal(await page.locator('.pager').count(), 1, `The pager's ${rel} leads to a page of this site with a pager of its own: ${href} from ${walked.at(-2)} ${width}px`)
+        }
+        assert.deepEqual(walked, [...order, order[0]], `The pager's ${rel} walks every product page once and comes back: ${width}px`)
+      }
+      assert.deepEqual(outside, [], `No external request from the pager: ${width}px`)
+    } finally { await context.close() }
+    console.log(`PASS pager ${width}px: next and previous walk this site's product pages, once each, and come back`)
+  }
   // The logo in the header and the footer: the kit's lockup for small sizes, the triskle in
   // colour with ink letters on the light page and cream ones on the dark page (read from the
   // name's drawn colour, not only from the file's name), drawn at its own proportions. The triskle (222 of the file's 264 in height) keeps the size and the

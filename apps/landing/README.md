@@ -39,7 +39,9 @@ browser keeps the button's expanded state for assistive technology (so the HTML 
 site's other pages under its top block. A browser without popovers opens the panels on
 hover or focus. The footer is the sitemap with the same groups. Every product page shows where it is (the header's Products button and a breadcrumb
 back to all products) and links to the previous and next product. Products keep one order
-everywhere; it is the `products` list in `scripts/build-pages.mjs`.
+everywhere; it is the `products` list in `scripts/build-pages.mjs`. The previous and next links walk
+the pages this site builds, so they pass Arca by: its page is Arca's own and has no link back
+into the round.
 
 ## The family drawer
 
