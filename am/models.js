@@ -481,17 +481,18 @@ export const CODEX_DIR_VARS = ["HOME", "HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_
 /** Whether a shell assignment to `name` could move a Codex launch's folders or its program (#1142). */
 export const codexDirVar = (name) => CODEX_DIR_VARS.includes(name) || name === "PATH" || /^(XDG_|CODEX_|npm_config_|BUN_INSTALL)/i.test(name);
 
-// TOML's one-letter basic-string escapes (\uXXXX and \UXXXXXXXX are read apart).
+// TOML's one-letter basic-string escapes (\xHH, \uXXXX and \UXXXXXXXX are read apart).
 const TOML_ESCAPES = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", "\"": "\"", "\\": "\\" };
 
 /**
- * A trimmed TOML key part unquoted: a basic string "…" with its escapes decoded, a literal string
- * '…' as it is, a bare key as written. An escape TOML lacks reads as its letter (toward dropping).
+ * A trimmed TOML key part unquoted: a basic string "…" with its escapes decoded (TOML 1.1's \xHH
+ * included), a literal string '…' as it is, a bare key as written. An escape TOML lacks reads as
+ * its letter (toward dropping).
  */
 function tomlKeyPart(part) {
   if (part.length >= 2 && part[0] === "'" && part.endsWith("'")) return part.slice(1, -1);
   if (!(part.length >= 2 && part[0] === "\"" && part.endsWith("\""))) return part;
-  return part.slice(1, -1).replace(/\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (m, e) => {
+  return part.slice(1, -1).replace(/\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (m, e) => {
     if (e.length === 1) return TOML_ESCAPES[e] ?? e;
     const cp = parseInt(e.slice(1), 16);
     return cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
@@ -501,7 +502,7 @@ function tomlKeyPart(part) {
 /**
  * A config text's key parts as TOML reads them: the dotted key before the first `=` outside
  * quotes, split on the dots outside quotes, each part trimmed, then unquoted (tomlKeyPart).
- * null when a quote doesn't close.
+ * When a quote doesn't close, the parts finished before it (none when the first quote is open).
  */
 function tomlKeyParts(text) {
   const parts = [];
@@ -518,18 +519,18 @@ function tomlKeyParts(text) {
       if (ch === "=") return parts.map((p) => tomlKeyPart(p.trim()));
     }
   }
-  if (quote) return null;
-  parts.push(text.slice(start));
+  if (!quote) parts.push(text.slice(start));
   return parts.map((p) => tomlKeyPart(p.trim()));
 }
 
 /**
  * `-c`/`--config`'s key=value at `words[i]` in any form: { heads, text, span } (span: words it
  * takes), or null. The key is matched by its meaning, never its spelling (#1125: config keys
- * written in another valid TOML spelling were kept): `heads` is its first part in each reading,
- * TOML's (tomlKeyParts), Codex's own (the text before the first `=`, split on every dot, each
- * part trimmed) and the one before (the raw key, one outer quote off), which alone reads a key
- * whose quotes don't close. A head in CODEX_CONFIG_KEYS in any reading drops the word.
+ * written in another valid TOML spelling were kept): `heads` is its first part in two readings,
+ * TOML's (tomlKeyParts) and the one before (the raw key, one outer quote off), which alone reads
+ * a key whose first quote doesn't close. A head in CODEX_CONFIG_KEYS in either drops the word.
+ * Codex's own reading (split on every dot, each part trimmed) needs no head: its first part is a
+ * bare listed key only when no quote comes before the first dot, and TOML's reads that same part.
  */
 function codexConfigAt(words, i) {
   const w = words[i];
@@ -539,7 +540,7 @@ function codexConfigAt(words, i) {
   else if (w.startsWith("-c")) text = w.slice(w[2] === "=" ? 3 : 2);
   if (text === null) return null;
   const raw = text.split("=")[0];
-  const heads = [tomlKeyParts(text)?.[0], raw.split(".")[0].trim(), raw.trim().replace(/^["']|["']$/g, "").split(".")[0]];
+  const heads = [tomlKeyParts(text)?.[0], raw.trim().replace(/^["']|["']$/g, "").split(".")[0]];
   return { heads, text, span };
 }
 
