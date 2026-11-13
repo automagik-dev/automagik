@@ -24,7 +24,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { scrubBuildPaths } from '../src/dsh.js'
-import { pruneNodeModules } from './prune-runtime.mjs'
+import { prepareSharpWasm, pruneNodeModules } from './prune-runtime.mjs'
 import { acceptsHarness } from './follow-dsh.mjs'
 import { patchRuntime } from './runtime-patches.mjs'
 import { devClientBundles } from './client-bundles.mjs'
@@ -139,6 +139,8 @@ if (!process.argv.includes('--skip-runtime') || !existsSync(join(runtimeDir, 'no
   // A fresh lock is the one to commit (runtime/package-lock.json).
   if (!existsSync(join(APP, 'runtime', 'package-lock.json'))) cpSync(join(runtimeDir, 'package-lock.json'), join(APP, 'runtime', 'package-lock.json'))
 }
+// Also enforce this on --skip-runtime: a reused native binding can crash Electron on Linux.
+say(`prepared wasm-only sharp (${prepareSharpWasm(join(runtimeDir, 'node_modules')).sharp} copies)`)
 // Until DSH has these changes itself; pinned to the exact files, so another dsh fails here.
 for (const { name, state } of patchRuntime(join(runtimeDir, 'node_modules'), join(APP, 'runtime', 'patches'))) say(`runtime patch: ${name} ${state}`)
 // Cmd+W reaches the client's `page.close` command by its key (src/pane-close.js). A DSH that
