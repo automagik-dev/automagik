@@ -296,11 +296,26 @@ export function GoalIsland({ room, goal, view, open, composing, roomWork, roster
 export const GOAL_CSS = `
 /* One surface: the pill's own background, border and shadow. The pill row is
    40px, the pod bar 30px; the surface reshapes on SPRING_SHAPE. */
-.bt-island{position:relative;z-index:6;align-self:flex-start;display:flex;flex-direction:column;pointer-events:auto;width:min(380px,calc(100% - 120px));background:var(--bt-glass-bg);-webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);border:.5px solid var(--bt-glass-rim);border-radius:20px;box-shadow:var(--bt-glass-shadow);color:var(--bt-ink);font-family:inherit;font-size:14px;line-height:20px;box-sizing:border-box;transition:${spring(SPRING_SHAPE, 'width', 'border-radius')}}
-.bt-island[data-open]{width:min(560px,calc(100% - 48px));border-radius:18px}
+.bt-island{position:relative;z-index:6;align-self:flex-start;display:flex;flex-direction:column;pointer-events:auto;width:min(380px,calc(100% - 120px));background:var(--bt-glass-bg);-webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);border:.5px solid var(--bt-glass-rim);border-radius:var(--bt-island-radius,20px);margin-top:var(--bt-island-lift,0px);box-shadow:var(--bt-glass-shadow);color:var(--bt-ink);font-family:inherit;font-size:14px;line-height:20px;box-sizing:border-box;transition:${spring(SPRING_SHAPE, 'width', 'border-radius')}}
+.bt-island[data-open]{width:min(560px,calc(100% - 48px));border-radius:var(--bt-island-radius,18px)}
+/* The header band here is right-aligned. Where the band has room the island leaves the row and
+   sits on the chat column's centre, as upstream draws it, and Details stays alone on the right;
+   in a narrower band it stays in the row beside Details. A theme that pads the band says where
+   the row starts (--bt-island-top) and how far to lift the island level with Details. */
+header[class*="_header"] .bt-head{container:bt-head/inline-size}
+@container bt-head (min-width:820px){.bt-island{position:absolute;top:var(--bt-island-top,0px);left:0;right:0;margin-inline:auto}}
 .bt-island[data-morph]{overflow:hidden}
 .bt-island .bt-pill{width:100%;max-width:none;background:none;-webkit-backdrop-filter:none;backdrop-filter:none;border:0;box-shadow:none;border-radius:20px 20px 0 0}
 .bt-island[data-open] .bt-pill{border-radius:18px 18px 0 0}
+/* The pill row, the bar and the stage dots are parts of the one surface: a theme's look for
+   header buttons (a border, a raised face) stops at the island's edge. */
+html body .bt-island :is(.bt-pill,.bt-goal-bar,.bt-goal-step){border:0;border-radius:0;background:none;box-shadow:none}
+html body .bt-island :is(.bt-pill,.bt-goal-bar,.bt-goal-step):is(:hover,:active):not(:disabled){box-shadow:none;transform:none}
+html body .bt-island :is(.bt-pill,.bt-goal-bar):hover:not(:disabled){background:var(--bt-hover)}
+html body .bt-island .bt-goal-step:hover:not(:disabled){background:none}
+html body .bt-island .bt-pill{border-radius:var(--bt-island-radius,20px) var(--bt-island-radius,20px) 0 0}
+html body .bt-island[data-open] .bt-pill{border-radius:var(--bt-island-radius,18px) var(--bt-island-radius,18px) 0 0}
+html body .bt-island:not([data-open]) .bt-goal-bar{border-radius:0 0 var(--bt-island-radius,20px) var(--bt-island-radius,20px)}
 .bt-island .bt-pill:hover{background:var(--bt-hover)}
 .bt-island .bt-pill:active{transform:none}
 /* The swap area holds the goal title and the group name in one cell, so hover

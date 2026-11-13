@@ -109,6 +109,8 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on agent/pre-step',
     'on agent/status',
     'effect omni-ui: memory review',
+    // The daily tidy's clock runs so a Bot whose own switch is on gets tidied; with no switch on it does nothing.
+    'effect omni-ui: memory tidy',
     'effect ds-bot: Bot compaction',
     'on agent/created',
     // Explicit checkpoints must cancel when their agent or plugin is disposed.
