@@ -207,12 +207,32 @@ fn kept_cell_keeps_evidence_free_tokens() {
     // Nothing subtracted, the top-up went to the evidence-free row, the attributed row is as it was.
     assert_eq!(Fx::col(&fx.store, "claude-code", H8, CR), 150);
     assert_eq!(Fx::col(&fx.store, "claude-code", H8, IN), 30);
-    let att: i64 = Fx::conn(&fx.store)
-        .query_row("SELECT cache_read FROM usage WHERE id = 'att'", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(att, 100);
+    // The attributed row is unchanged in every column and in events.
+    let row = |id: &str| -> ([i64; 7], i64) {
+        let names = repair::COLS.join(", ");
+        Fx::conn(&fx.store)
+            .query_row(
+                &format!("SELECT {names}, events FROM usage WHERE id = ?1"),
+                [id],
+                |r| {
+                    let mut v = [0i64; 7];
+                    for (i, x) in v.iter_mut().enumerate() {
+                        *x = r.get(i)?;
+                    }
+                    Ok((v, r.get(7)?))
+                },
+            )
+            .unwrap()
+    };
+    assert_eq!(row("att"), (cols(CR, 100), 3));
+    // The recovered tokens (30 input_uncached: 10 held, 20 recovered) sit in the evidence-free
+    // rows, taken together: the top-up goes to the largest of them.
+    let (free, in_row) = (row("free"), row("in"));
+    let both: [i64; 7] = std::array::from_fn(|i| free.0[i] + in_row.0[i]);
+    let mut want = cols(CR, 50);
+    want[IN] = 30;
+    assert_eq!(both, want);
+    assert_eq!(free.1 + in_row.1, 2);
 }
 
 #[test]
@@ -331,9 +351,26 @@ fn failed_day_check_rolls_the_day_back() {
     let fx = Fx::new();
     fx.s("a", "dsh-tui", H8, cols(CR, 10), 1);
     fx.o("a", "dsh-tui", H8, cols(CR, 25), 1);
+    // A second group in the same day: a change that tops up the wrong group's row writes the
+    // row, but the day's own group comparison catches it and rolls the day back.
+    fx.s("other", "dsh-tui", "2026-11-08T14:00:00Z", cols(CR, 40), 1);
+    fx.o("other", "dsh-tui", "2026-11-08T14:00:00Z", cols(CR, 40), 1);
     let c = fx.copy("c.db");
     let o = fx.apply_opts(&[], &c);
     let mut rep = repair::execute(&fx.opts(&[])).unwrap().report;
+    assert_eq!(rep.changes.len(), 1);
+    rep.changes[0].id = "other".into();
+    let h = Fx::db_hash(&fx.store);
+    match repair::apply(&o, &c, &rep, usize::MAX) {
+        Err(e) => {
+            assert!(e.contains("not what the plan says"), "{e}");
+            assert!(e.contains("rolled back"), "{e}");
+        }
+        Ok(days) => panic!("the day was committed: {days:?}"),
+    }
+    assert_eq!(Fx::db_hash(&fx.store), h);
+    assert_eq!(fx.journal(), None);
+    // A change whose row is gone is refused the same way.
     rep.changes[0].id = "no-such-row".into();
     let h = Fx::db_hash(&fx.store);
     let e = repair::apply(&o, &c, &rep, usize::MAX).unwrap_err();
