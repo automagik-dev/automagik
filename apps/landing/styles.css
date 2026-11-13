@@ -577,7 +577,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .top-cta{display:none}
 }
 @media (max-width:360px){
-  .brand{--mark:23px}
+  .brand{--mark:24px}
   .bubble{font-size:.74rem}
   .scene-omni{width:78px}
   .bubble{right:calc(1% + 82px)}

@@ -32,6 +32,7 @@ am ls                     # this project's Bots: id, name, lead, agent, model, s
 am ls --all               # the Bots of every project this computer knows
 am show <bot>             # one Bot in full
 am brief <bot>            # the Bot's briefing, with its team's live state as it is now
+am create --name <name> --agent <agent> [--kind main|member] [--role <role>] [--lead <bot>]  # a new Bot
 am start <bot>            # a new pane on this computer; prints its terminal
 am restart <bot>          # its agent again in its pane's place, on the same conversation
 am restart <bot> --fresh  # the same, on a new conversation
@@ -107,6 +108,15 @@ who is not back, with the command that brings it back by hand.
 `am revive service status` and `am revive service uninstall` check and remove it. To keep a Bot
 down across restarts, run `am detach <bot>`.
 
+## Install
+
+The Herdr pack's installer (`herdr/install.sh`, the Herdr README's install line) links `am` and
+`automagik-herdr` into `~/.local/bin`. That `am` runs the Bot, worker and revive commands on this page; `am self` and `am rollback
+automagik.am` need am's own part.
+
+am's own part (`am self install`, `am self doctor`) comes from an unpacked am release
+(`automagik-am-<version>.tgz`): run `sh <that folder>/bin/am self install`, then `am self doctor`.
+
 ## Update and roll back
 
 ```sh
@@ -115,6 +125,9 @@ am update                  # am first, then the herdr pack where one is installe
 am rollback automagik.am   # am back to the copy it replaced
 am rollback herdr.pack     # the pack back to the one it replaced
 ```
+
+`am rollback` is am's own part's command (see Install): the pack's own `am` has no `rollback`, so with
+the pack alone the same step is `am update --rollback`.
 
 Every update is checked against its signature and checksum, and am never installs an older
 version. `am update --auto on|off|status` sets whether Herdr installs new releases by itself (on

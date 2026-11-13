@@ -227,6 +227,19 @@ try {
       if (url.hash) assert.ok((await response.text()).includes(`id="${url.hash.slice(1)}"`), `menu link target exists: ${href}`)
     }
   }
+  // A spot outside the menus, to click or point at: the first place, from the window's foot up,
+  // with nothing under it or near it that a click could follow or press (a link, a button, a
+  // field, a label, a summary, anything focusable) and outside the header and every shown
+  // panel. It is measured each time, so a page laid out a little higher or lower cannot put a
+  // link under the click and end the run on a navigation the check never names.
+  const clear = page => page.evaluate(() => {
+    const taken = [document.querySelector('.top'), ...document.querySelectorAll('.menu-panel')].map(node => node.getBoundingClientRect()).filter(box => box.height > 0)
+    const free = (x, y) => !taken.some(box => x >= box.left - 8 && x <= box.right + 8 && y >= box.top - 8 && y <= box.bottom + 8) && !document.elementFromPoint(x, y)?.closest('a, button, input, select, textarea, label, summary, [tabindex], [contenteditable], [popover]')
+    for (let y = innerHeight - 24; y > 0; y -= 24) for (let x = 40; x < innerWidth - 40; x += 40) {
+      if ([[0, 0], [-8, 0], [8, 0], [0, -8], [0, 8]].every(([dx, dy]) => free(x + dx, y + dy))) return [x, y]
+    }
+    return null
+  })
   for (const colorScheme of ['light', 'dark']) for (const route of ['/', '/genie/', '/mykes/']) {
     const label = `${route} ${colorScheme}`, slug = route === '/' ? 'home' : route.split('/')[1]
     const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
@@ -263,10 +276,12 @@ try {
       await button('products').click(); await button('company').click()
       assert.ok(!(await panelState(page, 'menu-products')).open && (await panelState(page, 'menu-company')).open, `Opening Company closes Products: ${label}`)
       await page.screenshot({ path: join(evidence, `menu-company-${slug}-${colorScheme}.png`) })
-      await page.mouse.click(720, 760)
-      assert.ok(!(await panelState(page, 'menu-company')).shown, `A click outside closes the panel: ${label}`)
+      let spot = await clear(page)
+      assert.ok(spot, `A spot with nothing to click is found outside the open panel: ${label}`)
+      await page.mouse.click(...spot)
+      assert.ok(!(await panelState(page, 'menu-company')).shown, `A click outside closes the panel: ${label} ${spot}`)
       // Hover opens the same panel in the same place, and it stays while the pointer is in it.
-      await page.mouse.move(720, 760); await button('resources').hover()
+      await page.mouse.move(...spot); await button('resources').hover()
       state = await panelState(page, 'menu-resources')
       assert.ok(state.shown && !state.open, `Hover shows Resources: ${label}`)
       const hovered = state.box
@@ -275,7 +290,9 @@ try {
       await button('resources').click()
       state = await panelState(page, 'menu-resources')
       assert.ok(state.open && Math.abs(state.box.top - hovered.top) < 1 && Math.abs(state.box.left - hovered.left) < 1, `Hover and click show the panel in one place: ${label}`)
-      await page.keyboard.press('Escape'); await page.mouse.move(720, 760)
+      await page.keyboard.press('Escape'); spot = await clear(page)
+      assert.ok(spot, `A spot with nothing to point at is found outside the panel: ${label}`)
+      await page.mouse.move(...spot)
       assert.ok(!(await panelState(page, 'menu-resources')).shown, `The panel goes when the pointer leaves: ${label}`)
       // The active page in the header, and a menu link that takes you there.
       const here = await page.evaluate(() => ({ button: document.querySelector('.menu-button[data-here] .menu-here')?.lastChild.textContent ?? null, current: document.querySelector('#menu-products [aria-current="page"]')?.getAttribute('href') ?? null, crumb: document.querySelector('.crumbs [aria-current="page"]')?.textContent ?? null }))
@@ -520,7 +537,7 @@ try {
   // name's drawn colour, not only from the file's name), drawn at its own proportions. The triskle (222 of the file's 264 in height) keeps the size and the
   // centred place it had, nothing in the header is pushed aside, and the browser's icons
   // load from the site.
-  for (const colorScheme of ['light', 'dark']) for (const [width, header, footer] of [[1440, 32, 40], [1024, 32, 40], [390, 26, 34], [320, 23, 34]]) {
+  for (const colorScheme of ['light', 'dark']) for (const [width, header, footer] of [[1440, 32, 40], [1024, 32, 40], [390, 26, 34], [360, 24, 34], [320, 24, 34]]) {
     const label = `${colorScheme} ${width}px`
     const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
     try {
@@ -564,6 +581,9 @@ try {
       })
       for (const [name, spot, mark] of [['header', logo.top, header], ['footer', logo.foot, footer]]) {
         const unit = mark / 222, near = (value, wanted) => Math.abs(value - wanted) <= 0.6
+        // The brand's floor, measured: a lockup is never under 28 px high (the family drawer's
+        // phone layout is its one exception, and neither the header nor the footer is that).
+        assert.ok(spot.size[1] >= 28 - 0.05, `The ${name}'s logo is 28 px high or more: ${label} ${spot.size[1]}`)
         assert.equal(spot.file, `automagik-lockup-three-colours-${colorScheme === 'dark' ? 'cream' : 'ink'}-header.svg`, `The logo's file follows the theme: ${name} ${label}`)
         // The file's name is not enough: the name must be drawn dark on a light ground and light on a
         // dark one, measured against the ground the logo itself stands on (the header's, the footer's).

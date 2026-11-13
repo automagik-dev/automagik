@@ -1,8 +1,9 @@
 # Brand assets
 
-Automagik's own marks and character art, Arca's logo, we unfold's Open Intelligence tag and
-the official logos of eleven open projects the products are built on (the last section) are
-used. No customer marks or new drawings are included.
+Automagik's own marks and character art, we unfold's marks for Genie, Omni and Mykes (the
+lamp, the vortex and the cords), Arca's logo, we unfold's Open Intelligence tag and the
+official logos of eleven open projects the products are built on (the last section) are used.
+No marks of the people who use the products, and no new drawings, are included.
 
 - `app-icon.png`: Automagik
   brand files copied from the owner's Genie landing draft for RFC 0027 D3, 2026-11-11.

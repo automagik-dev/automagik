@@ -137,6 +137,26 @@ test("codexClean reads a config key written with a basic-string escape as the sa
   assert.deepEqual(codexClean(["codex", "-c", '"mod\\u0065l"="o3"']).argv, ["codex", "-c", '"mod\\u0065l"="o3"']);
 });
 
+test("codexClean drops a bare listed key followed by a part whose quote never closes", () => {
+  sameConfigKey('sandbox_mode . "x=read-only', "sandbox_mode", "read-only");
+  sameConfigKey("sandbox_mode\t.\t\"x=read-only", "sandbox_mode", "read-only");
+  sameConfigKey("sandbox_workspace_write . 'writable_roots=[]", "sandbox_workspace_write", "[]");
+});
+
+test("codexClean drops a quoted listed key followed by a part whose quote never closes", () => {
+  sameConfigKey("\"sandbox_mode\" . 'x=read-only", "sandbox_mode", "read-only");
+  sameConfigKey("'sandbox_mode'.\"x=read-only", "sandbox_mode", "read-only");
+  sameConfigKey('"sandbox_workspace_write"\t.\t"writable_roots=[]', "sandbox_workspace_write", "[]");
+});
+
+test("codexClean reads a config key written with TOML 1.1's \\xHH escape as the same key", () => {
+  sameConfigKey('"sandbox\\x5fmode"="read-only"', "sandbox_mode", "read-only");
+  sameConfigKey('"default_\\x70ermissions"="read-only"', "default_permissions", "read-only");
+  sameConfigKey('"sandbox\\x5Fmode" . x = "read-only"', "sandbox_mode", "read-only");
+  // Another key stays as written, escapes and all.
+  assert.deepEqual(codexClean(["codex", "-c", '"mod\\x65l"="o3"']).argv, ["codex", "-c", '"mod\\x65l"="o3"']);
+});
+
 test("launchRun: a Codex run always ends in the launch mode, each word once, before a `--`, whatever its source or codexAuto says", () => {
   for (const run of [["codex"], ["codex", "--approve-for-me"], ["codex", "--no-daemon", "--approve-for-me", "-c", CODEX_NETWORK],
     ["codex", "--dangerously-bypass-approvals-and-sandbox"], ["codex", "-a", "never", "-s", "workspace-write"], ["/opt/codex", "--yolo"]]) {
