@@ -170,10 +170,10 @@ test("herdr.pack links automagik-herdr as install.sh does, leaves someone else's
   assert.equal(readMarker(m.mods).sequence, 630001, "the signed pointer's sequence: install.sh's replay guard stays on");
   const link = join(m.binDir, "automagik-herdr");
   assert.equal(readlinkSync(link), join(m.mods, "am-sidebar", "bin", "automagik-herdr"));
-  assert.ok(!existsSync(join(m.binDir, "am")), "am is the am part's (D34), never the pack's");
+  assert.equal(readlinkSync(join(m.binDir, "am")), readlinkSync(link), "am beside it, the same wrapper (install.sh does both)");
   const d = doctorOf(m, "herdr.pack");
   assert.deepEqual(failed(d), [], JSON.stringify(d.checks));
-  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["restart-path", "record", "pack-version", "pack-mods", "briefing-entry", "briefing-hook", "command", "path", "node", "agent-antigravity"]);
+  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["restart-path", "record", "pack-version", "pack-mods", "briefing-entry", "briefing-hook", "command", "am command", "path", "node", "agent-antigravity"]);
   const noPath = doctorOf(m, "herdr.pack", { PATH: "/usr/bin" });
   assert.equal(noPath.code, 0, "not on PATH is a note, never a rollback");
   assert.match(noPath.checks.find((c) => c.check === "path").fix, /export PATH=/);
@@ -421,6 +421,9 @@ test("herdr.am-sidebar switches off like any member only once the command and th
   writeFileSync(join(am, "am.mjs"), "// am\n");
   rmSync(link);
   symlinkSync(join(am, "am.mjs"), link);
+  assert.equal(sidebarCarries(m.ctx()).length, 2, "am's link still runs the sidebar's command");
+  rmSync(join(m.binDir, "am"));
+  symlinkSync(join(am, "am.mjs"), join(m.binDir, "am"));
   assert.equal(sidebarCarries(m.ctx()).length, 1, "the briefing still runs from the sidebar");
   assert.throws(() => uninstall(m.ctx(), P("herdr.am-sidebar")), /every bot's briefing/);
   // A plain file there is not positively am's: still refused (fail closed).
@@ -469,6 +472,8 @@ test("herdr.pack and herdr.layout run from am's stored extract, outside the app 
   const link = join(m.binDir, "automagik-herdr");
   rmSync(link);
   symlinkSync(join(am, "am.mjs"), link);
+  rmSync(join(m.binDir, "am"));
+  symlinkSync(join(am, "am.mjs"), join(m.binDir, "am"));
   const entry = amEntry(m);
   uninstall(m.ctx(), P("herdr.am-sidebar"));
   uninstall(m.ctx(), P("herdr.am-tabs"));

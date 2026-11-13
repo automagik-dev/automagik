@@ -491,12 +491,10 @@ const within = (p, dir) => { const r = realOf(p), d = realOf(dir); return Boolea
 export function sidebarCarries(ctx) {
   const reasons = [];
   const folder = join(ctx.modsDir, PACK_NAME);
-  for (const name of [CLI_LINK, AM_LINK]) {
-    const link = join(ctx.binDir, name);
-    if (isLink(link) && (within(link, folder) || resolve(dirname(link), readlinkSync(link)).startsWith(folder + sep))) {
-      reasons.push(`the command (${link} runs mods/${PACK_NAME}/bin)`);
-    }
-  }
+  // Either name (the pack links both): one reason, naming the first that still runs from the folder.
+  const carrying = [CLI_LINK, AM_LINK].map((name) => join(ctx.binDir, name))
+    .find((link) => isLink(link) && (within(link, folder) || resolve(dirname(link), readlinkSync(link)).startsWith(folder + sep)));
+  if (carrying) reasons.push(`the command (${carrying} runs mods/${PACK_NAME}/bin)`);
   const entry = stableBriefingPath(ctx.appHome);
   if (!within(entry, amStoreOf(ctx.env))) reasons.push(`every bot's briefing (${entry} is not am's: it ${isFile(entry) ? "runs the sidebar's briefing.mjs" : "is missing"})`);
   const direct = hooksRunning(knownProjects(ctx.appHome), { scripts: [join(folder, "briefing.mjs")], also: ledgerFolders(ctx.appHome) });
