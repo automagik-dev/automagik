@@ -1626,7 +1626,6 @@ test("menu Restart with its helpers on a Herdr that takes no exec timeout: not r
   await cx.settle();
   assert.equal(state.execTimeouts.some((x) => x.command === "env"), false, "the CLI never ran");
   assert.throws(() => args(), /ENOENT/, "no restart reached the CLI");
-  assert.match(form.error, /Nothing was restarted/);
-  assert.match(form.error, /automagik-herdr restart .*--tree/);
+  assert.match(form.error, /cannot wait long enough for a restart with its helpers; restart it from a terminal/);
   assert.equal(form.busy, false);
 });

@@ -6,7 +6,9 @@ export function actionError(error, action = "Start") {
     return `Herdr stopped the ${action.toLowerCase()} command before it finished; check the panes for a partial start before retrying from a terminal.`;
   }
   if (/^This Herdr ends the sidebar's programs at 30 s/.test(text)) {
-    return "This Herdr cannot wait long enough for a linked-machine restart; restart it from a terminal.";
+    return /a restart on this computer /.test(text)
+      ? "This Herdr cannot wait long enough for a restart with its helpers; restart it from a terminal."
+      : "This Herdr cannot wait long enough for a linked-machine restart; restart it from a terminal.";
   }
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const diagnostic = lines.findLast((line) => /^automagik-herdr: /.test(line))
