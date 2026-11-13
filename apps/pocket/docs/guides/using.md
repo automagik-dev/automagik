@@ -44,7 +44,8 @@ Team.
   the **Review** bar to open the swipe deck: one card per waiting agent; swipe right for Yes, left
   for No, up to open its terminal. A request waiting in a Bot chat stays in the list and says
   "In chat" or "On computer", but it is not a deck card. Opening a card and coming Back returns to the deck. After the last
-  answer, **All clear** says how many requests you answered, and **Back to Home** closes the deck.
+  answer, **All clear** says how many requests you answered, and **Back to Home** closes the deck. If
+  Bot-chat requests still wait, the deck lists each one with an **Open chat** button instead of All clear.
 - **Team** shows each project's bots with their pets. Its tab shows how many bots need you.
 - **Code → By repository** has one card per git repository. Spaces in the same repository, like a
   squad's worktrees, share one card. A folder that isn't a repository is a project of its own. Tap

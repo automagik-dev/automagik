@@ -626,6 +626,35 @@ class TeamsTest {
         }
     }
 
+    @Test fun theSampleDeckDoesNotShowAllClearWhileChatsWait() {
+        fun chat(id: String, message: String) = Teams.DeckCard(TerminalRef("h", "dsh:$id"), id, "herdr", "Automagik Bot",
+            message, "question", 1, 2, TerminalRef("h", "dsh:$id"))
+        fun terminal(address: String) = Teams.DeckCard(TerminalRef("h", address), address, "herdr", "Claude Code",
+            "Run?", "permission", 3, 1, null)
+        val sample = listOf(chat("reader", Chat.ANSWER_ON_COMPUTER), chat("captain", "Which branch?"),
+            terminal("t1"), terminal("t8"), terminal("t9"))
+        val terminals = sample.filter(Teams::deckAnswerable)
+        val chats = sample.filter { it.chat != null }
+        var answered = emptySet<String>()
+        var view = Teams.deckView(terminals, answered, anyConnected = true, waiting = terminals.size, chats = chats)
+        while (view is Teams.DeckView.Cards) {
+            val card = view.cards.first()
+            answered = answered + Teams.deckKey(card)
+            view = Teams.deckView(terminals, answered, anyConnected = true, waiting = terminals.size - answered.size, chats = chats)
+        }
+        // Only Bot-chat requests are left; the count is above zero, so this is never Clear.
+        assertTrue(view is Teams.DeckView.Chats)
+        val waiting = (view as Teams.DeckView.Chats).cards
+        assertEquals(chats, waiting)
+        assertEquals(chats.map { it.ref }, waiting.map { it.ref })
+        assertTrue(Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = chats.size, chats = chats) is Teams.DeckView.Chats)
+        // A chat request answered in its chat is no longer in Home's list, so the deck drops it.
+        val remaining = Teams.deckChats(sample - chats[0])
+        assertEquals(chats.drop(1), remaining)
+        assertEquals(remaining, (Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = remaining.size, chats = remaining) as Teams.DeckView.Chats).cards)
+        assertEquals(3, answered.size)
+    }
+
     @Test fun eachPreviewRequestShowsItsOwnCommand() {
         fun sample(address: String, message: String) =
             CoreTerminal(address, "x", "/w", "live", "blocked", "Claude Code", message, 80, 24, kind = "permission")

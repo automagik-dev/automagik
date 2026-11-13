@@ -310,8 +310,9 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         // A disconnected machine keeps its terminals in the reading; its cards move to the offline end, not the deck.
         // A chat the phone cannot write to is not a deck card: it could never be answered or cleared.
         val cards = all.filter { state.machines[it.ref.hostId]?.connected == true && Teams.deckAnswerable(it) }
+        val chats = Teams.deckChats(all.filter { state.machines[it.ref.hostId]?.connected == true })
         val offline = all.filter { state.machines[it.ref.hostId]?.connected != true }
-        DeckScreen(cards, offline, vm, anyConnected, deckMemory, state.message, onClose = { deckOpen = false },
+        DeckScreen(cards, chats, offline, vm, anyConnected, deckMemory, state.message, onClose = { deckOpen = false },
             onOpen = { ref -> deckReturn = true; openFromDeck(ref) },
             onBackHome = { deckOpen = false })
     }

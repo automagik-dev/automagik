@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Alignment
@@ -93,8 +94,8 @@ class DeckMemory {
  * [cards] is Home's reachable list, [offline] the entries on machines that are not connected now. A future "Answer
  * all" button opens this same screen.
  */
-@Composable fun DeckScreen(cards: List<Teams.DeckCard>, offline: List<Teams.DeckCard>, vm: PocketViewModel,
-                           connected: Boolean, memory: DeckMemory, message: String?,
+@Composable fun DeckScreen(cards: List<Teams.DeckCard>, chats: List<Teams.DeckCard>, offline: List<Teams.DeckCard>,
+                           vm: PocketViewModel, connected: Boolean, memory: DeckMemory, message: String?,
                            onClose: () -> Unit, onOpen: (TerminalRef) -> Unit, onBackHome: () -> Unit) {
     BackHandler(onBack = onClose)
     LaunchedEffect(cards.size) { memory.seen = maxOf(memory.seen, cards.size) }
@@ -102,7 +103,7 @@ class DeckMemory {
     val gone = memory.gone
     val offlineWaiting = offline.count { Teams.deckKey(it) !in answered }
     val waiting = (memory.seen - answered.size).coerceAtLeast(0)
-    val view = Teams.deckView(cards, gone, connected, waiting, offlineWaiting)
+    val view = Teams.deckView(cards, gone, connected, waiting, offlineWaiting, chats)
     LaunchedEffect(view is Teams.DeckView.Clear) { memory.complete = view is Teams.DeckView.Clear }
     // The card being answered stays composed through its exit, even if Home has already dropped it.
     var leaving by remember { mutableStateOf<Teams.DeckCard?>(null) }
@@ -158,6 +159,7 @@ class DeckMemory {
                         onOpen = { onOpen(card.ref) })
                 }
             } else when (view) {
+                is Teams.DeckView.Chats -> ChatEnd(view.cards, onOpen, onClose, Modifier.weight(1f))
                 Teams.DeckView.Clear -> DeckEnd(Teams.DONE, "All clear", if (answered.isEmpty()) "No bot is waiting on you."
                     else "You answered ${answered.size} ${if (answered.size == 1) "request" else "requests"}. Your bots are back to work.",
                     celebrate = answered.isNotEmpty(), action = "Back to Home", onAction = onBackHome, Modifier.weight(1f))
@@ -174,6 +176,37 @@ class DeckMemory {
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 193.dp).fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp)).background(Raised).border(1.dp, Border, RoundedCornerShape(12.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp))
+        }
+    }
+}
+
+/** The end when terminal cards are done but Bot-chat requests still wait: each one is a tap away. */
+@Composable private fun ChatEnd(cards: List<Teams.DeckCard>, onOpen: (TerminalRef) -> Unit, onClose: () -> Unit, modifier: Modifier) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.weight(1f))
+        Text("Waiting on a chat", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text("These requests are waiting in their Bot chats. Open one to answer there.", color = Muted,
+            fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(16.dp))
+        cards.forEach { card ->
+            val where = if (card.message == Chat.ANSWER_ON_COMPUTER || card.message == Cockpit.READ_ONLY) "On computer" else "In chat"
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(card.title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(listOf(card.where, where).filter { it.isNotBlank() }.joinToString(" · "), color = Muted, fontSize = 12.sp, maxLines = 1)
+                }
+                TextButton(onClick = { onOpen(card.ref) }) {
+                    Text("Open chat", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        Spacer(Modifier.weight(1f))
+        Button(onClick = onClose, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(27.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) {
+            Text("Back to Home", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

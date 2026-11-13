@@ -363,6 +363,8 @@ object Teams {
     /** What the deck shows: the cards left, "all clear", or offline (requests it can't reach now). */
     sealed interface DeckView {
         data class Cards(val cards: List<DeckCard>) : DeckView
+        /** No terminal cards are left, but these Bot-chat requests still wait. */
+        data class Chats(val cards: List<DeckCard>) : DeckView
         data object Clear : DeckView
         /** [waiting]: the requests last seen on machines the phone can't reach now. */
         data class Offline(val waiting: Int) : DeckView
@@ -373,9 +375,12 @@ object Teams {
      * machines the phone can't reach, or (with no connected machine) [waiting] were seen before the link dropped;
      * all clear once they were answered (or there were none).
      */
-    fun deckView(cards: List<DeckCard>, answered: Set<String>, anyConnected: Boolean, waiting: Int, offline: Int = 0): DeckView {
+    fun deckView(cards: List<DeckCard>, answered: Set<String>, anyConnected: Boolean, waiting: Int, offline: Int = 0,
+                 chats: List<DeckCard> = emptyList()): DeckView {
         val left = cards.filter { deckKey(it) !in answered }
         if (left.isNotEmpty()) return DeckView.Cards(left)
+        // All clear only when every counted request is gone; Bot-chat requests live here until answered.
+        if (chats.isNotEmpty()) return DeckView.Chats(chats)
         val lost = maxOf(offline, if (!anyConnected) waiting else 0)
         return if (lost > 0) DeckView.Offline(lost) else DeckView.Clear
     }
@@ -405,6 +410,9 @@ object Teams {
      * takes phone writes and the chat does not say to answer on the computer.
      */
     fun deckAnswerable(c: DeckCard): Boolean = c.chat == null
+
+    /** The connected Bot-chat requests that keep the deck from All clear until they are answered. */
+    fun deckChats(cards: List<DeckCard>): List<DeckCard> = cards.filter { it.chat != null }
 
     /** The word a Home row shows for a request the deck cannot answer in place. */
     fun chatWaitLabel(t: CoreTerminal): String =
