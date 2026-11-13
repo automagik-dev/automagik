@@ -171,7 +171,7 @@ writers, secret rules), and tests for every module in the repository's `test/`.
 
 Herdr API: `exec`, `theme`, `appHome`, `home`, `readTextFile`, `writeTextFile`, `window`,
 `fs/promises`; the runtime's `fetch`. Programs: `sh`, `open` (`xdg-open` on Linux) for Open, and
-the sidebar's `am` (`automagik-herdr` still works as an alias). Never `security`.
+the sidebar's `bin/automagik-herdr` launcher, the file behind `am` (`automagik-herdr` still works as an alias). Never `security`.
 
 ## Watch out
 
