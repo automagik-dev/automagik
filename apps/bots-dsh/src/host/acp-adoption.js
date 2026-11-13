@@ -318,7 +318,8 @@ export function install(rt) {
   // later, or dshTools turned on or off live, still moves or reverses the team. The last
   // event is acp-dsh's own, because DSH keeps `loader/volatile-update` inside the plugin
   // whose config changed.
-  void rt.load().then(migrate)
+  // The roster now loads synchronously; let the remaining modules install its helpers first.
+  void Promise.resolve().then(() => rt.load()).then(migrate)
   const events = [
     'llm/adapters-updated',
     'settings/document-updated',

@@ -231,9 +231,13 @@ No credential is read or copied between programs. The background model is not mo
 
 **Images**: `generate_image` draws with an OpenAI API key (the Images API) exactly as before; without one, through the Codex CLI on its own ChatGPT sign-in (acp-dsh's `generateImage`, a one-off Codex session with a per-draw permission profile using Codex's image tool), so a ChatGPT plan draws with no DSH sign-in. A ChatGPT grant an earlier version stored through DSH's `openai-codex` sign-in is read last, only so a person who signed in that way keeps drawing; Automagik no longer offers that sign-in. Nothing reads or copies the CLI's sign-in. A Bot on an agent (Codex) can also make an image with the agent's own tool: acp-dsh hands its PNG, from the call's own update, to the Bot team's keeper (`acpAgents.keepImages`), the chat shows it in the same image card, it is saved in the same images folder, and the agent's link to its own local copy leaves the reply. While any image is made (either path), the card is Omni painting: Omni's clay art with no card behind it, swaying, its face changing every 0.9 s, four dabs of the theme's colours around it, and "Painting your image…" with the seconds so far; a partial image, then the finished one, fades in where Omni was. With reduced motion Omni stands still and the dabs are gone. A call that fails or is stopped says the image was not made, and why.
 
-**Codex image security (#870).** Each one-off draw selects a fresh permission profile that
-denies file reads outside its empty scratch folder where Codex enforces profiles (Seatbelt on
-macOS, bubblewrap on Linux, the Windows sandbox). The folder and config are removed afterwards.
+**Codex image security (#870).** Each one-off draw requests scratch-only reads through a fresh
+permission profile. Codex's filesystem helper adds runtime read grants, so this is containment,
+not a scratch-only read boundary: images in permitted runtime directories remain readable.
+Automagik sends prompt text and has no pre-read hook for Codex's image-input paths. The
+[ACP image security notes](../acp-dsh/README.md#images-through-codex) list the platform grants,
+pinned sources and test limits; native macOS/Windows and signed-in per-turn enforcement remain
+untested here. #870 remains open. The scratch folder and config are removed afterwards.
 An adapter that lacks the mode or rejects it falls back to `read-only`, logs one warning and
 marks the result internally as not isolated. The owner keeps this fallback enabled with the
 file disclosure risk accepted: an injected request could use a readable local image as input

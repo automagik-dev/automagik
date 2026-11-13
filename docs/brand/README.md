@@ -1,19 +1,21 @@
 # Automagik brand
 
-Automagik is one product family: Automagik, Genie and Omni. This folder is how it looks: one mark, one lettering, a cream and plum theme, soft clay shapes. Everything here was approved by the owner; nothing was added.
+Automagik is one product family: Automagik, Genie and Omni, with Mykes to come. This folder is how it looks: one mark, one lettering, a cream and plum theme, soft clay shapes. Everything here was approved by the owner; nothing was added.
 
 It is documentation. No build, app or release reads this folder.
 
 ## The rules
 
-1. **The mark is always the triskle.** Automagik, Genie and Omni all carry the same mark. There is no other logo.
-2. **The triskle is always in colour.** Cyan, pink and violet, as in the clay. The ink and cream marks are a fallback only, for places where colour cannot be used: one-colour print, engraving, a single-ink stamp.
+1. **The triskle is Automagik's mark, and Automagik's alone.** Genie, Omni and Mykes do not carry it (Genie and Omni by the owner's decision, add. 231; Mykes by the owner's approval of the family drawer, 12 November 2026). Automagik has no other logo.
+2. **Automagik's triskle is always in colour.** Cyan, pink and violet, as in the clay. The ink and cream marks are a fallback only, for places where colour cannot be used: one-colour print, engraving, a single-ink stamp.
 3. **Pets are never marks.** Genie and Omni are characters. They never stand in for the logo, in a header, a favicon or an app icon.
 4. **The only Genie is the full-body one.** The head alone is retired.
-5. **One letter size for every product.** The three lockups share one frame: at the same height the mark and the letters are the same size in all three.
+5. **One letter size for every product.** Automagik's lockup and every product's wordmark share one frame height: at the same height the letters are the same size in all of them.
 6. **A drawing made for each size.** The mark has a thin clear line along its seams, and that line is drawn again for small sizes. Pick the file made for the size you show; never scale the large drawing down to an icon.
-7. **The dot on the i is a sparkle, one colour per product.** One four-point star with the same area as the round dot it replaced, in one of the mark's three colours: Automagik's is violet, Genie's is pink and Omni's is cyan. The triangle stands for the three products.
+7. **The dot on the i is a sparkle, one colour per product.** One four-point star with the same area as the round dot it replaced, in one of the mark's three colours: Automagik's is violet, Genie's is pink and Omni's is cyan. The triangle stands for the three products. Mykes's sparkle is not chosen yet.
 8. **Never redraw it.** Do not move, reshape, slim, recolour or outline the mark's pieces, the letters or Genie. Use the files.
+9. **Every mark that is not Automagik's is flat and one colour.** The sparkle of its word is its only colour (the owner's decision, add. 247). Genie's mark is to be a lamp and Omni's an experiment (add. 231). They are future marks: neither is drawn or approved, and no file for them is here.
+10. **Until the owner approves its mark, a product shows as its word.** Genie, Omni and Mykes each appear as the name in the brand's lettering, with no mark beside it, in every place: a header, a menu, a page title, the family drawer (the owner's approval of the family drawer, 12 November 2026). Under Mykes, which is not out yet, the plain words "Coming soon." stand. Do not put a lamp, an experiment or any other mark the owner has not approved beside the word, and never the triskle or a pet.
 
 ## What is here
 
@@ -21,11 +23,12 @@ It is documentation. No build, app or release reads this folder.
 | --- | --- |
 | `logo/svg/` | The triskle, in three colours (the mark) and in ink and cream (the fallback), with a drawing for each size |
 | `logo/png/` | The mark at 1024 and 512px, clear ground |
-| `logo/lockups/` | The mark with the wordmark, for automagik, genie and omni |
-| `logo/wordmark/` | The name alone |
+| `logo/lockups/` | The mark with the wordmark, for automagik. The genie and omni lockups there are RETIRED |
+| `logo/wordmark/` | The name alone: how Genie, Omni and Mykes show |
 | `favicon/` | The browser tab and home screen set |
 | `genie/` | The one Genie |
-| `tokens/` | The site's colours in both themes, type, radius, shadow and layout values, as `tokens.json` and `tokens.css` |
+| `tokens/` | The colours in both themes, type, radius, shadow and layout values, as `tokens.json` and `tokens.css` |
+| `fonts/` | Fredoka, the title face, with its licence and where it came from |
 | `components/` | The site's components: their stylesheet, a note and a preview page each |
 | `export-png.mjs` | Makes a PNG from any SVG here |
 
@@ -36,12 +39,13 @@ It is documentation. No build, app or release reads this folder.
 | A header or footer, on a light ground | `logo/lockups/automagik-lockup-three-colours-ink-header.svg` |
 | A header or footer, on a dark ground | `logo/lockups/automagik-lockup-three-colours-cream-header.svg` |
 | A cover, a slide, print: 120px high or more | `logo/lockups/automagik-lockup-three-colours-ink.svg` or `-cream.svg` |
-| Genie or Omni | the same four files, starting `genie-` or `omni-` |
+| Genie or Omni | the word alone: `logo/wordmark/genie-wordmark-ink.svg` or `-cream.svg`, `logo/wordmark/omni-wordmark-ink.svg` or `-cream.svg` (rule 10) |
+| RETIRED, do not use | `logo/lockups/genie-lockup-*` and `logo/lockups/omni-lockup-*`: they carry the triskle (rule 1). The files stay for older work that points at them |
 | The mark alone, 100px or more | `logo/svg/triskle-three-colours.svg` |
 | The mark alone at about 64, 32 or 16px | `logo/svg/triskle-three-colours-64.svg`, `-32.svg`, `-16.svg` |
 | A browser tab | `favicon/favicon.ico` and `favicon/favicon.svg` |
 | A phone's home screen, a web manifest | `favicon/apple-touch-icon.png`, `favicon/icon-192.png`, `favicon/icon-512.png` |
-| The name without the mark | `logo/wordmark/automagik-wordmark-ink.svg` or `-cream.svg` |
+| Automagik's name without the mark | `logo/wordmark/automagik-wordmark-ink.svg` or `-cream.svg` |
 | Colour cannot be used | the files with `-ink` or `-cream` and no `three-colours` in the name |
 
 - "ink" means ink letters, for light grounds. "cream" means cream letters, for dark grounds.
@@ -81,17 +85,20 @@ node docs/brand/export-png.mjs docs/brand/logo/lockups/automagik-lockup-three-co
 - One accent, `bt-accent`, for links and small details. Focus is always the `st-ring` outline: 3px, 3px off the edge.
 - Three tints carry the mood: `st-cyan`, `st-lilac` and `bt-user` (pink). Each has its own text colour. Together they make the stage, the soft cyan to lilac to pink gradient behind art.
 - `triskle-cyan`, `triskle-pink` and `triskle-violet` are the mark's own colours. They live in the mark and in brand art. They are never text and never a UI colour.
+- Status has four colours: `st-ok`, `st-bad`, `st-warn` and `st-work`, with `st-okdot` and `st-warndot` for dots. Colour never carries a status alone: every status dot has a word or a mark beside it. The four are set apart in lightness, so red-blind, green-blind and blue-blind sight can tell them apart, but some pairs stay close without the word.
 - Each colour's note names the grounds it is legible on. Every text and ground pair named there passes 4.5:1 in both themes.
 - The site's stylesheet also uses short names (`bg`, `paper`, `text`, `line`, `accent`, `ring`); they point at the tokens above.
 
 ## Type
 
-- Two families. **Manrope** for headings, labels and buttons, at weights 600 to 800 with tight tracking. **DM Sans** for running text at weight 400.
-- Headings are large and heavy; the line under them is light and calm. Eyebrows and small labels are capitals with wide tracking.
+- Two families. **Fredoka** for titles, labels and buttons. **DM Sans** for running text at weight 400. The logo's letters are their own drawing, not a font: never set a logo in Fredoka.
+- Fredoka is round, with one even stroke, like the logo's letters. It is set at the logo's weight: the logo's stroke is 26.5% of its small letters' height, and Fredoka has that at weight 536. That is `weight-title`. Buttons, links and card titles use `weight-strong` (469); menu items use `weight-label` (402). Use these three weights only: a heavier Fredoka is heavier than the logo.
+- Titles have a little negative letter spacing (`-0.02em` for the page title, `-0.016em` for section titles, `-0.01em` for card titles). Fredoka is drawn tight; do not tighten it more. Its word space is wide already: titles take no extra word spacing.
+- Titles are large; the line under them is light and calm. Eyebrows and small labels are capitals with wide tracking.
 - The page title, section titles and the intro line are fluid on the site. The styles here record their largest size; each note gives the full rule.
 - Code uses the reader's own monospace face.
 
-The two faces are the site's files, `apps/landing/assets/brand/dm-sans-latin.woff2` and `manrope-latin.woff2`. `tokens/tokens.css` loads them from there; this folder holds no copy.
+Fredoka's file is `fonts/fredoka-latin.woff2`, with its licence beside it (SIL Open Font License 1.1) and its source in `fonts/README.md`. Serve that file yourself; do not load the face from a font service. Its `@font-face` rule carries `size-adjust:105%`, which keeps its lines as long as those of the face it replaced, so titles break where they did; copy the rule from `tokens/tokens.css`. DM Sans is the site's file, `apps/landing/assets/brand/dm-sans-latin.woff2`; `tokens/tokens.css` loads it from there.
 
 ## Shape, depth and space
 
@@ -105,11 +112,11 @@ Genie is a character, not a logo. There is one Genie: the full-body clay figure,
 
 - Use `genie/genie-full-body.png` (1254px, clear ground). `genie/genie-avatar-256.webp` is the same figure at 256px, for a chat avatar.
 - Never crop to the head. Never redraw, recolour or restyle.
-- Genie never takes the mark's place.
+- Genie never takes the mark's place, Automagik's or the Genie product's own: the product shows as its word (rule 10).
 
 ## Tokens
 
-`tokens/tokens.json` is the record; `tokens/tokens.css` is the same values as CSS custom properties, light and dark. The values were read from the site's own files, `apps/landing/theme.css` and `apps/landing/styles.css`, at `dev@1b53c19c`. The site's files are the source: when the theme changes there, these files are made again from it.
+`tokens/tokens.json` is the record; `tokens/tokens.css` is the same values as CSS custom properties, light and dark. The colours, shadows, radii and sizes were read from the site's own files, `apps/landing/theme.css` and `apps/landing/styles.css`, at `dev@6ba09b59`; when the theme changes there, these files are made again from it. The title face goes the other way: its family, its three weights and its font file are set here, and the site takes them from this folder (`node apps/landing/scripts/sync-theme.mjs` writes the site's theme and copies the font; its `--check` fails when they differ).
 
 Setting `data-theme="light"` or `data-theme="dark"` on the root picks a theme. With neither, the reader's system setting picks.
 
@@ -140,6 +147,7 @@ These are on the site but are not part of this folder:
 - **The site's own copies of the logo.** The site carries a few files of this set under `apps/landing/assets/brand/`; the full set is here. Its `lamp.webp` and its lockup with the Open Intelligence tag are not part of the set.
 - **The Open Intelligence tag** and the IBM Plex Mono face it is set in. They are we unfold's.
 - **Omni's art and the pet art.** No approved file for them is in this set, and pets are never marks.
+- **A mark for Genie, Omni or Mykes.** None is approved (rules 9 and 10). The site's `lamp.webp` is not an approved mark.
 - **Other projects' marks** in the "made possible by" row, and Arca's logo.
 - **The home page's layouts**: the hero with the cast, the grid's arrangement, the phone menu.
 - **Motion.** The site's motion rules are in the component stylesheet; there are no motion tokens.
@@ -148,15 +156,18 @@ These are on the site but are not part of this folder:
 
 ## Using this in another repository
 
-Genie, Omni and Arca carry a byte copy of this folder at the same path, `docs/brand/`, with the agents' skill (`.claude/skills/automagik-brand/`) and the tool that makes the copy (`scripts/brand-sync.mjs`). Automagik's repository is the source. A copy is never edited: a change is made in Automagik's repository and copied again. `SOURCE.json` exists only in a copy; it records the Automagik commit the copy was made from and the sha256 of every copied file.
+Genie, Omni and Arca carry a byte copy of this folder, with the agents' skill (`.claude/skills/automagik-brand/`) and the tool that makes the copy (`scripts/brand-sync.mjs`). Automagik's repository is the source. A copy is never edited: a change is made in Automagik's repository and copied again. In a copy the folder is `docs/brand/` too, unless `--into` names another: a repository whose `docs/` is not its own folder keeps the brand in `brand/`, for example. `SOURCE.json` exists only in a copy, beside the skill (`.claude/skills/automagik-brand/SOURCE.json`). It records the folder the brand is in (`into`), the Automagik commit the copy was made from and the sha256 of every copied file.
 
 ```sh
-node scripts/brand-sync.mjs --write --from <an Automagik checkout, or a commit>
+node scripts/brand-sync.mjs --write --from <an Automagik checkout, or a commit> [--into <folder>]
 node scripts/brand-sync.mjs --check
 ```
 
 - `--write` copies the files as they are committed at that commit, removes the files the source no longer has, and writes `SOURCE.json`. A repository with no copy yet runs the tool from an Automagik checkout, from its own folder: `node <checkout>/scripts/brand-sync.mjs --write --from <checkout>`.
+- `--into <folder>` names the brand's folder in that repository, from its root. It is given once: later runs, and the skill, read the folder from `SOURCE.json`. Given again with another folder, it moves the copy there. A folder named this way holds the copy alone: when it holds a file that no copy recorded, `--write` stops, names the file and changes nothing, on the first run and on every later one. In `docs/brand/`, the default, `--write` removes such a file.
+- A copy made before the folder could be chosen has its `SOURCE.json` in `docs/brand/`. It is still read, and the next `--write` moves it beside the skill.
+- A copy made from `6ba09b59` holds `docs/brand/fonts/rebuild/`, which the next `--write` removes. If `npm ci` was run there, as that commit's notes said, its `node_modules/` holds symbolic links (`.bin`), and `--write` refuses on them: remove that `node_modules/` folder first, then run `--write`.
 - `--check` is for that repository's CI. It exits 1 and names each file that differs from `SOURCE.json`, is missing, or is not recorded.
 - Both then look at Automagik's `dev`. When the brand changed there after the copy's commit, they name `dev`'s commit to copy. When the copy was made from a commit that is not on `dev` (a branch), they say that and do not advise copying `dev` over it. `--check` warns for either and does not fail. With no network they say so and go on.
 - A copy holds real folders and files only. When a file of the copy, `SOURCE.json`, or a folder on the way to one is a symbolic link, `--write` refuses before it changes anything and `--check` fails naming the link.
-- The two type files are not in this folder (see "Type"), so a copy has none: `tokens/tokens.css` falls back to the reader's own faces until the repository carries the two files at the path it names.
+- Fredoka's file is in this folder (`fonts/`), so a copy has the title face. DM Sans's file is not (see "Type"): for running text `tokens/tokens.css` falls back to the reader's own faces until the repository carries that file at the path the rule names.

@@ -376,6 +376,16 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-exchange .bt-dialog-log{max-width:none;margin:0;padding:39px max(16px,calc((100% - 960px)/2)) 116px;scrollbar-width:thin}
 .bt-exchange .bt-tools{display:none}
 .bt-fold{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-top:4px;white-space:normal}
+/* The part of a cut code block the preview keeps, drawn here so the host's Markdown
+   draws no copy control of its own for it (cells.js foldArea). It wears the host's code
+   block tokens, banner and copy place, so a folded message looks as it did. */
+.bt-fold-block{color:var(--dsw-alias-label-primary,inherit);background:var(--dsw-alias-markdown-code-block,color-mix(in srgb,currentColor 6%,transparent));border-radius:var(--dsw-radius-lg,16px)}
+.bt-fold-code>*+.bt-fold-block{margin-top:4px}
+.bt-fold-bar{display:flex;justify-content:flex-end;align-items:center;padding:9px 14px;font:11px/18px var(--dsw-font-family,inherit);background:var(--dsw-alias-markdown-code-block-banner,transparent);border-radius:var(--dsw-radius-lg,16px) var(--dsw-radius-lg,16px) 0 0}
+.bt-fold-copy{border:0;margin:-6px -8px;padding:6px 8px;border-radius:8px;background:none;color:inherit;font:inherit;cursor:pointer}
+.bt-fold-copy:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px}
+.bt-fold-pre{margin:0;padding:16px;font:var(--dsw-font-markdown-code-block,11px/19px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);white-space:pre-wrap;word-break:break-all;overflow-x:auto}
+.bt-fold-pre code{font:inherit}
 .bt-fold-note{font-size:12px;line-height:16px;color:var(--bt-ink-3)}
 [data-folded] .bt-fold-body{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent)}
 .bt-ubody .bt-fold .bt-more,.bt-ububble .bt-fold .bt-more,.bt-ubody .bt-fold-note,.bt-ububble .bt-fold-note{color:inherit;opacity:.7}
@@ -980,7 +990,14 @@ body[data-bt-layout=flat] .bt-think{max-width:calc(var(--bt-flat-w) * 100%)}
 body:not([data-bt-advanced]) [data-step-process]>div:first-child{display:none!important}
 body:not([data-bt-advanced]) [data-step-process]>[data-step-process-body]{display:block!important;content-visibility:visible!important;max-height:none!important;overflow:visible!important;mask-image:none!important;scrollbar-gutter:auto!important}
 body:not([data-bt-advanced]) :is([data-step-process],[data-turn-process-hidden])[hidden]{content-visibility:visible!important}
-[class*="_flowItem"]:has(> [data-slot="conversation.chat.node"]:empty){display:none!important}
+[class*="_flowItem"]:has(> [data-slot="conversation.chat.node"]:empty, > [data-slot="conversation.chat.node"][data-bt-emptied]){display:none!important}
+/* A turn's process seat is a flow child of its own, not a flowItem: a seat whose
+   member cells all emptied themselves (a hidden exchange turn, a turn whose calls
+   draw nothing) still kept its margin, stacking a blank band per hidden call. Only
+   the slot one of this plugin's cells marked counts (cell-empty.js), so a seat another
+   renderer fills, even with plain text and no element child, is never taken for empty.
+   Advanced keeps DSH's own seat, with its header. */
+body:not([data-bt-advanced]) [data-step-process]:has(> [data-step-process-body] [data-slot="conversation.chat.node"][data-bt-emptied]):not(:has(> [data-step-process-body] [data-slot="conversation.chat.node"]:not([data-bt-emptied]))){display:none!important}
 [class*="_header"]:has(.bt-head){border-bottom-color:transparent!important;box-shadow:none!important}
 /* The header is a band of its own above the transcript, never a layer over it: floating,
    the transcript scrolled under its buttons, and once the column met the button row on a
@@ -1192,6 +1209,7 @@ div:has(> nav [class*="_marks"]){display:none!important}
 .bt-open-new .bt-time-sep{height:16px;margin:32px 0 2px}
 .bt-earlier{display:flex;flex-direction:column;gap:6px}
 .bt-earlier-top{display:flex;justify-content:center;align-items:center;height:34px;flex:none}
+.bt-earlier-top:empty{display:none}
 .bt-earlier-top .bt-soft{height:28px;font-size:12px;padding:0 12px}
 .bt-urow{display:flex;justify-content:flex-end}
 .bt-ububble{max-width:calc(var(--bt-msg-w) * 100%);background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:14px;line-height:24px;box-sizing:border-box;overflow-wrap:anywhere;text-wrap:pretty;text-autospace:normal}
