@@ -9,7 +9,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-process.env.DS_BOT_GITHUB_OAUTH_CLIENT_ID = 'test-gh-client'
+// Automagik's own sign-in clients come from its configuration; none is built in. This file runs the engine
+// with test ones set, before the modules that read them load. connector-clients.test.js covers a build with none.
+process.env.AUTOMAGIK_GITHUB_OAUTH_CLIENT_ID = 'test-gh-client'
+process.env.AUTOMAGIK_OAUTH_CLIENT_METADATA_URL = 'https://client.test/oauth/client.json'
 
 const { createRuntime } = await import('../index.js')
 const { fakeContext } = await import('./fake-ctx.js')
@@ -96,7 +99,7 @@ test('client resolution: CIMD only on the fixed port, DCR fallback, re-registrat
   const entry = { auth: { kind: 'oauth' } }
   const cimd = await oauth.resolveClient(entry, discovery, 'http://127.0.0.1:38517/callback', true)
   assert.equal(cimd.via, 'cimd')
-  assert.equal(cimd.clientInformation.client_id, 'https://dsbot.app/oauth/client.json')
+  assert.equal(cimd.clientInformation.client_id, 'https://client.test/oauth/client.json')
   // A random port cannot use the metadata document: DCR.
   let persisted
   const request = async (url, init) => {
@@ -339,11 +342,11 @@ test('refresh uses the client that signed in: cimd, catalog, and legacy inferenc
   // A CIMD sign-in refreshes with the published document id.
   {
     const { rt, done } = await make(
-      { notion: { oauth: { authorizationServerUrl: 'https://as.test' }, client: { via: 'cimd', clientId: 'https://dsbot.app/oauth/client.json' } } },
+      { notion: { oauth: { authorizationServerUrl: 'https://as.test' }, client: { via: 'cimd', clientId: 'https://client.test/oauth/client.json' } } },
       { name: 'CONNECTOR_NOTION_REFRESH', value: 'RT-1', scope: [] })
     t.after(done)
     assert.equal(await rt.connectorsInternals.refreshConnector('notion'), true, JSON.stringify(rt.connectorsInternals.statuses.get('notion')))
-    assert.equal(seen.at(-1), 'https://dsbot.app/oauth/client.json')
+    assert.equal(seen.at(-1), 'https://client.test/oauth/client.json')
     assert.equal(rt.state.connectors.notion.client.via, 'cimd')
   }
   // A catalog sign-in refreshes with the current catalog client id.
@@ -373,7 +376,7 @@ test('refresh uses the client that signed in: cimd, catalog, and legacy inferenc
       { name: 'CONNECTOR_NOTION_REFRESH', value: 'RT-3', scope: [] })
     t.after(done)
     assert.equal(await rt.connectorsInternals.refreshConnector('notion'), true, JSON.stringify(rt.connectorsInternals.statuses.get('notion')))
-    assert.equal(seen.at(-1), 'https://dsbot.app/oauth/client.json')
+    assert.equal(seen.at(-1), 'https://client.test/oauth/client.json')
     assert.deepEqual(rt.state.connectors.notion.client, { via: 'cimd', clientId: oauth.CIMD_CLIENT_ID })
     assert.ok((await rt.diagnostics.entries()).some(row => /refresh succeeded.*inferred.*cimd/.test(row.text)))
   }
@@ -413,7 +416,7 @@ test('connector-set offFor yields deny prefixes; empty client id keeps the token
   await rt.connectorEndpoint('connector-set', { id: 'notion', offFor: ['m1'] })
   assert.deepEqual(rt.connectorOffFor('m1'), ['mcp__notion__'])
   assert.deepEqual(rt.connectorOffFor('other'), [])
-  // No DS_BOT_GITHUB_OAUTH_CLIENT_ID at sign-in → token form only. (Set above,
+  // No AUTOMAGIK_GITHUB_OAUTH_CLIENT_ID at sign-in → token form only. (Set above,
   // so here check the empty case through the row error path.)
   await assert.rejects(rt.connectorEndpoint('connector-connect', { id: 'nonexistent' }), /No such connector/)
 })
@@ -795,7 +798,7 @@ test('gateway refuses JSON-RPC batches in read-only mode', async (t) => {
 test('a stored CIMD client is reused only with the fixed port', async () => {
   const discovery = { authorizationServerUrl: 'https://as.test', metadata: { ...AS, client_id_metadata_document_supported: true }, resource: 'r' }
   const entry = { auth: { kind: 'oauth' } }
-  const stored = { via: 'cimd', clientId: 'https://dsbot.app/oauth/client.json', redirectUris: [] }
+  const stored = { via: 'cimd', clientId: 'https://client.test/oauth/client.json', redirectUris: [] }
   const fixed = await oauth.resolveClient(entry, discovery, 'http://127.0.0.1:38517/callback', true, stored)
   assert.equal(fixed.via, 'cimd')
   const request = async (url, init) => url.toString() === 'https://as.test/register' ? json({ client_id: 'dcr-9', redirect_uris: JSON.parse(init.body).redirect_uris }) : notFound()
@@ -847,15 +850,15 @@ test('OAuth loopback keeps an error listener after binding, including repeated e
 })
 
 test('Google sign-in without an address still reaches the browser flow', async (t) => {
-  const oldId = process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID
-  const oldSecret = process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET
-  process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID = 'google-test'
-  process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET = 'google-test-secret'
+  const oldId = process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID
+  const oldSecret = process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET
+  process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID = 'google-test'
+  process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET = 'google-test-secret'
   t.after(() => {
-    if (oldId === undefined) delete process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID
-    else process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID = oldId
-    if (oldSecret === undefined) delete process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET
-    else process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET = oldSecret
+    if (oldId === undefined) delete process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID
+    else process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID = oldId
+    if (oldSecret === undefined) delete process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET
+    else process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET = oldSecret
   })
   const home = teamHome()
   const ctx = fakeContext()
@@ -870,15 +873,15 @@ test('Google sign-in without an address still reaches the browser flow', async (
 })
 
 test('Google loopback catches a rejected sign-in callback instead of an unhandled rejection', async (t) => {
-  const oldId = process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID
-  const oldSecret = process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET
-  process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID = 'google-test'
-  process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET = 'google-test-secret'
+  const oldId = process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID
+  const oldSecret = process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET
+  process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID = 'google-test'
+  process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET = 'google-test-secret'
   t.after(() => {
-    if (oldId === undefined) delete process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID
-    else process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID = oldId
-    if (oldSecret === undefined) delete process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET
-    else process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET = oldSecret
+    if (oldId === undefined) delete process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID
+    else process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID = oldId
+    if (oldSecret === undefined) delete process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET
+    else process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET = oldSecret
   })
   const home = teamHome()
   const ctx = fakeContext()
@@ -896,15 +899,15 @@ test('Google loopback catches a rejected sign-in callback instead of an unhandle
 })
 
 test('Google sign-in retries get a fresh URL and a success clears the pending row', async (t) => {
-  const oldId = process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID
-  const oldSecret = process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET
-  process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID = 'google-test'
-  process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET = 'google-test-secret'
+  const oldId = process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID
+  const oldSecret = process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET
+  process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID = 'google-test'
+  process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET = 'google-test-secret'
   t.after(() => {
-    if (oldId === undefined) delete process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID
-    else process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID = oldId
-    if (oldSecret === undefined) delete process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET
-    else process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET = oldSecret
+    if (oldId === undefined) delete process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID
+    else process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID = oldId
+    if (oldSecret === undefined) delete process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET
+    else process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET = oldSecret
   })
   const home = teamHome()
   const ctx = fakeContext()

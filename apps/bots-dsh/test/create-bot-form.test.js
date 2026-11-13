@@ -85,28 +85,18 @@ const MODELS = [
   { ref: 'local-codex-cli/default', provider: 'local-codex-cli', id: 'default', name: 'CLI default', providerName: 'Codex CLI' },
 ]
 
-test('the form opens on Omni models and can create at once', () => {
+// Automagik's form has no "Local agent" side: a local CLI runs a Bot through the ACP plugin's routes, which are
+// models like any other (upstream's picker, agent-cards.js, is carried but not mounted). Upstream's test of
+// Create waiting for a CLI is left out with it.
+test('the form opens ready to create, with no Local agent side', () => {
   render({ models: MODELS })
-  assert.equal(button('Omni model').props['aria-pressed'], true)
-  assert.equal(button('Local agent').props['aria-pressed'], false)
+  assert.equal(button('Local agent'), undefined)
   assert.equal(button('Create').props.disabled, false)
 })
 
-test('a name another Bot has blocks Create on both sides', () => {
+test('a name another Bot has blocks Create', () => {
   render({ models: MODELS, bots: [{ id: 'a', name: 'Ada' }] })
   collect(n => n.type === 'input' && n.props['aria-label'] === 'Name')[0].props.onChange({ target: { value: 'Ada' } })
   assert.match(flatten(concrete).join(' '), /A Bot named Ada already exists/)
   assert.equal(button('Create').props.disabled, true)
-  button('Local agent').props.onClick()
-  assert.equal(button('Create').props.disabled, true)
-})
-
-test('on Local agent, Create waits for a CLI', () => {
-  render({ models: MODELS })
-  button('Local agent').props.onClick()
-  assert.equal(button('Local agent').props['aria-pressed'], true)
-  assert.match(flatten(concrete).join(' '), /Looking for agent CLIs/)
-  assert.equal(button('Create').props.disabled, true)
-  button('Omni model').props.onClick()
-  assert.equal(button('Create').props.disabled, false)
 })

@@ -30,6 +30,9 @@ const load = (text) => {
   })
   return module.exports
 }
+// Automagik keeps its own Settings (the owner's ruling on the left column and settings): this shell is carried
+// but not mounted, and DSH's own settings row stays on. What is checked here is the shell on its own; upstream's
+// seven tests of the shell inside the Settings dialog and of the bundle patch that turns DSH's row off are left out.
 const shell = load(await bundle("export * from './src/client/settings-shell.js'"))
 const { SettingsDialog } = load(await bundle("export { SettingsDialog } from './src/client/settings.js'"))
 
@@ -43,8 +46,6 @@ const walk = (node, match, out = []) => {
 const textOf = node => (typeof node === 'string' ? node : Array.isArray(node) ? node.map(textOf).join('') : node?.props ? textOf(node.props.children) : '')
 const roster = { byId: {}, roomsById: {}, bots: [], rooms: [], models: [], prefs: {} }
 const harnessRequire = createRequire(`${plugin}/dev/harness/package.json`)
-// The patch files are YAML; DSH's own parser reads them as a profile would.
-const { parse } = harnessRequire('yaml')
 const packageFile = (name, file) => harnessRequire.resolve(`${name}/package.json`).replace(/package\.json$/, file)
 
 // DSH's own settings shell, run as its browser module would: the child slots its
@@ -79,13 +80,6 @@ test('the seat declares every child slot DSH\'s own settings shell declares, ali
   const dsh = plain(dshShellDeclarations())
   for (const [name, spec] of Object.entries(dsh)) assert.deepEqual(ours[name], spec, name)
   assert.deepEqual(Object.keys(ours).filter(name => !(name in dsh) && !NEWER_SLOTS.has(name)), [])
-})
-
-test('the bundle patch turns off the DSH settings shell row that dsh-web-app mounts', () => {
-  const rows = JSON.stringify(parse(readFileSync(packageFile('@deepseek-ai/dsh-web-app', 'cordis.patch.yml'), 'utf8')))
-  assert.match(rows, /"id":"ui-settings-general","name":"@deepseek-ai\/dsh-client-ui-settings-general"/)
-  const ours = parse(readFileSync(`${plugin}/cordis.patch.yml`, 'utf8'))
-  assert.ok(ours.some(row => row.id === 'ui-settings-general' && row.disabled === true))
 })
 
 test('onboarding skips DSH\'s preview notice and keeps the ledger order', () => {
@@ -162,53 +156,11 @@ function dialog({ page = 'general', id = null, sections, items = [], actions = {
   const tree = SettingsDialog({ page, id, roster, actions: all, useUpdate: pick => pick({}), dsh })
   return { tree, calls, drawn }
 }
-const navLabels = tree => walk(walk(tree, node => node.type === 'nav')[0], node => node.type === 'button').map(textOf)
-
-test('one Settings: Omni\'s pages, then DSH\'s, then Feedback and About; no Harness settings', () => {
-  const labels = navLabels(dialog().tree)
-  assert.ok(!labels.includes('Harness settings'))
-  assert.deepEqual(labels.slice(-5), ['Account', 'Plugins', 'Agent presets', 'Feedback', 'About Omni'])
-  assert.equal(labels.filter(label => label === 'General').length, 1)
-  assert.equal(labels.filter(label => label === 'Models').length, 1)
-})
-
-test('a DSH page opens in the dialog and draws that section', () => {
-  const nav = dialog()
-  walk(nav.tree, node => node.type === 'button' && textOf(node) === 'Plugins')[0].props.onClick()
-  assert.deepEqual(nav.calls, [['dsh', 'plugins']])
-  const page = dialog({ page: 'dsh', id: 'plugins' })
-  assert.ok(page.drawn.some(([name, only]) => name === 'settings.section' && only === 'plugins'))
-  assert.equal(textOf(walk(page.tree, node => node.type === 'h2')[0]), 'Plugins')
-})
 
 test('a DSH page that left the ledger falls back to General', () => {
   const { tree, drawn } = dialog({ page: 'dsh', id: 'gone' })
   assert.equal(textOf(walk(tree, node => node.type === 'h2')[0]), 'General')
   assert.ok(!drawn.some(([name]) => name === 'settings.section'))
-})
-
-test('DSH\'s Models page is Models → Advanced settings, with a way back', () => {
-  const page = dialog({ page: 'models', id: 'advanced' })
-  assert.ok(page.drawn.some(([name, only]) => name === 'settings.section' && only === 'models'))
-  const [back] = walk(page.tree, node => node.type === 'button' && node.props['aria-label'] === 'Back to models')
-  back.props.onClick()
-  assert.deepEqual(page.calls, [['models']])
-  const providersOf = tree => walk(tree, node => typeof node.type === 'function' && node.type.name === 'ProvidersPage')[0]
-  assert.equal(typeof providersOf(dialog({ page: 'models' }).tree).props.advanced, 'function')
-  assert.equal(providersOf(dialog({ page: 'models', sections: [] }).tree).props.advanced, null)
-})
-
-test('DSH\'s General rows join General: the look under Appearance, the rest under More', () => {
-  const items = [{ id: 'permission', order: -20 }, { id: 'language', order: 0 }, { id: 'appearance', order: 10 }, { id: 'font-size', order: 11 }, { id: 'developer-tools', order: 15 }]
-  const [general] = walk(dialog({ items }).tree, node => typeof node.type === 'function' && node.type.name === 'GeneralPage')
-  const sections = general.type(general.props).filter(Boolean)
-  const only = node => walk(node, item => item.type === 'slot').map(item => item.props.only)
-  assert.deepEqual(only(sections.find(node => node.props.key === 'look')), ['appearance', 'font-size'])
-  assert.deepEqual(only(sections.find(node => node.props.key === 'more')), ['permission', 'language', 'developer-tools'])
-})
-
-test('header actions from DSH and plugins sit beside the title', () => {
-  assert.ok(dialog().drawn.some(([name]) => name === 'settings.action'))
 })
 
 test('General settings keeps the Classic Agent mode switch', () => {
@@ -246,16 +198,4 @@ body[data-bt-motion=lively] .bt-mark{animation:none}`
   assert.doesNotMatch(shellOwn, /class\*=/)
   assert.match(shellOwn, /\.bt-settings-nav\{/)
   assert.match(shellOwn, /body\[data-ds-dark-theme\]\{--bt-im-telegram:/)
-})
-
-test('in Agent mode, General offers the way back to Bot mode', () => {
-  const calls = []
-  const tree = SettingsDialog({
-    page: 'general', id: null, roster, useUpdate: pick => pick({}),
-    actions: { closeSettings() {}, openSettings() {}, surfaceMode: () => 'agent', setSurface: mode => calls.push(mode) },
-  })
-  const [general] = walk(tree, node => typeof node.type === 'function' && node.type.name === 'GeneralPage')
-  const [row] = walk(general.type(general.props), node => node.props?.label === 'Bot mode')
-  walk(row, node => node.type === 'button' && textOf(node) === 'Switch')[0].props.onClick()
-  assert.deepEqual(calls, ['bot'])
 })

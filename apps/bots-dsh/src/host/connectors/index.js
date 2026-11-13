@@ -15,6 +15,7 @@ import { createGateway } from './gateway.js'
 import { install as installMail } from './mail/index.js'
 import { CONNECTOR_IDS } from '../capabilities.js'
 import { output } from '../tools.js'
+import { refusal } from '../refusal.js'
 
 export const GITHUB = 'github'
 export const GITHUB_SECRET = 'GITHUB_TOKEN'
@@ -33,10 +34,10 @@ export async function signIn(token, { api = 'https://api.github.com', fetch: req
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
     })
   } catch {
-    throw new Error('Could not reach GitHub')
+    throw refusal('Could not reach GitHub')
   }
-  if (response.status === 401) throw new Error('GitHub did not accept this token')
-  if (!response.ok) throw new Error(`GitHub answered ${response.status}`)
+  if (response.status === 401) throw refusal('GitHub did not accept this token')
+  if (!response.ok) throw refusal(`GitHub answered ${response.status}`)
   const user = await response.json().catch(() => ({}))
   if (typeof user?.login !== 'string') throw new Error('GitHub did not say who this token belongs to')
   return { login: user.login }
@@ -397,7 +398,7 @@ export function install(rt) {
       }
       const remote = entry.remote?.url
       if (remote === undefined) throw new Error('This connector has no server address')
-      if (insecure(remote)) throw new Error('Connector addresses must start with https://')
+      if (insecure(remote)) throw refusal('Connector addresses must start with https://')
       const discovery = await oauth.discover(remote)
       if (discovery.metadata === undefined) throw new Error('This service does not publish OAuth sign-in metadata')
       state.connectors = { ...(state.connectors ?? {}), [id]: { ...state.connectors?.[id], oauth: { authorizationServerUrl: discovery.authorizationServerUrl, resource: discovery.resource, scope: discovery.scope } } }
@@ -657,7 +658,7 @@ export function install(rt) {
         const key = typeof body.key === 'string' ? body.key.trim() : ''
         if (key === '') throw new Error('Paste a key first')
         const remote = entry.remote?.url
-        if (remote !== undefined && insecure(remote)) throw new Error('Connector addresses must start with https://')
+        if (remote !== undefined && insecure(remote)) throw refusal('Connector addresses must start with https://')
         await writeSecret(keySecretOf(entry.id), key, `${entry.name} connector`)
         await saveState(entry.id, { connectedAt: Date.now() })
         await sync()
@@ -666,8 +667,8 @@ export function install(rt) {
       const token = typeof body.token === 'string' ? body.token.trim() : ''
       if (token !== '') {
         const remote = entry.remote?.url
-        if (remote !== undefined && insecure(remote)) throw new Error('Connector addresses must start with https://')
-        if (entry.id === 'github' && options?.api !== undefined && insecure(options.api)) throw new Error('GitHub addresses must start with https://')
+        if (remote !== undefined && insecure(remote)) throw refusal('Connector addresses must start with https://')
+        if (entry.id === 'github' && options?.api !== undefined && insecure(options.api)) throw refusal('GitHub addresses must start with https://')
         await rt.loadSecrets()
         let account
         if (entry.id === 'github') account = (await signIn(token, { api: options.api })).login
@@ -750,7 +751,7 @@ export function install(rt) {
       if (name === '') throw new Error('Name the connector')
       const url = typeof body.url === 'string' ? body.url.trim() : undefined
       const command = typeof body.command === 'string' ? body.command.trim() : undefined
-      if (url !== undefined && insecure(url) && !/^http:\/\/(localhost|127\.)/i.test(url)) throw new Error('Connector addresses must start with https://')
+      if (url !== undefined && insecure(url) && !/^http:\/\/(localhost|127\.)/i.test(url)) throw refusal('Connector addresses must start with https://')
       if (url === undefined && command === undefined) throw new Error('Enter an address or a command')
       const taken = new Set(Object.keys(state.connectors ?? {}))
       const id = customId(name, taken)

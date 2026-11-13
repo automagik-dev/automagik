@@ -40,7 +40,8 @@
     "sidebar.js": {
       "#4d6bfe": 3,
       "#e5484d": 1,
-      "#fff": 1
+      "#fff": 1,
+      "rgba(127,127,127,.14)": 1
     },
     "styles.js": {
       "#00c972": 1,
@@ -81,6 +82,9 @@
       "3px": 2,
       "5px": 1
     },
+    "sidebar.js": {
+      "14px": 1
+    },
     "styles.js": {
       "1px": 1
     },
@@ -95,5 +99,9 @@
       "5px": 1
     }
   },
-  "springs": {}
+  "springs": {
+    "sidebar.js": {
+      "springEasing(1000,63)": 1
+    }
+  }
 }

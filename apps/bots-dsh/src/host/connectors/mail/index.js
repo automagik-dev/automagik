@@ -9,6 +9,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { PRESETS, presetOf, mailSecretName } from './presets.js'
 import { connectImap, connectGmail } from './transport.js'
 import { output } from '../../tools.js'
+import { refusal } from '../../refusal.js'
 import { refreshTokens, invalidGrant, discover, beginBrowser, exchange } from '../oauth.js'
 
 const GOOGLE_SCOPES = 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.modify'
@@ -368,7 +369,7 @@ export function install(rt, host) {
     async 'mail-account-add'(body) {
       const address = String(body.address ?? '').trim().toLowerCase()
       if (body.google === true) {
-        if (!googleReady()) throw new Error('Google sign-in is not available in this build')
+        if (!googleReady()) throw refusal('NOT SET UP: configure an Automagik Google sign-in app')
         if (address !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new Error('Enter an email address')
         return beginGoogle(address)
       }
