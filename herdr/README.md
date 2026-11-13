@@ -31,7 +31,7 @@ checked against the keys the installer carries), downloads the pack it names
 (`automagik-herdr-pack-<v>.tgz`: every mod below and the `automagik` layout; a desktop-only release
 has none), checks it against the sha256 the pointer names before writing
 anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. It links the
-`automagik-herdr` command into `~/.local/bin`, merges the pack's keys where they are free (a key
+`am` command (and `automagik-herdr`, its alias) into `~/.local/bin`, merges the pack's keys where they are free (a key
 you already use stays yours), points the mod manager at the pack's catalog (`herdr/catalog/` here), and runs
 `herdr-app check` on each mod.
 
@@ -47,7 +47,7 @@ holds nine mod folders and one layout, and nothing else:
 
 | Folder | What you get |
 |---|---|
-| `am-sidebar` | the sidebar: spaces, bots, workers, the Create form, the `automagik-herdr` command |
+| `am-sidebar` | the sidebar: spaces, bots, workers, the Create form, the `am` command |
 | `am-footer` | the footer rail (Bots, Mods, Automations, Accounts, Settings, Add machine) |
 | `am-status` | the bottom status bar, with the pack's version and its update check |
 | `am-tabs` | the tab bar |
@@ -114,7 +114,7 @@ until the next swap, so if a new release misbehaves, one rename goes back:
 mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter
 ```
 
-(`automagik-herdr meter install` or an update would put the newer build back, so hold those until
+(`am meter install` or an update would put the newer build back, so hold those until
 a fixed release.) It skips the download when that version is already there and never replaces a
 newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
@@ -129,7 +129,7 @@ machine's herdr-core), so usagemeter runs on every linked machine too: the insta
 build the pointer names on each connected machine in `hc machine ls` (the pointer is checked once,
 on the computer running the command; each machine downloads its build and checks the pointer's
 sha256 itself; one that fails is a warning naming it), and the sidebar's 10-minute run syncs
-each connected machine after this computer, one at a time. `automagik-herdr meter install
+each connected machine after this computer, one at a time. `am meter install
 [--machine M]` does it again, for example for a machine linked later. `--usagemeter-local-only`
 keeps it to this computer, and `--no-usagemeter` covers the linked machines too; both are
 remembered.
@@ -144,9 +144,9 @@ machines that did not answer (`missing`, with why) and the linked machines usage
 is `meter/schema/fleet/v1/` in the repository. `--uninstall` removes it.
 
 **Updating to this release from an earlier one:** the update is run by the earlier release's
-command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
+command, which has no usagemeter step, so run `am meter install` once afterwards. It
 installs usagemeter on this computer and every connected linked machine, and records that you
-asked for it. From then on, `automagik-herdr update` keeps them on the build the meter lane names,
+asked for it. From then on, `am update` keeps them on the build the meter lane names,
 within what you chose. An earlier install's record is never read as a yes for the linked machines: if
 that installer put usagemeter on this computer, `update` keeps it there only; if it recorded
 nothing (an earlier `install.sh --no-usagemeter` recorded nothing), `update` installs nowhere and
@@ -181,7 +181,7 @@ warning; the pack is installed all the same, and a rerun retries.
 `--uninstall` otherwise removes the login service when this installer started it, then the binary.
 While a login service you started yourself (Start in the panel, or `service install`) is installed,
 it keeps the binary too and says how to remove both, so no service is left restarting a missing file.
-`automagik-herdr update` (the pack's own updater) has no scheduler step yet: after it, or wherever
+`am update` (the pack's own updater) has no scheduler step yet: after it, or wherever
 the binary is missing, the panel shows the command that installs it, with an Install button.
 
 ### DSH as a Herdr agent (dsh-TUI)
@@ -193,9 +193,9 @@ installs it: a third-party package is opt-in by its own flag or an explicit answ
 the same later:
 
 ```bash
-automagik-herdr dsh-tui install   # install, or update to the pack's pin
-automagik-herdr dsh-tui doctor    # what is there: dsh, the profile, the shim, the guide, Antigravity's lists
-automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and state stay
+am dsh-tui install   # install, or update to the pack's pin
+am dsh-tui doctor    # what is there: dsh, the profile, the shim, the guide, Antigravity's lists
+am dsh-tui uninstall # the plugin and the shim away; sessions and state stay
 ```
 
 - **DSH first.** It assumes `dsh` is on PATH (DSH Desktop, or `npm install -g @deepseek-ai/dsh`).
@@ -322,7 +322,7 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
 
 ### From v0.2 to v0.4.x
 
-Rerun the one-liner above. Their own `automagik-herdr update` finds nothing newer, because the
+Rerun the one-liner above. Their own `am update` finds nothing newer, because the
 pack ships under a new name. v0.5.0 also renames every mod folder (there are no aliases):
 
 | Before v0.5.0 | From v0.5.0 |
@@ -350,18 +350,18 @@ The installer:
 - points the `automagik-herdr` link at `am-sidebar`'s command;
 - moves the bots' briefing hooks to a fixed path and lists, at the end of its run, every file it
   rewrote. A Claude session already running in one of those projects keeps the old hook and gets
-  no briefing until it is restarted: `automagik-herdr restart <bot>` (or the bot row's Restart). A project the installer doesn't
-  know about keeps the old hook: `automagik-herdr start` or `attach` its bot, or open it as a
+  no briefing until it is restarted: `am restart <bot>` (or the bot row's Restart). A project the installer doesn't
+  know about keeps the old hook: `am start` or `attach` its bot, or open it as a
   space in Herdr and run the installer again.
 
-`automagik-herdr update --rollback` returns to the release before, the old names included.
+`am update --rollback` returns to the release before, the old names included.
 
 ### Paste this to your agent
 
 Or let a coding agent do it. The prompt lives in [docs/agent-install.md](docs/agent-install.md):
 
 ```text
-Install Automagik Herdr on this macOS or Linux machine and set up my first bot.
+Install Automagik Herdr on this macOS or Linux machine and set up my first bot. The command is am (automagik-herdr still works as an alias).
 
 1. Run: curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash
    If it stops to ask something (install Node or Herdr), ask me; if I say yes, run it again
@@ -369,21 +369,21 @@ Install Automagik Herdr on this macOS or Linux machine and set up my first bot.
    If the output has a layout.switch command, ask me before running that exact command. If
    it names a layout of mine that lacks pack pieces, tell me which; edit it only if I ask.
 2. Verify, don't assume: a version and a checksum don't say what was installed. All must hold:
-   automagik-herdr --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
+   am --version prints 0.5.0 or later (0.4.x and older are the sidebar alone);
    sed -n 's/^mods=//p' ~/.config/herdr-app/automagik-herdr/installed-by-install.sh prints
    am-automations,am-footer,am-markdown,am-mods,am-new-menu,am-quota,am-sidebar,am-status,am-tabs;
    herdr-app check ~/.config/herdr-app/mods/<mod> succeeds for each on (am-automations, am-quota ship off).
-   If anything is missing or fails, report the install as incomplete. If automagik-herdr is not
-   found, use ~/.local/bin/automagik-herdr and tell me to add ~/.local/bin to my PATH.
+   If anything is missing or fails, report the install as incomplete. If am is not
+   found, use ~/.local/bin/am and tell me to add ~/.local/bin to my PATH.
 3. Ask me for: the project folder, and the main bot's name, character and coding agent
    (claude, codex, antigravity…). Characters: whale, octopus, star, moon, wave, squircle, zed,
    hex, gumdrop, peanut, saucer, bunny, kitty, beacon, plus, magnet, acorn, pebbles, cushion,
    ring, gem. If I don't pick a character, use --omni (the octopus); never guess the folder,
    name or agent.
 4. In that folder, create and start it:
-   automagik-herdr create --kind=main --name=<name> --agent=<agent> --character=<character>
-   automagik-herdr start <name>
-5. Report back: the installed version and mods, the output of automagik-herdr ls, and what failed.
+   am create --kind=main --name=<name> --agent=<agent> --character=<character>
+   am start <name>
+5. Report back: the installed version and mods, the output of am ls, and what failed.
 Do not edit files under ~/.config/herdr-app by hand.
 ```
 
@@ -398,12 +398,12 @@ a place in a team, and keeps that team in front of every agent and of you.
 - **A briefing at launch.** Start and Restart hand a bot its name, role, instructions, lead and
   team as part of its agent's system prompt (Claude Code, Codex, Oh My Pi, Pi, Grok, Hermes),
   once, never again each turn. Its team's live state, each member's status and latest report,
-  is `automagik-herdr brief <bot>`. A Claude pane attached while running gets the briefing
+  is `am brief <bot>`. A Claude pane attached while running gets the briefing
   once, from its hook, on its first turn and again after an edit or a compaction. An edit to a
-  bot's instructions reaches it at its next `automagik-herdr restart`. Claude Code's `/restart`
+  bot's instructions reaches it at its next `am restart`. Claude Code's `/restart`
   never works in a Herdr pane with its launch flags (`--append-system-prompt-file`,
   `--settings`), including the hint `Update installed · /restart to apply`, so the briefing
-  tells every bot, whatever its agent, to point you to `automagik-herdr restart <bot>` (run in
+  tells every bot, whatever its agent, to point you to `am restart <bot>` (run in
   the project's folder, or with `--project`; it keeps the bot's agent and model) or the bot's
   Restart instead of its agent's own restart command.
 - **Typed notes when blocked.** A member started under its lead's pane makes herdr-core type
@@ -422,9 +422,9 @@ under them, planned bots dimmed with their wave. Each bot shows its character, i
 model, its agent's icon and its status. Right-click a bot for its menu: Configure opens the edit
 form (name, agent, model, role, category, lead, worker defaults); Prompt edits its instructions
 in place and saves them as the form does; Run starts it, or focuses its pane when it has one,
-restarts it (Restart runs `automagik-herdr restart`; Restart on… restarts it on another installed
+restarts it (Restart runs `am restart`; Restart on… restarts it on another installed
 agent, a new conversation, the bot's definition keeping its agent), attaches it to the focused
-pane or detaches it; What happened shows `automagik-herdr history` for it (its panes, starts,
+pane or detaches it; What happened shows `am history` for it (its panes, starts,
 sessions, the newest transcript, which a click copies, its workers) and the helpers its pane runs
 now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A busy-pane
 refusal offers "Restart anyway". With helpers, choose "Restart with its helpers" to restart immediately and resume
@@ -444,7 +444,7 @@ there (`hc run --on`, addressed `machine/tN`) and show in this window, in a spac
 machine on the project. The command a bot starts with is built here, from Herdr's agent table
 and your `programs.json`. A bot there gets the briefing a local start gives, written on that
 machine through herdr-core, in its app home: a Claude bot's briefing file (private, 0600) and,
-once automagik-herdr is installed there, its per-turn hook in that project's
+once am is installed there, its per-turn hook in that project's
 `.claude/settings.local.json` (until then it starts with a warning and no hook); an omp, pi or grok
 bot gets the briefing as text. A start never creates an app home on another machine, which may be
 shared: when that app home isn't a folder there, a Claude bot starts with one warning and no
@@ -479,7 +479,7 @@ To move a project's bots onto a shared machine:
 1. Write `<project>/.herdr/pane-env` there, with `HERDR_APP_HOME` naming an app home that is
    already there (yours, not the machine user's), and `PATH_PREPEND` if your bots need their own
    Node.
-2. Start one bot: `automagik-herdr start <bot> --machine <machine> --project <folder there> --json`.
+2. Start one bot: `am start <bot> --machine <machine> --project <folder there> --json`.
 3. Read its `warnings`: they should be empty. A `pane-env ... was left out` or `without its
    briefing` warning names what to fix; fix it and restart the bot.
 
@@ -493,9 +493,9 @@ again just before `hc run`, it checks what is left, and starts nothing when too 
 finish (20 s and 16 s; the calls after `hc run` then get 5 s each). A space made for it stays.
 Restart isn't run there: after `hc run` it can still wait 30 s for the agent. Either way the
 sidebar names the command to run from a terminal instead
-(`automagik-herdr start <bot> --project <folder> --machine <machine>`, or `restart`), where
+(`am start <bot> --project <folder> --machine <machine>`, or `restart`), where
 no limit applies. When Herdr ends the CLI anyway, the sidebar says it may have stopped part-way and
-what to check (`automagik-herdr whois --bot`, `hc ls`).
+what to check (`am whois --bot`, `hc ls`).
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
@@ -505,13 +505,13 @@ you delete is copied back on the next load (pick another theme in Settings to st
 
 ## The command line
 
-`automagik-herdr` does everything the sidebar does, without a Herdr window. Agents use it to
-build and run their own teams.
+`am` does everything the sidebar does, without a Herdr window. Agents use it to
+build and run their own teams. `automagik-herdr` still works as an alias (hooks and old scripts keep it).
 
 ```text
-automagik-herdr ls [--all]                 bots: kind, lead, category, rank, code, planned, agent, model, pane, status
-automagik-herdr show <bot>                 one bot in full
-automagik-herdr create --name N --agent A [--kind main|member] [--role R] [--code true|false]
+am ls [--all]                 bots: kind, lead, category, rank, code, planned, agent, model, pane, status
+am show <bot>                 one bot in full
+am create --name N --agent A [--kind main|member] [--role R] [--code true|false]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT [--lead-project DIR]] [--category ID]
        [--cross-member BOT@DIR]...
        [--character C --colour K | --omni] [--model M] [--rank R]
@@ -519,28 +519,28 @@ automagik-herdr create --name N --agent A [--kind main|member] [--role R] [--cod
        [--planned-wave N [--planned-note T]]
        [--worker-agent A] [--worker-model M] [--worker-effort E] [--worker-agy-mode M]
        [--worker-template T]
-automagik-herdr edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--no-cross-members] [--rank=]
-automagik-herdr rm <bot>
-automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
-automagik-herdr start <bot> [--space ID] [--tab ID]
-automagik-herdr restart --queued [--project DIR] [--json]
-automagik-herdr restart --cancel <bot> [--project DIR] [--json]
-automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
-automagik-herdr attach <bot> <terminal> [--move]
-automagik-herdr detach <bot>
-automagik-herdr import --from-hc [--squad-label L] [--apply]
-automagik-herdr whois <terminal> | whois --bot <bot>
-automagik-herdr history <bot>
-automagik-herdr brief <bot>
-automagik-herdr forget <project>
-automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
+am edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--no-cross-members] [--rank=]
+am rm <bot>
+am category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
+am start <bot> [--space ID] [--tab ID]
+am restart --queued [--project DIR] [--json]
+am restart --cancel <bot> [--project DIR] [--json]
+am restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
+am attach <bot> <terminal> [--move]
+am detach <bot>
+am import --from-hc [--squad-label L] [--apply]
+am whois <terminal> | whois --bot <bot>
+am history <bot>
+am brief <bot>
+am forget <project>
+am worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
        [--task ID [--lead BOT]]
-automagik-herdr worker kill <pane>   # from a bot's pane: end one worker that bot started; any other pane is refused
-automagik-herdr update [--check | --rollback]
-automagik-herdr meter install [--machine M | --linked | --local] | meter uninstall
-automagik-herdr machines [update [--machine M | --linked | --local] | --auto on|off|status [--machine M]]
-automagik-herdr dsh-tui install | update | uninstall | doctor
+am worker kill <pane>   # from a bot's pane: end one worker that bot started; any other pane is refused
+am update [--check | --rollback]
+am meter install [--machine M | --linked | --local] | meter uninstall
+am machines [update [--machine M | --linked | --local] | --auto on|off|status [--machine M]]
+am dsh-tui install | update | uninstall | doctor
 ```
 
 - `forget <project>` takes a project's folder off this CLI's project list (#229): only that
@@ -707,24 +707,24 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
 ## After a restart of the computer
 
 A restart of the computer ends every agent. herdr-core keeps each pane it was told to keep and
-puts a bare shell in it; a pane it did not keep is gone. `automagik-herdr revive` brings the bots
+puts a bare shell in it; a pane it did not keep is gone. `am revive` brings the bots
 back:
 
 - Every bot the attach ledger binds on this computer whose pane is gone, or is a bare shell, is
-  restarted by `automagik-herdr restart --tree`: in its pane's space, tab and folder, resumed by
+  restarted by `am restart --tree`: in its pane's space, tab and folder, resumed by
   its session id where its agent allows it, its helpers (workers included) under the new pane.
   The main bot comes first, each bot after its lead. A pane with a program in front is never
   touched.
 - Each project's main bot gets one message: who resumed, who is on a new conversation and why,
   who is not back, and the command that brings it back by hand. The same report is kept in
   `<app home>/automagik-herdr/revive-last.json` (it holds no session id).
-- `automagik-herdr revive --dry-run` prints what it would do and touches nothing.
+- `am revive --dry-run` prints what it would do and touches nothing.
 - A resume that finds nothing is tried once more as a new conversation, and the report says so.
 - A pane that is gone whole comes back in the folder its last seat row names, in the project's
   space; its old tab is not on record.
 - A bot whose agent was quit, its pane left at a shell, comes back too: revive cannot tell that
   from a restart of the computer. To keep a bot down across restarts, detach it
-  (`automagik-herdr detach <bot>`): a detached bot is never brought back. Every report says so.
+  (`am detach <bot>`): a detached bot is never brought back. Every report says so.
 
 Session ids. Claude gets its id from Herdr at launch. dsh-TUI and Antigravity take none at
 launch, so the pack reads the id from what each leaves on disk (DSH's session folders for the
@@ -742,15 +742,15 @@ the pane's own agent left none. A conversation started later inside the pane is 
 the bot resumes its first one. DSH's home is `$DSH_HOME`, else `~/.dsh`.
 
 The login service. `install.sh --revive` (or a yes when it asks; `--yes` never installs it)
-runs `automagik-herdr revive service install`: on Linux a systemd user unit,
+runs `am revive service install`: on Linux a systemd user unit,
 `~/.config/systemd/user/automagik-herdr-revive.service`, enabled and never started on the spot.
 The unit has no start timeout (the pass bounds its own waits), and what the pass prints, which
 the user journal keeps, is counts only: no folder, no bot name.
-At login it runs `automagik-herdr revive --boot --wait 600`: it waits for herdr-core, runs once
+At login it runs `am revive --boot --wait 600`: it waits for herdr-core, runs once
 per boot, and also takes the bots whose ended pane another command swept since the boot.
 `loginctl enable-linger` makes it run at boot with nobody logged in.
-`automagik-herdr revive service uninstall` (and `install.sh --uninstall`) removes the unit when
-it is the pack's. macOS (launchd) is not built yet: run `automagik-herdr revive` by hand there.
+`am revive service uninstall` (and `install.sh --uninstall`) removes the unit when
+it is the pack's. macOS (launchd) is not built yet: run `am revive` by hand there.
 Panes on a linked machine are that machine's own to bring back.
 
 ## The attach ledger
@@ -796,9 +796,9 @@ appends its `end` row.
 **Looking it up** (the interface for other tools):
 
 ```text
-automagik-herdr whois <terminal> --json
+am whois <terminal> --json
   { "terminal", "core", "created_ms", "bot", "project", "since" }   or   { "terminal", "core", "created_ms", "bot": null }
-automagik-herdr whois --bot <bot> --json
+am whois --bot <bot> --json
   the same, or { "terminal": null, "core", "created_ms": null, "bot", "project": null, "since": null }
 ```
 
@@ -816,8 +816,8 @@ A bot manages its lane and writes no code. For each task it starts one worker, f
 pane:
 
 ```bash
-automagik-herdr worker "Fix the login redirect loop" --branch fix/login-loop --effort high
-automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ../proj-gl-231
+am worker "Fix the login redirect loop" --branch fix/login-loop --effort high
+am worker "Fix the login redirect loop" --task gl-231 --worktree ../proj-gl-231
 ```
 
 - **Who:** the calling bot is read from `HC_TERMINAL_ID` and that terminal's `bot` label.
@@ -928,7 +928,7 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
 - **Output:** the worker's terminal, then its role, worktree, branch, and agent, model and
   effort, or its template (`--json`: the same as data, with `role` and `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with
-  `automagik-herdr worker kill <terminal>` once the task merges (see
+  `am worker kill <terminal>` once the task merges (see
   [Ending a worker](#ending-a-worker)). The bot's briefing says so. As an hc child, a worker
   also ends when its bot's program ends; its branch stays.
 - **Cleanup (#567):** a worktree this command made (`created` in the ledger) is removed
@@ -938,7 +938,7 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   and no live terminal works in it. Each `worker` call does
   it after its own start, newest first, at most 5 worktrees, and starts no new check after
   about 20 s; one slow check and one large remove (up to 120 s) can still run past that.
-  `automagik-herdr reap` does all of them at once.
+  `am reap` does all of them at once.
   - An open pull request's worktree is removed once its workers end, if it is pushed and
     clean. The branch is always kept: only the folder goes.
   - The first sweep after this release covers every older `created: true` row in the
@@ -1003,7 +1003,7 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
       idle time after the last ask (10 minutes at least, 6 hours at most); a branch git shows
       no push of, an hour after its last worker start, then daily, for 3 days.
     - A `worker` call asks gh for at most 3 branches, the longest due first, inside the
-      sweep's 20 s; `automagik-herdr reap` asks for every branch that is due, and for every
+      sweep's 20 s; `am reap` asks for every branch that is due, and for every
       one with an open pull request, or pushed with none recorded yet, whether due or not.
       What gh told the cleanup about a worktree's branch is used as it is. When each branch
       was last asked is kept in `<app home>/automagik-herdr/pr-checks.json`. gh missing or
@@ -1018,7 +1018,7 @@ full send/keys/attach scope is #628): it scans PATH past every guard folder and 
 allowed call through unchanged — same stdio, same exit code, same stdout and stderr. It allows
 `send`, `read`, `ls`, `get`, `wait`, `put`, `label` (the caller's own workers only), `kill`,
 `rm`, `events`, `schema`, `templates`, the doc-only `--help`/`-h`/`--version`/`--skill` forms,
-and one `run` shape: the dsh-tui worker start that `automagik-herdr worker` emits (`--bg`, the
+and one `run` shape: the dsh-tui worker start that `am worker` emits (`--bg`, the
 caller as `--parent`, `worker.of=<the caller's bot>`, a `--cwd` under the project's
 `.claude/worktrees/`, and `/usr/bin/env PATH=… dsh-tui` after `--`). Everything else is
 refused with one stderr line naming #624, #628 and #631, and the real `hc` is never called:
@@ -1060,19 +1060,19 @@ stay unscoped, and `read`/`ls`/`get` are cross-pane by design; #628 owns that sc
 fix is the sandboxed socket mask plus the per-pane filtering proxy wish (#624), and #631 is the
 hard boundary. This wrapper only stops the ordinary `hc exec` attempt while that lands. The
 pack's own CLI still reaches the real `hc` for its trusted calls (system status, machine lists,
-remote file/exec, docs), so `automagik-herdr worker` and the remote commands keep working in a
+remote file/exec, docs), so `am worker` and the remote commands keep working in a
 guarded pane.
 
 ### The per-pane hc proxy (the sandbox boundary, opt-in)
 
 The proxy is **off by default** for every bot. Set the bot entry's `hcProxy` boolean with
-`automagik-herdr edit <bot> --hc-proxy on|off`, then run `automagik-herdr proxy approve`
+`am edit <bot> --hc-proxy on|off`, then run `am proxy approve`
 (review the diff), then restart that bot to apply it. The effective value comes from that bot's
 entry in the approved snapshot, read at each start, restart and worker start. Approved on stays
 on when a pane changes the working key to false or removes it. Working on with approval off
-or missing refuses with an instruction to run `automagik-herdr proxy approve` first.
+or missing refuses with an instruction to run `am proxy approve` first.
 Invalid approval refuses working on. Working off starts plain, preserving its argv, with a
-loud STDERR warning naming the record, the problem and `automagik-herdr proxy approve`:
+loud STDERR warning naming the record, the problem and `am proxy approve`:
 invalid approval cannot be trusted to say on. Known limit: previously approved on plus a
 working off edit and an invalid record starts plain with that warning. A sandboxed pane
 cannot write the approved record; only an outside change can cause that combination.
@@ -1096,9 +1096,9 @@ When it is on, a pack-started dsh-tui pane runs through one helper,
 **before DSH starts**, then runs the agent as its child. The proxy reads the project's approved
 roster before the pane can create a sandbox, and it ends when the pane ends. The record
 lives outside the project, is written 0600 by
-`automagik-herdr proxy approve --project <dir>` (which prints the diff first), and is the only
+`am proxy approve --project <dir>` (which prints the diff first), and is the only
 roster the proxy reads. **A roster change needs a pane restart** after
-`automagik-herdr proxy approve`, so the new pane's
+`am proxy approve`, so the new pane's
 proxy reads the newly approved record. A working-tree edit that differs warns once, naming
 the command, and still starts on the approved roster; a missing record refuses a proxied
 pane. A worker's record is keyed by the main checkout the pack resolved (its lead seat's
@@ -1108,7 +1108,7 @@ only the helper's own shape, which runs from a stable copy under the data home (
 writable pack folder). A node upgrade (nvm, Homebrew, bun) needs `dsh-tui install` again:
 the stable runner bakes one absolute node. Its own README, `mods/am-sidebar/hcProxy.md`,
 has the policy, the start checks and the run command. A pack update that changes the
-wrapper needs `automagik-herdr dsh-tui install` again; an opted-in pane refuses to start
+wrapper needs `am dsh-tui install` again; an opted-in pane refuses to start
 while the profile's sandbox row is stale.
 
 Approval-root checks apply only to `proxy approve` and proxied starts. Plain `dsh-tui`
@@ -1136,7 +1136,7 @@ box's TCP listeners, and localhost admin ports cannot be hidden without a networ
 **New bot** at the foot of the sidebar opens the form: a live preview of the bot's character,
 its name, look, role and instructions (at most 4,000 characters), the agent it runs on, the
 model it uses, whom it reports to, its category, and whether it is planned for a later wave.
-The footer shows the matching `automagik-herdr create …` line, ready to copy. The form writes
+The footer shows the matching `am create …` line, ready to copy. The form writes
 `.herdr/bots.json` in the project's main checkout, or, from a focused worktree space, in that
 worktree. The form then says where it saves and that the sidebar shows the bot once the change
 is merged, stays open after saving, offers no Create & start (bots start from the main
@@ -1154,20 +1154,20 @@ still places panes by the walk-up, so a folder joins its own project once it has
 ## Updates
 
 ```bash
-automagik-herdr update --check      # the installed and the latest version
-automagik-herdr update              # download, verify against the signed pointer, install
-automagik-herdr update --rollback   # put the replaced set of mods back
-automagik-herdr update --auto off   # Install updates automatically: on (default), off, or status
+am update --check      # the installed and the latest version
+am update              # download, verify against the signed pointer, install
+am update --rollback   # put the replaced set of mods back
+am update --auto off   # Install updates automatically: on (default), off, or status
 ```
 
 **Install updates automatically** is on by default: when the sidebar's check finds a newer
-release, it installs it the same way `automagik-herdr update` does (the signed pointer, the
+release, it installs it the same way `am update` does (the signed pointer, the
 sha256, the replaced set kept for `--rollback`), Herdr reloads the mods, and one notice says
 "Automagik Herdr updated to X". Your bots keep running: they live in herdr-core, not in the mods.
 A version you rolled back with `--rollback` is never installed on its own again; it waits for a
 newer one. A failed install posts one notice with the reason, changes nothing, and tries again
 4 hours later; each further failure of that release waits longer (8, 16, then 24 hours, then
-daily), with no second notice. Turn it off with `automagik-herdr update --auto off` or the switch
+daily), with no second notice. Turn it off with `am update --auto off` or the switch
 in the status bar; then a new release is only announced, as before. It applies only to a pack
 `install.sh` installed from a signed release (its record in `<app home>/automagik-herdr/` has a
 `sequence=`); the setting lives beside it, in `auto-update.json`.
@@ -1175,30 +1175,30 @@ in the status bar; then a new release is only announced, as before. It applies o
 ### Every linked machine
 
 ```bash
-automagik-herdr machines                        # what each machine runs, and how its last update went
-automagik-herdr machines update                 # one update of them all now
-automagik-herdr machines --auto off --machine M # M opts out (on again: --auto on); no --machine: this computer
+am machines                        # what each machine runs, and how its last update went
+am machines update                 # one update of them all now
+am machines --auto off --machine M # M opts out (on again: --auto on); no --machine: this computer
 ```
 
 The machines linked into your Herdr (`hc machine ls`) follow the releases too, with no one at each
 of them. About 90 seconds after the sidebar loads and then once an hour, the computer that runs
-Herdr starts `automagik-herdr machines update`: on each connected machine it runs that machine's
+Herdr starts `am machines update`: on each connected machine it runs that machine's
 own `am update` (am, then the pack where one is installed), so every check is made there, by the
 copy installed there, against the keys it pins: the signed pointer, the tarball's sha256, never a
 release older than one it took, and the replaced copy kept (`am rollback automagik.am`,
-`automagik-herdr update --rollback`). Then usagemeter, as `meter install` does (the signed
+`am update --rollback`). Then usagemeter, as `meter install` does (the signed
 meter-lane pointer checked here, the build's sha256 on the machine, never a downgrade, the old
 binary kept as `usagemeter.prev`): on a machine that has one, or on all of them once you agreed to
 that, and never after `install.sh --no-usagemeter`. This computer's am and usagemeter follow in the
 same run; its pack is the sidebar's own update above.
 
-`automagik-herdr machines` shows the last answer of each machine: its am, pack and usagemeter
+`am machines` shows the last answer of each machine: its am, pack and usagemeter
 versions, and what the last run did or why it did not (a pointer it could not verify, a download
 that failed, a machine that was not connected). A machine that was not updated is also said once in
 a notice. The record is `<app home>/automagik-herdr/linked-updates.json`.
 
 It is on by default. A machine opts out with its own switch, the file `~/.automagik/linked-update`
-holding `off` (`automagik-herdr machines --auto off` there, or `--machine M` from here): the run
+holding `off` (`am machines --auto off` there, or `--machine M` from here): the run
 reads it first and starts nothing on that machine. `AUTOMAGIK_HERDR_NO_UPDATE=1` on the computer
 that runs Herdr turns the whole run off.
 
@@ -1280,7 +1280,7 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
 - `instructions` holds at most 4,000 characters.
 - `code` is an optional boolean, defaulting to `true`. Set `code: false` for a bot whose
   work is not code with the **Code bot** toggle in the bot editor or
-  `automagik-herdr edit <bot> --code false`; `--code true` restores it.
+  `am edit <bot> --code false`; `--code true` restores it.
   Create accepts the same option; `show` prints it and `ls` marks code opt-outs. Both launch and full briefings
   include the instruction to start a worker only for code bots in a Git working tree,
   including linked projects; if the per-turn hook's Git check times out, it reuses the
@@ -1293,7 +1293,7 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   free-text model) is skipped by the sidebar with a note and refused by the CLI. A running
   bot shows the model its pane runs: the one its command line names, else the agent's own
   configured default. A bot that isn't running shows no model in its sidebar row
-  ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
+  ("not running · role"), while `am ls` and `show` print its pin, else that default.
 - `codexAuto` is retired (#1125). It used to opt a bot's Codex seat and workers out of Codex's
   auto mode; the owner's ruling (10 and 12 Nov) is that every Codex seat and worker runs in it,
   so `false` no longer opts out: the field is kept as written, ignored, and loading the bots
@@ -1329,7 +1329,7 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   `pm`, `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). `main` is not a
   rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
   to the briefing. An unknown rank is ignored with a warning. The form offers ranks as chips
-  for team members; `automagik-herdr create|edit --rank R` sets one (`--rank=` clears it).
+  for team members; `am create|edit --rank R` sets one (`--rank=` clears it).
 - `worker` is optional: `{ "agent": "codex", "model": "gpt-5.5", "effort": "high", "agyMode": "plan" }` or
   `{ "template": "dev-sol" }`, each key optional, the defaults of the bot's
   [workers](#workers). Without `agent`, workers run the bot's own agent; a `template` (an hc
@@ -1366,7 +1366,7 @@ nothing to it (a Codex seat's template excepted, see [Codex's launch mode](#code
 
 Flags read from claude 2.1.322, codex-cli 0.167.0 and agy 1.5.4. No skip-all-approvals flag is
 passed for any agent but Antigravity; one for another agent needs the owner's word first.
-`automagik-herdr show <bot>` prints the bot's `auto mode` line (in `--json`, `autoMode`: its
+`am show <bot>` prints the bot's `auto mode` line (in `--json`, `autoMode`: its
 words, a note, and for an Antigravity bot on this computer whether agy's sandbox can run here).
 
 Antigravity is the exception, measured on agy 1.5.4 on Linux and macOS: `--mode auto` is not
@@ -1593,7 +1593,7 @@ roster's `agyPermissions` can only add to them:
 - git pointed elsewhere: `git -C`, `git -c`, `git --git-dir`;
 - landing and releasing: `gh pr merge`, `gh release`, and `gh api -X`, `gh api --method`,
   `gh api -f`, `gh api -F` (flag first only);
-- the roster and other bots: `automagik-herdr edit`, `restart`, `rm` and `create`, and the same
+- the roster and other bots: `am edit`, `restart`, `rm` and `create`, and the same
   four under `am` (`am edit`, `am restart`, `am rm`, `am create`), which runs the same CLI;
 - other panes: `hc keys`, `hc interrupt` and `hc exec`;
 - `hc kill` and `hc --json kill`, for every worker and for every seat whose bot is not the
@@ -1607,7 +1607,7 @@ not get around a rule; a reordered command, an absolute path, a wrapper or an in
 Not caught at all: a force refspec whose `+` is attached to the ref (`git push origin +main`),
 combined short flags (`git push -fu`), `--force-with-lease=<ref>`, a force flag after a ref the
 list does not name (`git push origin my-branch --force`), a global option before the
-subcommand (`hc --timeout 5 kill t3`, `automagik-herdr --project /p restart`), and a reset that
+subcommand (`hc --timeout 5 kill t3`, `am --project /p restart`), and a reset that
 reaches `--hard` after other words (`git reset HEAD~1 --hard`). These lists are a guardrail
 against accidents, not a security boundary. `dsh-tui doctor` prints the same reminder beside
 the lists.
@@ -1662,7 +1662,7 @@ pane the attach ledger binds to a bot that is `kind: "main"` in its project's `b
 a worker, a member's seat, a pane the ledger does not know and a call with no
 `HC_TERMINAL_ID` are refused (exit 2, one line). `hc kill --help` and every other call run the
 real hc with the same words, input, output and exit code, and the shim reads nothing for them.
-`automagik-herdr worker kill` calls the real hc itself, past the shim and the guard.
+`am worker kill` calls the real hc itself, past the shim and the guard.
 
 What the shim does not do, plainly:
 
@@ -1700,14 +1700,14 @@ through the clone's own exclude file. The hook runs
 installed sidebar folder's run.sh (`am-sidebar`, else the sidebar's folder from before v0.5.0;
 nothing when neither has one): run.sh finds node 22.7 or later, or bun, even where the agent's PATH has no `node`, and the
 fixed entry point runs that folder's `briefing.mjs`, so a renamed folder or a rollback doesn't
-break it. The installer and `automagik-herdr update` move
+break it. The installer and `am update` move
 older hooks onto it (each file backed up beside itself as `settings.local.json.am-backup`), a hook
 in the older `node` form is upgraded to it the next time the bot starts or attaches, and a
 rollback to a pack without the entry point moves the hooks back onto that folder's own
 `briefing.mjs`. It prints nothing outside a bot's pane (by the attach ledger), finishes within about 2 seconds, and never fails a
-prompt. `automagik-herdr worker` adds the same hook to a Claude worker's worktree. In any hc
+prompt. `am worker` adds the same hook to a Claude worker's worktree. In any hc
 terminal it runs in, the hook also records a new Claude session (see [Workers](#workers)). Members' reports are fenced as untrusted data. A session attached while it was
-already running may need a restart to load the hook: `automagik-herdr restart <bot>` (or the bot row's Restart).
+already running may need a restart to load the hook: `am restart <bot>` (or the bot row's Restart).
 
 ### Requirements
 
@@ -1732,7 +1732,7 @@ session without login keychain access (`security show-keychain-info` exits `36` 
 not logged in and `gh` cannot read its keychain token. Terminals started earlier under a desktop-born
 holder keep their keychain access and keep working.
 
-Before `automagik-herdr start --machine` or `restart --machine` (and `am start --machine` /
+Before `am start --machine` or `restart --machine` (and `am start --machine` /
 `restart --machine`) writes any file, starts a pane or ends an old pane on a macOS machine, it
 runs `security show-keychain-info` there (#1033). When that exits non-zero, the command refuses with
 a clear hint instead of starting a keychainless terminal.
@@ -1835,7 +1835,7 @@ with its own `RECIPE.md`:
 | Mod | Derived from | What it does |
 |---|---|---|
 | `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Accounts (while am-quota is on), Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
-| `am-status` | Herdr's `workspace-status` | The window's bottom status bar (machine, branch, agents, `⌘⇧P commands`) plus the installed Automagik Herdr version beside "commands": click it to check now; when a release is out, `0.8.0 → 0.8.1 · update` installs it after a confirm, the same way `automagik-herdr update` does. |
+| `am-status` | Herdr's `workspace-status` | The window's bottom status bar (machine, branch, agents, `⌘⇧P commands`) plus the installed Automagik Herdr version beside "commands": click it to check now; when a release is out, `0.8.0 → 0.8.1 · update` installs it after a confirm, the same way `am update` does. |
 | `am-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. Its `+` opens `am-new-menu`. |
 | `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. **Ships switched off** (#220): a fresh install puts the mod in `mods-disabled/`; turn it on in the Mods panel (*Automagik Automations*), and the rail's Automations tab then opens it. `install.sh` installs the scheduler the pack pins to `~/.local/bin/herdr-automations`, checked against its sha256 (never over one it did not install; `--no-scheduler` skips it), writes `backend: hc` only where there is no `automations.yaml` yet, asks before starting the login service, and says whether Automations is ready. Without the scheduler (an update through the pack's own updater installs none), the panel shows the hash-checked command that installs it: Copy copies it, Install runs it. An install that already has it keeps its state. |
 | `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |

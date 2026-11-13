@@ -32,6 +32,7 @@ am ls                     # this project's Bots: id, name, lead, agent, model, s
 am ls --all               # the Bots of every project this computer knows
 am show <bot>             # one Bot in full
 am brief <bot>            # the Bot's briefing, with its team's live state as it is now
+am create --name <name> --agent <agent> [--kind main|member] [--role <role>] [--lead <bot>]  # a new Bot
 am start <bot>            # a new pane on this computer; prints its terminal
 am restart <bot>          # its agent again in its pane's place, on the same conversation
 am restart <bot> --fresh  # the same, on a new conversation
@@ -106,6 +107,15 @@ who is not back, with the command that brings it back by hand.
 `am revive service install` adds the login service that runs it at each boot (Linux for now);
 `am revive service status` and `am revive service uninstall` check and remove it. To keep a Bot
 down across restarts, run `am detach <bot>`.
+
+## Install
+
+The Herdr pack's installer (`herdr/install.sh`, the Herdr README's install line) links `am` and
+`automagik-herdr` into `~/.local/bin`. That `am` runs the Bot, worker and revive commands on this page; `am self` and `am rollback
+automagik.am` need am's own part.
+
+am's own part (`am self install`, `am self doctor`) comes from an unpacked am release
+(`automagik-am-<version>.tgz`): run `sh <that folder>/bin/am self install`, then `am self doctor`.
 
 ## Update and roll back
 
