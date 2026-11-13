@@ -126,6 +126,9 @@ am rollback automagik.am   # am back to the copy it replaced
 am rollback herdr.pack     # the pack back to the one it replaced
 ```
 
+`am rollback` is am's own part's command (see Install): the pack's own `am` has no `rollback`, so with
+the pack alone the same step is `am update --rollback`.
+
 Every update is checked against its signature and checksum, and am never installs an older
 version. `am update --auto on|off|status` sets whether Herdr installs new releases by itself (on
 by default).
