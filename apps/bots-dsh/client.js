@@ -16919,6 +16919,16 @@ function turnDetector({ loud = 0.12, quiet: quiet2 = 0.06, quietMs = 1200 } = {}
   };
 }
 
+// src/client/update-hold.js
+var PLUGINS_COMING = /* @__PURE__ */ new Set(["ready", "downloading"]);
+var splitsPlugins = (state) => Boolean(state?.app && state?.plugins);
+function opensIntoPlugins(bridge, state) {
+  if (!bridge || typeof bridge.check === "function") return false;
+  if (state == null) return true;
+  if (!splitsPlugins(state)) return false;
+  return PLUGINS_COMING.has(state.plugins.phase) || state.kind === "plugins" && PLUGINS_COMING.has(state.phase);
+}
+
 // src/client/desktop-update.js
 var import_react39 = require("react");
 var BUSY = /* @__PURE__ */ new Set(["checking", "downloading", "installing"]);
@@ -16999,7 +17009,6 @@ function pluginPill(plugins) {
       return null;
   }
 }
-var splitsPlugins = (state) => Boolean(state?.app && state?.plugins);
 var appState = (state) => splitsPlugins(state) ? state.app : state;
 function useDesktopUpdate() {
   const bridge = globalThis.omniDesktop?.updates;
@@ -17039,7 +17048,7 @@ function useDesktopVersions() {
   }, [bridge]);
   return versions;
 }
-function Pill({ pill, busy, percent: percent3, onClick }) {
+function Pill({ pill, busy, held, percent: percent3, onClick }) {
   return (0, import_react39.createElement)(
     "button",
     {
@@ -17047,7 +17056,7 @@ function Pill({ pill, busy, percent: percent3, onClick }) {
       className: `bt-desk-update${pill.primary ? " bt-desk-update-go" : ""}`,
       title: pill.title,
       "aria-busy": busy || void 0,
-      disabled: busy,
+      disabled: busy || held,
       onClick
     },
     (0, import_react39.createElement)("span", { className: "bt-desk-update-dot", "aria-hidden": true }),
@@ -17063,19 +17072,23 @@ function DesktopUpdate() {
   const plugins = splitsPlugins(state) && !["ready", "installing"].includes(app.phase) ? state.plugins : null;
   const plugPill = pluginPill(plugins);
   if (!appPill && !plugPill) return null;
+  const held = opensIntoPlugins(bridge, state);
+  const appHeld = held && !appPill?.primary;
   const open = () => {
+    if (appHeld || BUSY.has(app.phase)) return;
     void bridge.open().catch(() => {
     });
   };
   const apply2 = () => {
+    if (held || BUSY.has(plugins?.phase)) return;
     void (bridge.applyPlugins ?? bridge.open)().catch(() => {
     });
   };
   return (0, import_react39.createElement)(
     "div",
     { className: "bt-desk-updates" },
-    appPill ? (0, import_react39.createElement)(Pill, { pill: appPill, busy: BUSY.has(app.phase), percent: app.phase === "downloading" ? app.percent ?? 0 : void 0, onClick: open }) : null,
-    plugPill ? (0, import_react39.createElement)(Pill, { pill: plugPill, busy: BUSY.has(plugins.phase), percent: plugins.phase === "downloading" ? plugins.percent ?? 0 : void 0, onClick: apply2 }) : null
+    appPill ? (0, import_react39.createElement)(Pill, { pill: appPill, busy: BUSY.has(app.phase), held: appHeld, percent: app.phase === "downloading" ? app.percent ?? 0 : void 0, onClick: open }) : null,
+    plugPill ? (0, import_react39.createElement)(Pill, { pill: plugPill, busy: BUSY.has(plugins.phase), held, percent: plugins.phase === "downloading" ? plugins.percent ?? 0 : void 0, onClick: apply2 }) : null
   );
 }
 var DESKTOP_UPDATE_CSS = `
@@ -23950,13 +23963,6 @@ function pluginRows({ app, Row: Row3 }) {
     } })));
   }
   return rows2;
-}
-var PLUGINS_COMING = /* @__PURE__ */ new Set(["ready", "downloading"]);
-function opensIntoPlugins(bridge, state) {
-  if (!bridge || typeof bridge.check === "function") return false;
-  if (state == null) return true;
-  if (!splitsPlugins(state)) return false;
-  return PLUGINS_COMING.has(state.plugins.phase) || state.kind === "plugins" && PLUGINS_COMING.has(state.phase);
 }
 var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href, target: "_blank", rel: "noopener noreferrer" });
 function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3 }) {
