@@ -346,7 +346,10 @@ test('the logo and the icons: the logo kit\'s own files, unchanged, in the heade
   // Sized by the triskle's height (--mark): the file is 264 tall where the triskle is 222,
   // the g's tail hangs under the link's box, and no rule draws on the logo.
   assert.ok(css.includes('.brand{--mark:32px;display:block;flex-shrink:0}\n.brand picture{display:contents}\n.brand:focus-visible{outline-offset:calc(var(--mark)*42/222 + 3px)}\n.brand img{width:auto;max-width:none;height:calc(var(--mark)*264/222);margin-bottom:calc(var(--mark)*-42/222)}\n'))
-  assert.deepEqual([...css.matchAll(/\n\s*\.brand\{--mark:(\d+)px/g)].map(match => Number(match[1])), [32, 26, 23])
+  // The brand's floor: a lockup is never under 28 px high (its one exception is the family
+  // drawer's phone layout, not the header or the footer).
+  for (const [rule, mark] of css.matchAll(/[^{}\n]*\.brand\{--mark:(\d+)px/g)) assert.ok(Number(mark) * 264 / 222 >= 28, `The logo is 28 px high or more: ${rule.trim()} makes it ${(mark * 264 / 222).toFixed(1)} px`)
+  assert.deepEqual([...css.matchAll(/\n\s*\.brand\{--mark:(\d+)px/g)].map(match => Number(match[1])), [32, 26, 24])
   for (const [rule] of css.matchAll(/[^{}]*\.brand[^{}]*\{[^}]*\}/g)) assert.doesNotMatch(rule, /filter|shadow|stroke|opacity|transform|scale|rotate|animation|transition|background|object-/, rule)
   // The footer's first column is never narrower than its logo.
   const column = Number(css.match(/\.footer-grid\{display:grid;grid-template-columns:minmax\((\d+)px,1\.5fr\)/)[1])
