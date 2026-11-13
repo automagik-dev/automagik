@@ -518,9 +518,9 @@ describe('the plugin lane', () => {
     expect(kindOf([...brand, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 
-  test('a published skill (skills/, skills.sh.json) ships nothing: the skills CLI reads it from the repository', () => {
+  test('a published skill (skills/) ships nothing: the skills CLI reads it from the repository', () => {
     const none = () => false;
-    const skill = ['skills/am/SKILL.md', 'skills.sh.json', 'README.md'];
+    const skill = ['skills/am/SKILL.md', 'README.md'];
     expect(ships(skill, none)).toBe(false);
     expect(herdrShips(skill)).toBe(false);
     expect(pocketShips(skill)).toBe(false);
@@ -530,9 +530,9 @@ describe('the plugin lane', () => {
     expect(ships([...skill, 'am/bin/am.mjs'], none)).toBe(true);
     expect(kindOf([...skill, 'am/bin/am.mjs'], none, none, [...skill, 'am/bin/am.mjs'])).toBe('am');
     expect(kindOf([...skill, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
-    // Only those two: another root .json, or a folder that merely starts with the name, still ships.
-    expect(ships(['skills.json'], none)).toBe(true);
+    // Only that folder: one that merely starts with the name, or a root file of the name, still ships.
     expect(ships(['skills-extra/am/SKILL.md'], none)).toBe(true);
+    expect(ships(['skills.json'], none)).toBe(true);
   });
 
   test('a scheduler-only change (herdr/scheduler/, vendored) cuts no release and never reaches the pack', () => {
