@@ -75,7 +75,7 @@ Four preparation/runtime stages, every base digest-pinned (plus the distroless b
 | Stage | What it does |
 |---|---|
 | `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, verifies the release tarballs, installs/prunes the profile, prepares its inspected offline dependency store, writes version/revision metadata |
-| `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, git core, `ripgrep`, their `ldd` closure, and the empty `/data` tree owned by uid 1000. No perl: git's perl subcommands are not shipped |
+| `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, git core, `ripgrep`, `flock`, `tar`, `gzip`, `find`, their `ldd` closure, and the empty `/data` tree owned by uid 1000. No perl: git's perl subcommands are not shipped |
 | `gate-deps` | Bun 1.4.4 installs the exact WebAuthn dependency and `server/bun.lock`, with lifecycle scripts disabled, then prunes development files. Bun stays in this stage |
 | `runtime` | `scratch` holding the distroless nodejs24 rootfs (node and glibc), cleaned in the `tools` stage (man pages and changelogs stripped there with coreutils), plus the tools above, the code, nothing else — no apt, npm, curl or build toolchain |
 
@@ -168,14 +168,21 @@ For the single-container form, read the same report with:
 docker exec automagik /nodejs/bin/node /opt/automagik/healthcheck.mjs --json
 ```
 
-At seeding, `automagik-server-profile` records the image release and a SHA-256 of the exact seeded
-`package.json`. A newer image updates the Bot team, welcome and ACP only while that hash still
-matches. Old volumes without the structured marker are adopted only when the entire canonical
-package manifest matches the known image seed shape. The manifest identifies that seed even
-when installed plugins are missing or mixed; corruption never becomes an owner-managed exception.
-Extra fields, changed dependencies or other manifest edits opt out. Owner-managed profiles are
-left alone and identified in both startup logs and the report. Settings such as
-`cordis.patch.yml` survive an automatic update.
+At seeding, `automagik-server-profile` records the image release, the image's own manifest and a
+SHA-256 of the exact `package.json`. Plugins added later through the welcome (Power Omni on) or
+DSH's Plugins page keep the profile following the image: their dependencies and bundles are the
+workspace's, and a newer image still updates the Bot team, welcome and ACP. An update keeps each
+added plugin's locked resolution and installed version, with its peer references moved to the
+new Bot team. If one cannot be reinstalled from the volume's cache, or comes out at another
+version, the update rolls back. A restart on the same image keeps the workspace's lock.
+
+Markers written before this held only the hash: their base is the image's manifest with the
+recorded release's three tarball names. Volumes without a structured marker are adopted only when
+the entire canonical package manifest matches the known image seed shape. Missing or mixed
+installed plugins never become an owner-managed exception. Changing one of the image's three
+dependencies, removing or reordering a base bundle, or editing any other manifest field opts out.
+Owner-managed profiles are left alone and identified in startup logs and the report. Settings
+such as `cordis.patch.yml` survive an automatic update.
 
 Image preparation holds a kernel file lock on the DSH volume across recovery, first seeding
 and the complete update. Concurrent starts sharing that volume wait up to 180 seconds, then
@@ -188,11 +195,27 @@ Before installing, the image saves the complete old profile, including its packa
 lock and installed dependencies, under `/data/dsh/backups/<UTC>/automagik-web`. Installation runs
 in a separate staging profile through `dsh plugin install --offline --frozen-lockfile --prod
 --ignore-scripts`. Its local tarballs are materialized from the image's inspected, unpacked
-plugin files, and transitive dependencies come from its pruned offline store. No runtime release
+plugin files; their dependencies come from its pruned offline store, and added plugins from the
+volume's own pnpm store, where DSH put them when it installed them. The frozen lock is the
+workspace's with the image's three resolutions swapped in: it never picks new versions of added
+plugins. pnpm indexes a git-hosted plugin (Omni's) by whether its scripts ran, so the update
+reuses the index of the files DSH installed instead of fetching them again. No runtime release
 download or registry access is needed; the image still ships no archive that bypasses the
-secrecy scan. All three installed versions must verify before the staged profile replaces the
-old one. A failed attempt leaves the old profile running and reports `update-rolled-back` with
-an unhealthy result, so a keeper can distinguish rollback from a successful update.
+secrecy scan. All three installed versions, and every added plugin's, must verify before the
+staged profile replaces the old one. A failed attempt leaves the old profile running and reports
+`update-rolled-back` with an unhealthy result, so a keeper can distinguish rollback from a
+successful update.
+
+Fresh seeds also materialize those three tarballs on the data volume. Both seeds and upgrades
+retain them in the profile's `vendor/`, with matching lockfile integrity: any later
+`dsh plugin install` re-resolves the profile's direct dependencies. Once an update's install has
+verified, the previous image's three archives leave `vendor/` (the backup keeps them); any other
+file there stays. A matching image repairs an older image-managed seed whose tarballs are
+missing, in the workspace's own lock (a lock it cannot read is replaced by the image's).
+Owner-managed profiles are left alone.
+The image itself stays archive-free and carries no Omni installation. Omni's plugin downloads
+and verifies its own Bun runtime using Node; its sandbox installer uses the image's `tar`,
+`gzip` and `find` to unpack its verified Postgres and NATS downloads.
 
 Equal or older releases never downgrade installed plugins. **Going back requires restoring the
 host snapshot**, including matching image/data state: plugin migrations are forward only.
@@ -400,7 +423,7 @@ workflow lists the entries used and reports a stale entry.
 The image is shrunk before the scan: third-party test, example and docs folders, non-Linux
 prebuilds and the profile's `vendor/*.tgz` install inputs are pruned (`assemble.mjs`). The offline
 store contains only individually hashed files retained in the inspected profile; local plugin
-archives are generated in the writable staging profile at update time. The
+archives are generated and retained in the writable profile at seed or update time. The
 `tools` stage copies the distroless rootfs, strips `usr/share/doc`, `man`, `info` and `lintian`
 there with coreutils, and the final `scratch` copies that cleaned rootfs. There is no `rm` in
 the runtime image. The `archive` rule never allows an archive that is left.
