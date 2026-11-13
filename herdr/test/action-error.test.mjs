@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { actionError } from "../mods/am-sidebar/actionError.js";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 
-const stack = "automagik-herdr: Error: launch failed\n    at launchRun (models.js:508:3)\n    at main (cli.mjs:42:1)";
+const stack = "am: Error: launch failed\n    at launchRun (models.js:508:3)\n    at main (cli.mjs:42:1)";
 test("bot action errors keep the cause and an action, never a stack frame", () => {
   for (const error of [stack, new Error("launch failed"), "TypeError: launch failed\n    at main (cli.mjs:42:1)"]) {
     const message = actionError(error, "Restart");
