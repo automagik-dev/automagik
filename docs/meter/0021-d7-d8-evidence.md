@@ -20,8 +20,10 @@ pack release". What happened here, plainly:
   took am from 3.108.21 to 3.117.2 (from the signed am-lane), and
   `automagik-herdr meter install --local` installed usagemeter from the signed `meter-lane`
   pointer, checksum verified. It did not arrive inside a pack install.
-- Whether that counts as "took the pack release" was for the owner. Ruled 2026-11-12: it does;
-  the RFC's Check is amended in the same pull request to name the signed meter lane.
+- Whether that counts as "took the pack release" was for the owner. The owner accepted this on
+  2026-11-12 at 07:32Z, by choosing "Yes, accept it" in a question put to him by the main bot. It
+  covers delivery 7 only, not delivery 8. The RFC's Check is amended in the same pull request to
+  name the signed meter lane.
 
 ## Versions
 
