@@ -22,7 +22,7 @@ It is documentation. No build, app or release reads this folder.
 | Folder | What it holds |
 | --- | --- |
 | `logo/svg/` | The triskle, in three colours (the mark) and in ink and cream (the fallback), with a drawing for each size. Genie's lamp, Omni's vortex and Mykes's cords, in ink and cream |
-| `logo/png/` | The mark at 1024 and 512px, clear ground |
+| `logo/png/` | The mark at 1024 and 512px, and two small pictures of the three-colour mark's 32px drawing (64 and 128px), clear ground |
 | `logo/lockups/` | The mark with the wordmark: the triskle for automagik, and each product's own mark for genie, omni and mykes. The older `genie-lockup-*` and `omni-lockup-*` files there are RETIRED |
 | `logo/wordmark/` | The name alone, for automagik, genie, omni and mykes |
 | `favicon/` | The browser tab and home screen set |
@@ -49,6 +49,7 @@ It is documentation. No build, app or release reads this folder.
 | RETIRED, do not use | `logo/lockups/genie-lockup-*` and `logo/lockups/omni-lockup-*`: they carry the triskle (rule 1). The files stay for older work that points at them |
 | The mark alone, 100px or more | `logo/svg/triskle-three-colours.svg` |
 | The mark alone at about 64, 32 or 16px | `logo/svg/triskle-three-colours-64.svg`, `-32.svg`, `-16.svg` |
+| The mark alone at about 32px or less, where an SVG cannot be used | `logo/png/triskle-three-colours-64.png` or `logo/png/triskle-three-colours-128.png`: the 32px drawing as a picture, for sharp screens |
 | A browser tab | `favicon/favicon.ico` and `favicon/favicon.svg` |
 | A phone's home screen, a web manifest | `favicon/apple-touch-icon.png`, `favicon/icon-192.png`, `favicon/icon-512.png` |
 | Automagik's name without the mark | `logo/wordmark/automagik-wordmark-ink.svg` or `-cream.svg` |
@@ -65,7 +66,7 @@ It is documentation. No build, app or release reads this folder.
 
 ## PNG files
 
-Only the mark at 1024 and 512px is kept here as PNG. Every other PNG is made from an SVG with `export-png.mjs`. The SVGs use masks and blur, so the script draws them in a browser: it needs `playwright-core` (in the root `package.json`) and a Chromium, either the one playwright installs (`bunx playwright-core install chromium`) or your own, with its path in `BRAND_CHROME`.
+Only the mark at 1024 and 512px is kept here as PNG, with two small pictures of the three-colour mark: `logo/png/triskle-three-colours-64.png` and `logo/png/triskle-three-colours-128.png`. Both are the 32px drawing (`logo/svg/triskle-three-colours-32.svg`) at two and four times its size, for a place that shows the mark at about 32px or less on a sharp screen and cannot use an SVG. The number in their name is the picture's size in pixels, not the size to show it at: for the mark shown at 64px, the drawing is `-64.svg`. Every other PNG is made from an SVG with `export-png.mjs`. The SVGs use masks and blur, so the script draws them in a browser: it needs `playwright-core` (in the root `package.json`) and a Chromium, either the one playwright installs (`bunx playwright-core install chromium`) or your own, with its path in `BRAND_CHROME`.
 
 ```sh
 node docs/brand/export-png.mjs <file.svg> <height in px> [out.png]
@@ -130,7 +131,7 @@ Setting `data-theme="light"` or `data-theme="dark"` on the root picks a theme. W
 
 ## Components
 
-The components are the site's own, in its own stylesheet with the token declarations taken out (`components/bundle.css`). They are plain HTML and CSS; there is no script. Each folder holds a note (when to use it, what it needs) and `preview.html`, a page that shows it; open the page in a browser from a checkout.
+The components are the site's own, in its own stylesheet with the token declarations taken out (`components/bundle.css`). `scripts/brand-bundle.mjs` makes that file from the site's `apps/landing/styles.css`; run it after a change there (the brand tests fail until the two agree). They are plain HTML and CSS; there is no script. Each folder holds a note (when to use it, what it needs) and `preview.html`, a page that shows it; open the page in a browser from a checkout.
 
 - `components/Header/`: The site's top bar: the logo, the three menus and one small primary button. It stays at the top of every page, on a see-through `bg` with a `line` under it.
 - `components/Footer/`: The site's footer: the logo with one line about the product, three columns of links, and the licence line. It sits on `raised` with a `line` on top.

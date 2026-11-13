@@ -174,27 +174,43 @@ copied unchanged, and `LICENSES.md` pins each one's SHA-256 (`landing.test.mjs` 
   (ink letters) on the light page and `-cream-header.svg` (cream letters) on the dark one.
   `styles.css` sizes it by the triskle's height (`--mark`): the file is 264 tall where the
   triskle is 222, and the g's tail hangs under the triskle. The triskle is 32 px tall in the
-  header (26 on a phone, 23 under 360 px) and 40 px in the footer (34 on a phone).
+  header (26 on a phone, 24 at 360 px wide and under) and 40 px in the footer (34 on a phone),
+  so the lockup is never under the brand's 28 px floor (24 × 264 / 222 is 28.5).
   The browser gate reads the name's drawn colour in both themes, not only the file's name:
   it must stand clear of the ground the logo itself stands on, the header's or the footer's
   (a contrast of 7 or more), so the two files cannot be swapped unseen. No colour is named
   there.
-- Genie and Omni have their own lockups in the same kit: the same triskle, the name in the
-  same lettering, and the sparkle on the i in the product's colour (Automagik violet, Genie
-  pink, Omni cyan). The kit's large drawing is the heading of `/genie/` and `/omni/`
-  (`productLogo()` in `scripts/build-pages.mjs`), with ink letters on the light page and
-  cream ones on the dark page; the image's text is the product's name. `styles.css` sizes
-  it by height alone, a share of the window's width that always fits the heading's column,
-  up to 128 px. The drawing for small sizes titles the two product cards on the home page,
-  44 px high. Omni's card follows the theme; Genie's card is dark in both themes, so its
-  letters are always cream, and the kit's small Genie lockup with ink letters is not kept.
-  The browser gate reads each name's drawn colour against the ground it stands on (the
-  page, Omni's card, the lightest part of Genie's card) and measures each lockup at six
-  widths: its own proportions, inside its column.
+- Genie, Omni and Mykes each show as their own mark with their name (the brand's rules 9
+  and 10): Genie's flat lamp, Omni's tentacle vortex, Mykes's cords, one colour each, with
+  the name in the brand's lettering. The files are byte copies of the brand folder's
+  (`docs/brand/logo/`), pinned in `assets/brand/LICENSES.md`. The lockup is the heading of
+  `/genie/`, `/omni/` and `/mykes/` (`productLogo()` in `scripts/build-pages.mjs`), the ink
+  file on the light page and the cream one on the dark page; the image's text is the
+  product's name. `styles.css` sizes it by height alone, a share of the window's width that
+  fits the heading's column for the widest of the three (Genie's), up to 128 px, so the
+  three pages' letters are one size. The lockup also titles Genie's and Omni's cards on the
+  home page, 44 px high: Omni's card follows the theme and shows the drawing for small
+  sizes (`-header`; under about 56 px the large vortex's suckers turn to specks); Genie's
+  card is dark in both themes, so it shows the cream file. The lamp and the cords have one
+  drawing each. In the Products menu each of the three stands beside its mark alone
+  (`productMark()`), Omni's the vortex drawn for about 32 px.
+  The browser gate reads the colour each is drawn in against the ground it stands on (the
+  page, Omni's card, the lightest part of Genie's card, every stop of the stage behind
+  Mykes's heading, the menu's ground) and measures each lockup at six widths: its own
+  proportions, inside its column.
 - The official lockup with the tag (above) is built from the kit's large lockup.
-- The triskle alone (the Mykes entry in the Products menu, the Cloud and Mykes heroes) is the kit's
-  drawing for the size shown: `triskle-three-colours-32.svg` in a menu,
-  `triskle-three-colours.svg` from about 100 px up.
+- The triskle is Automagik's mark and Automagik's alone (the brand's rule 1). Alone it
+  shows for Automagik's own Cloud, the kit's drawing for the size shown:
+  `triskle-three-colours-32.svg` beside Cloud in the Products menu,
+  `triskle-three-colours.svg` in the Cloud hero. It stands beside no other product's name:
+  the Genie and Omni lockups that carried it are retired and gone from the site.
+- The picture beside a name in the Products menu is a mark's place, so no character stands
+  there (the brand's rule 3): Omni, Genie and Mykes show their own marks and Cloud the
+  triskle. The pets stay where they are art: the tiles and the list of more building blocks.
+- The drawer's lockup: the brand's floor for a lockup is 28 px, with one exception, 24 px in
+  the family drawer's phone layout. Here Automagik is the host, so its lockup stands alone
+  in the drawer's top block and is 24 px high down to the narrowest phone; the browser gate
+  measures it at 375 and 360 px wide.
 - The browser's icons are the kit's favicon set at the site's root, all in three colours:
   `favicon.ico` (16, 32 and 48 px), `favicon.svg` (the drawing for small sizes),
   `apple-touch-icon.png`, and `icon-192.png` and `icon-512.png` (the mark on the ink
@@ -242,12 +258,16 @@ Edit public page copy in `scripts/build-pages.mjs`; shared Cloud form/response c
 three weights (`--weight-title`, `--weight-strong`, `--weight-label`) and the font file come
 from `docs/brand/tokens/tokens.json` and `docs/brand/fonts/`. In `styles.css`, set anything in
 the title face with one of those three weights, never a number: a heavier Fredoka is heavier
-than the logo. Regenerate and commit the HTML and CSS:
+than the logo. `docs/brand/components/bundle.css` is made from `styles.css`: every change to
+`styles.css` must be followed by `node scripts/brand-bundle.mjs`, committed with it (the brand
+tests fail until the two agree).
+Regenerate and commit the HTML and CSS:
 
 ```sh
 node apps/landing/scripts/sync-theme.mjs
 node apps/landing/scripts/build-art.mjs   # only after an art or capture change; needs ffmpeg with libwebp
 node apps/landing/scripts/build-pages.mjs
+node scripts/brand-bundle.mjs              # after a change to styles.css
 bun install --frozen-lockfile --ignore-scripts
 node --test apps/landing/landing.test.mjs apps/landing/waitlist.test.mjs
 LANDING_CHROME=/path/to/chrome node apps/landing/verify-browser.mjs

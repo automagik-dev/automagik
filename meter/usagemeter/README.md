@@ -31,10 +31,10 @@ to the local herdr-core. The binary itself opens no network connection.
 The Automagik Herdr pack installs it, on this computer and on every connected linked machine:
 
 ```sh
-automagik-herdr meter install
+am meter install
 ```
 
-(`herdr/install.sh` does the same on a new machine.) It reads the signed `meter-lane` pointer on
+(`herdr/install.sh` does the same on a new machine; `automagik-herdr` still works as an alias for `am`.) It reads the signed `meter-lane` pointer on
 the Automagik repository's releases (`meter.json` and its ed25519 signature, checked against the
 meter's public keys, `meter-keys.json`), takes the build it names for each machine's OS and CPU,
 checks it against the sha256 the pointer names, and installs it to `~/.local/bin/usagemeter`

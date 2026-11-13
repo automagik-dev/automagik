@@ -1483,3 +1483,176 @@ fn a_new_coarse_row_reads_in_status_and_query() {
         v["unattributed"], v["rows"]
     );
 }
+
+fn new_rows(fx: &Fx) -> Vec<(String, i64, Option<String>)> {
+    let c = Fx::conn(&fx.store);
+    let mut st = c
+        .prepare(
+            "SELECT id, hour_ms, repo FROM usage WHERE id LIKE 'repair1126:%' ORDER BY hour_ms",
+        )
+        .unwrap();
+    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect()
+}
+
+#[test]
+fn one_coarse_group_short_in_two_hours_gets_two_new_rows() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // The same (harness, model, precision) and repo, short in two hours of one run: the new
+    // rows' ids must differ (the hour is part of the id), or the second INSERT collides.
+    let h9 = "2026-11-08T11:00:00Z";
+    for h in [H8, h9] {
+        Fx::put_full(
+            &fx.store,
+            &format!("s{h}"),
+            "dsh-tui",
+            h,
+            cols(CR, 40),
+            3,
+            None,
+            "machine-one",
+            Some("branch-x"),
+            Some(ALPHA),
+        );
+        Fx::put_full(
+            &fx.oracle,
+            &format!("o{h}"),
+            "dsh-tui",
+            h,
+            cols(CR, 65),
+            3,
+            None,
+            "machine-scratch",
+            Some("branch-z"),
+            Some(ALPHA),
+        );
+    }
+    let d = repair::execute(&fx.opts(&["--coarse"])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(d.report.total_change(), 50);
+    let c = fx.copy("c.db");
+    let d = repair::execute(&fx.apply_opts(&["--coarse"], &c)).unwrap();
+    assert_eq!(d.code, exit::OK);
+    let rows = new_rows(&fx);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_ne!(rows[0].0, rows[1].0, "the two new rows share an id");
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", H8, CR), 65);
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", h9, CR), 65);
+    assert_eq!(
+        repair::execute(&fx.apply_opts(&["--coarse"], &c))
+            .unwrap()
+            .code,
+        exit::NOTHING
+    );
+}
+
+#[test]
+fn the_new_rows_repo_is_the_stores_own_label_when_it_carries_the_old_name() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // The alias maps the oracle's name to the store's; here the STORE's row carries the old name
+    // (the alias's left side) and the oracle the new one. The new row takes the store's label.
+    let old = "example.test/si/alpha";
+    sr(&fx, "a", 40, 3, "machine-one", "branch-x", old);
+    or(&fx, "o1", 65, 3, "example.test/dev/alpha");
+    let alias = "example.test/si/=example.test/dev/";
+    let d = repair::execute(&fx.opts(&["--coarse", "--repo-alias", alias])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(
+        d.report.to_json(d.code)["top_ups"][0]["receiving_row"]["repo"],
+        old
+    );
+    let c = fx.copy("c.db");
+    repair::execute(&fx.apply_opts(&["--coarse", "--repo-alias", alias], &c)).unwrap();
+    assert_eq!(new_rows(&fx)[0].2.as_deref(), Some(old));
+}
+
+#[test]
+fn a_short_row_before_from_stays_out_of_the_day_transaction() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // Same day: 12:00 is short with evidence above its rollup (damage, before --from), 13:00 is
+    // short and in the range. The run covers 13:00 only: the day's transaction must not look at
+    // 12:00 (its evidence would fail the day).
+    let (h12, h13) = ("2026-11-10T12:00:00Z", "2026-11-10T13:00:00Z");
+    for (h, st, or_) in [(h12, 10, 20), (h13, 10, 25)] {
+        Fx::put_full(
+            &fx.store,
+            &format!("s{h}"),
+            "dsh-tui",
+            h,
+            cols(CR, st),
+            1,
+            None,
+            "machine-one",
+            Some("branch-x"),
+            Some(ALPHA),
+        );
+        Fx::put_full(
+            &fx.oracle,
+            &format!("o{h}"),
+            "dsh-tui",
+            h,
+            cols(CR, or_),
+            1,
+            None,
+            "machine-scratch",
+            Some("branch-z"),
+            Some(ALPHA),
+        );
+    }
+    Fx::conn(&fx.store)
+        .execute(
+            "INSERT INTO evidence(ts_ms, dim, actor, cache_read) VALUES (?1, 0, 0, 500)",
+            rusqlite::params![hour(h12) + 5],
+        )
+        .unwrap();
+    let args = ["--coarse", "--from", h13, "--until", "2026-11-10T14:00:00Z"];
+    let c = fx.copy("c.db");
+    let d = repair::execute(&fx.apply_opts(&args, &c)).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", h13, CR), 25);
+    assert_eq!(Fx::col(&fx.store, "dsh-tui", h12, CR), 10);
+}
+
+#[test]
+fn an_alias_without_a_trailing_slash_matches_the_whole_label_only() {
+    let _g = common_serial();
+    let fx = Fx::new();
+    // Alias "example.test/si=example.test/dev" (no slash): not a prefix. The oracle's
+    // example.test/six/alpha must not become example.test/devx/alpha, the store's other repo.
+    sr(
+        &fx,
+        "a",
+        40,
+        3,
+        "machine-one",
+        "branch-x",
+        "example.test/devx/alpha",
+    );
+    or(&fx, "o1", 65, 3, "example.test/six/alpha");
+    let alias = "example.test/si=example.test/dev";
+    let d = repair::execute(&fx.opts(&["--coarse", "--repo-alias", alias])).unwrap();
+    assert_eq!(d.code, exit::OK, "{}", d.report.to_text(d.code));
+    assert!(d.report.to_json(d.code)["top_ups"][0]["receiving_row"]["repo"].is_null());
+    // And an exact label still maps.
+    let fx = Fx::new();
+    sr(
+        &fx,
+        "a",
+        40,
+        3,
+        "machine-one",
+        "branch-x",
+        "example.test/dev",
+    );
+    or(&fx, "o1", 65, 3, "example.test/si");
+    let d = repair::execute(&fx.opts(&["--coarse", "--repo-alias", alias])).unwrap();
+    assert_eq!(
+        d.report.to_json(d.code)["top_ups"][0]["receiving_row"]["repo"],
+        "example.test/dev"
+    );
+}
