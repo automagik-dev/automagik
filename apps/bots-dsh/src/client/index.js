@@ -48,7 +48,7 @@ import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
 import { PermissionChoiceDock } from './permission-card.js'
-import { MODEL_CSS, ModelChoiceDock, ModelLineTail, DeepSeekSignIn } from './model-menu.js'
+import { MODEL_CSS, ModelChoiceDock, ModelChoiceTail, ModelLineTail, DeepSeekSignIn } from './model-menu.js'
 import { announceCarried, CLI_LOGIN_CSS, CliLoginConversation, installCliLoginBridge, installKnownStateGuard } from './cli-login.js'
 import { createCliLogin } from './cli-login-state.js'
 import { cliLoginBotOf } from './cli-login-model.js'
@@ -1291,6 +1291,9 @@ export function apply(ctx) {
     () => shadow('conversation.chat.turnTail', { id: 'bot-learning', order: 850, priority: BOT_PRIORITY, inject: face }, LearningTurnTail),
     // While a Bot's chat holds only its greeting, the line under it names its model.
     () => shadow('conversation.chat.turnTail', { id: 'bot-model-line', order: 900, priority: BOT_PRIORITY, inject: face }, ModelLineTail),
+    // A Bot with no model in a chat that already holds turns asks for one after the last
+    // of them, below that turn's time; a chat with no turn yet asks in the dock (bot-model).
+    () => shadow('conversation.chat.turnTail', { id: 'bot-model-choice', order: 1100, priority: BOT_PRIORITY, inject: face }, ModelChoiceTail),
     // A Bot condenses its conversation without telling anyone; the chat keeps showing
     // every message.
     () => shadow('conversation.chat.node', { key: 'question-reply', priority: BOT_PRIORITY, locale: 'chat' }, AnsweredReply),

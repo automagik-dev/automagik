@@ -205,3 +205,338 @@ test("the CLI's key changes when it is updated, through a link or in place, with
   // Gone: the path itself, never a throw.
   assert.equal(cliStamp(join(home, 'nothing')), join(home, 'nothing'))
 })
+
+const deferred = () => {
+  let resolve, reject
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
+test('refresh bypasses auth backoff and freshness and keeps complete results', async t => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  let launch = { ...fake, env: { FAKE_ACP_AUTH: 'session' } }
+  let spawned = 0
+  const made = catalog(home, {
+    now: () => 1000, spawn: () => { spawned++; return launch },
+  })
+  t.after(() => made.dispose())
+  await made.models()
+  await made.probing
+  assert.equal(made.access, false)
+  launch = fake
+  await made.refresh()
+  assert.equal(spawned, 2)
+  assert.equal(made.access, true)
+  const complete = made.current()
+  const disk = readFileSync(made.file, 'utf8')
+  launch = broken
+  await made.refresh()
+  assert.deepEqual(made.current(), complete)
+  assert.equal(readFileSync(made.file, 'utf8'), disk)
+  const kept = catalog(home, { now: () => 1000, spawn: () => { spawned++; return fake } })
+  t.after(() => kept.dispose())
+  await kept.models()
+  assert.equal(spawned, 3)
+  await kept.refresh()
+  assert.equal(spawned, 4)
+})
+
+test('Codex falls back only to default, without sign-in evidence, until a probe', async t => {
+  const { AGENTS } = await import('../src/host/agents.js')
+  const made = new Catalog({ ...AGENTS['acp-codex'], id: 'acp-codex',
+    key: () => undefined, spawn: () => fake })
+  t.after(() => made.dispose())
+  assert.deepEqual(made.current().map(({ id, name }) => [id, name]), [
+    ['default', 'Codex'],
+  ])
+  assert.deepEqual(made.current()[0].reasoning.efforts.map(effort => effort.id),
+    ['low', 'medium', 'high'])
+  assert.equal(await made.signedIn(), undefined)
+  made.spec.key = () => 'v1'
+  await made.refresh()
+  assert.deepEqual(made.current().map(model => model.id),
+    ['default', 'fake-large', 'fake-small', 'fake-plain'])
+})
+
+test('signed-out failures keep the complete list in memory and on disk', async t => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  let launch = fake
+  const made = catalog(home, { spawn: () => launch })
+  t.after(() => made.dispose())
+  await made.refresh()
+  const disk = readFileSync(made.file, 'utf8')
+  const complete = JSON.parse(disk).models
+  assert.deepEqual(complete.map(model => model.id),
+    ['default', 'fake-large', 'fake-small', 'fake-plain'])
+  launch = { ...fake, env: { FAKE_ACP_AUTH: 'session' } }
+  await made.refresh()
+  assert.equal(made.access, false)
+  assert.equal(JSON.stringify(made.current().map(({ probed, ...model }) => model)),
+    JSON.stringify(complete))
+  made.dispose()
+  const kept = catalog(home, { spawn: () => launch })
+  t.after(() => kept.dispose())
+  await kept.refresh()
+  assert.equal(kept.access, false)
+  assert.deepEqual(kept.current(), complete)
+  assert.equal(readFileSync(kept.file, 'utf8'), disk)
+})
+
+test('a first effort failure keeps the native model list with one notice', async t => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const made = catalog(home, { spawn: () => ({ ...fake, env: {
+    FAKE_ACP_SESSION_MODELS: '1', FAKE_ACP_SET_MODEL_FAIL: 'fake-plain',
+  } }) })
+  t.after(() => made.dispose())
+  const notices = []
+  made.spec.onChange = () => notices.push(structuredClone(made.current()))
+  await made.refresh()
+  assert.deepEqual(made.current().map(model => [model.id, model.name]), [
+    ['default', 'Test agent'], ['fake-large', 'Fake Large'],
+    ['fake-small', 'Fake Small'], ['fake-plain', 'Fake Plain'],
+  ])
+  assert.equal(made.live.complete, false)
+  assert.equal(made.live.models.find(model => model.id === 'fake-small').probed, true)
+  assert.equal(made.live.models.find(model => model.id === 'fake-plain').probed, false)
+  assert.match(made.logs.join('\n'), /Internal error/i)
+  assert.equal(notices.length, 1)
+  assert.deepEqual(made.current().map(({ probed, ...model }) => model),
+    notices[0].map(({ probed, ...model }) => model))
+  assert.equal(made.saved, undefined)
+  assert.throws(() => readFileSync(made.file), { code: 'ENOENT' })
+})
+
+test('a throwing change callback is logged and the probe still completes', async t => {
+  const h = await controlled(t)
+  const { AgentRun } = await import('../src/host/acp.js')
+  const option = AgentRun.prototype.option
+  let selected = false
+  t.mock.method(AgentRun.prototype, 'option', function (category) {
+    if (category !== 'thought_level') return option.call(this, category)
+    return selected ? { options: [{ value: 'high', name: 'High' }] } : undefined
+  })
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const made = catalog(home)
+  t.after(() => made.dispose())
+  let notices = 0
+  made.spec.onChange = () => { notices++; throw new Error('publish failed') }
+  const probing = made.refresh()
+  await h.tick()
+  h.starts[0].resolve()
+  await h.tick()
+  selected = true
+  h.reads[0].resolve()
+  await h.tick()
+  h.reads[1].resolve()
+  await assert.doesNotReject(probing)
+  assert.equal(notices, 2)
+  assert.equal(made.logs.filter(line => /could not publish.*publish failed/.test(line)).length, 2)
+  assert.equal(made.access, true)
+  assert.equal(made.failedAt, undefined)
+  assert.equal(made.live.complete, true)
+  assert.deepEqual(JSON.parse(readFileSync(made.file, 'utf8')).models,
+    JSON.parse(JSON.stringify(made.current().map(({ probed, ...model }) => model))))
+})
+
+// A controlled AgentRun lets a retired read finish even after its process was disposed.
+async function controlled(t) {
+  const { AgentRun } = await import('../src/host/acp.js')
+  const starts = [], reads = [], runs = []
+  t.mock.method(AgentRun.prototype, 'start', function () {
+    runs.push(this)
+    this.child = {}
+    const wait = deferred()
+    starts.push(wait)
+    return wait.promise
+  })
+  t.mock.method(AgentRun.prototype, 'dispose', function () { this.disposed = true })
+  t.mock.method(AgentRun.prototype, 'option', function (category) {
+    if (category === 'model') return { options: [
+      { value: 'x', name: 'X' }, { value: 'u', name: 'U' },
+    ] }
+    return { options: [{ value: 'high', name: 'High' }], currentValue: 'high' }
+  })
+  t.mock.method(AgentRun.prototype, 'setOption', function () {
+    const wait = deferred()
+    reads.push(wait)
+    return wait.promise
+  })
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  const finish = async () => {
+    starts.at(-1).resolve()
+    await tick()
+    reads.at(-1).resolve()
+    await tick()
+    reads.at(-1).resolve()
+    await tick()
+  }
+  return { starts, reads, runs, tick, finish }
+}
+
+for (const failure of [false, true]) {
+  test(`refresh retires an older read that later ${failure ? 'fails' : 'succeeds'}`, async t => {
+    const h = await controlled(t)
+    const home = scratch()
+    t.after(() => rmSync(home, { recursive: true, force: true }))
+    const made = catalog(home)
+    t.after(() => made.dispose())
+    let notices = 0
+    made.spec.onChange = () => { notices++ }
+    made.kick()
+    const older = made.probing
+    await h.tick()
+    h.starts[0].resolve()
+    await h.tick()
+    const oldRead = h.reads[0]
+    const fresh = made.refresh()
+    assert.equal(h.runs[0].disposed, true)
+    assert.equal(made.refresh(), fresh)
+    assert.equal(made.refresh(), fresh)
+    await h.tick()
+    assert.equal(h.runs.length, 2)
+    await h.finish()
+    await fresh
+    const before = {
+      live: structuredClone(made.live), saved: structuredClone(made.saved),
+      access: made.access, failedAt: made.failedAt, readAt: made.readAt, notices,
+      disk: readFileSync(made.file, 'utf8'),
+    }
+    if (failure) oldRead.reject(new Error('late failure'))
+    else oldRead.resolve()
+    await older
+    assert.deepEqual({
+      live: made.live, saved: made.saved, access: made.access, failedAt: made.failedAt,
+      readAt: made.readAt, notices, disk: readFileSync(made.file, 'utf8'),
+    }, before)
+    assert.equal(made.probing, undefined)
+    assert.equal(made.run, undefined)
+  })
+}
+
+test('retiring a pending spawn releases list waiters and cannot clear the next run', async t => {
+  const h = await controlled(t)
+  const pending = deferred()
+  let launches = 0
+  const made = catalog(undefined, {
+    spawn: () => (++launches === 1 ? pending.promise : fake),
+  })
+  t.after(() => made.dispose())
+  const waiting = made.models()
+  const older = made.probing
+  const fresh = made.refresh()
+  await waiting
+  await h.tick()
+  const run = made.run
+  pending.resolve(fake)
+  await older
+  assert.equal(made.run, run)
+  assert.equal(made.probing, fresh)
+  assert.equal(h.runs.length, 1)
+  await h.finish()
+  await fresh
+})
+
+for (const phase of ['spawn', 'start', 'read']) {
+  test(`dispose during ${phase} stops writes, notices and later launches`, async t => {
+    const h = await controlled(t)
+    const pending = deferred()
+    const made = catalog(undefined, { spawn: () => pending.promise })
+    let notices = 0
+    made.spec.onChange = () => { notices++ }
+    made.kick()
+    const probing = made.probing
+    const listed = made.listed
+    if (phase !== 'spawn') {
+      pending.resolve(fake)
+      await h.tick()
+    }
+    if (phase === 'read') {
+      h.starts[0].resolve()
+      await h.tick()
+    }
+    made.dispose()
+    const before = { live: structuredClone(made.live), access: made.access, notices }
+    await listed
+    pending.resolve(fake)
+    h.starts[0]?.resolve()
+    h.reads[0]?.resolve()
+    await probing
+    await made.refresh()
+    assert.deepEqual({ live: made.live, access: made.access, notices }, before)
+    assert.equal(made.saved, undefined)
+    assert.equal(made.readAt, undefined)
+    assert.equal(made.failedAt, undefined)
+    assert.equal(h.runs.length, phase === 'spawn' ? 0 : 1)
+  })
+}
+
+test('notices describe the first list and completed efforts, never each effort read', async t => {
+  const h = await controlled(t)
+  // No provisional efforts: the first list and its completion visibly differ.
+  const { AgentRun } = await import('../src/host/acp.js')
+  let selected = false
+  t.mock.method(AgentRun.prototype, 'option', category => {
+    if (category === 'model') return { options: [
+      { value: 'x', name: 'X' }, { value: 'u', name: 'U' },
+    ] }
+    return selected ? { options: [{ value: 'high', name: 'High' }] } : undefined
+  })
+  const made = catalog(undefined)
+  t.after(() => made.dispose())
+  const notices = []
+  made.spec.onChange = () => notices.push(structuredClone(made.current()))
+  const probing = made.refresh()
+  await h.tick()
+  h.starts[0].resolve()
+  await h.tick()
+  assert.equal(notices.length, 1)
+  selected = true
+  h.reads[0].resolve()
+  await h.tick()
+  assert.equal(notices.length, 1)
+  h.reads[1].resolve()
+  await probing
+  assert.equal(notices.length, 2)
+  selected = false
+  const again = made.refresh()
+  await h.tick()
+  h.starts.at(-1).resolve()
+  await h.tick()
+  selected = true
+  h.reads.at(-1).resolve()
+  await h.tick()
+  h.reads.at(-1).resolve()
+  await again
+  assert.equal(notices.length, 2, 'the kept efforts make the second list identical')
+})
+
+test('a refresh that fails during effort reads restores the last complete catalog', async t => {
+  const h = await controlled(t)
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const made = catalog(home)
+  t.after(() => made.dispose())
+  const first = made.refresh()
+  await h.tick()
+  await h.finish()
+  await first
+  const complete = structuredClone(made.current())
+  const disk = readFileSync(made.file, 'utf8')
+  const { AgentRun } = await import('../src/host/acp.js')
+  t.mock.method(AgentRun.prototype, 'option', category => category === 'model'
+    ? { options: [{ value: 'someone', name: 'Someone' }] } : undefined)
+  const refresh = made.refresh()
+  assert.deepEqual(made.current(), complete)
+  await h.tick()
+  h.starts.at(-1).resolve()
+  await h.tick()
+  assert.ok(made.current().some(model => model.id === 'someone'))
+  h.reads.at(-1).reject(new Error('efforts unavailable'))
+  await refresh
+  assert.deepEqual(made.current(), complete)
+  assert.equal(readFileSync(made.file, 'utf8'), disk)
+})

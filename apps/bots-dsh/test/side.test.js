@@ -663,4 +663,3 @@ test('a side question retries transient TRANSPORT failures and stops immediately
   assert.equal(entry.status, 'done')
   assert.equal(entry.answer, 'Clean answer.')
 })
-

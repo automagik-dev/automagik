@@ -35,9 +35,6 @@ function moreLines(text, max) {
   return false
 }
 
-// The start of a long text, cut at a line end (or inside a very long first line). In
-// Markdown a code fence left open is closed, so the preview does not run on as code.
-// Null when `text` is within `limit`.
 // The fence a preview cut left open: the marker and its line index in `lines`.
 function openedFence(lines) {
   let open = null
@@ -66,8 +63,11 @@ function blockCode(body, fenceLine, open) {
   return code.join('\n')
 }
 
-// The preview `head` plus `code`, the whole block its cut fence opens (null when
-// the cut does not sit inside a fence).
+// The start of a long text, cut at a line end (or inside a very long first line), as
+// `head`. In Markdown a code fence left open is closed, so the preview does not run on
+// as code; the view then also carries `code`, the whole block that fence opens, with
+// `prose` (the Markdown before the block) and `codeHead` (the part of the block the
+// preview keeps). Null when `text` is within `limit`.
 export function foldView(text, limit = FOLD_AT, markdown = true) {
   if (text.length <= limit.chars && !moreLines(text, limit.lines)) return null
   // Blank lines first: the preview starts at the first visible character. An
@@ -97,15 +97,16 @@ export function foldView(text, limit = FOLD_AT, markdown = true) {
   lines[opened.line] = opened.marker
   return {
     head: `${lines.join('\n')}\n${opened.marker}`,
-    // The markdown before the block and the part of the block the preview
-    // keeps: the half block is drawn outside the host's Markdown, whose own
-    // copy control would hold only the part shown.
+    // The Markdown before the block and the part of the block the preview keeps:
+    // the half block is drawn outside the host's Markdown, whose own copy control
+    // would hold only the part shown.
     prose: lines.slice(0, opened.line).join('\n'),
     codeHead: lines.slice(opened.line + 1).join('\n'),
     code: blockCode(body, opened.line, opened.marker),
   }
 }
 
+// The preview alone: the start of a long text, or null when `text` is within `limit`.
 export function foldPreview(text, limit = FOLD_AT, markdown = true) {
   return foldView(text, limit, markdown)?.head ?? null
 }
@@ -118,14 +119,19 @@ export const stripLongNote = text => text.replace(/^\[A long message: \d+ charac
 // `whole`, when `text` is only the start of the message: its `length`, and `load()`,
 // which reads it whole ({ text, whole }). `live`: still streaming, never folded.
 // `markdown`: false for plain text.
-export function useFold(text, { limit = FOLD_AT, whole, live = false, markdown = true } = {}) {
+// Folded on a code block the preview cut, the result also carries `code`, the whole
+// block (a function that reads it when `text` is only the start of the message), and
+// `codeHead`, the part of it the preview keeps; `shown` is then only the Markdown before
+// the block, and the caller draws the half block itself, with a copy of all of it.
+// `ownCode`: false keeps the cut block inside `shown`, for a caller that cannot draw it.
+export function useFold(text, { limit = FOLD_AT, whole, live = false, markdown = true, ownCode = true } = {}) {
   const [open, setOpen] = useState(false)
   const [read, setRead] = useState()
   const cut = whole !== undefined && whole.length > text.length
   // A message kept only in part folds whatever the length of its start.
   const view = useMemo(() => (live ? null : foldView(text, cut ? ALWAYS : limit, markdown)), [text, live, limit, markdown, cut])
   if (view === null) return { shown: text, control: null }
-  // Expansion and copying share the same full text, including attachment posts.
+  // Expansion and copying share the same full text, including a message kept as a file.
   const readWhole = async () => {
     if (typeof read?.text === 'string') return read
     setRead('loading')
@@ -133,20 +139,22 @@ export function useFold(text, { limit = FOLD_AT, whole, live = false, markdown =
     setRead(value)
     return value
   }
-  const code = view.code === undefined ? undefined : !cut ? view.code : async () => {
+  const code = !ownCode || view.code === undefined ? undefined : !cut ? view.code : async () => {
     const loaded = await readWhole()
     const full = loaded.whole === true ? foldView(loaded.text, ALWAYS, markdown)?.code : undefined
     if (full === undefined) throw new Error('Could not read the whole code block')
     return full
   }
-  const shown = code === undefined ? view.head : view.prose
   const count = (cut ? whole.length : text.length).toLocaleString()
   if (!open) {
     const show = async () => {
       setOpen(true)
       if (cut) await readWhole()
     }
-    return { shown, folded: true, code, codeHead: view.codeHead, control: h('span', { className: 'bt-fold' }, h('button', { type: 'button', className: 'bt-more', onClick: show }, t('Show all · {count} characters', { count }))) }
+    return {
+      shown: code === undefined ? view.head : view.prose, folded: true, code, codeHead: code === undefined ? undefined : view.codeHead,
+      control: h('span', { className: 'bt-fold' }, h('button', { type: 'button', className: 'bt-more', onClick: show }, t('Show all · {count} characters', { count }))),
+    }
   }
   const loaded = typeof read?.text === 'string' ? read : undefined
   const note = !cut || read === undefined || read === 'loading' || loaded?.whole ? null

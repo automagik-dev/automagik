@@ -260,4 +260,3 @@ test('session completion retries TRANSPORT failures and cancels during retry bac
   )
   assert.equal(abortedAttempts, 1)
 })
-

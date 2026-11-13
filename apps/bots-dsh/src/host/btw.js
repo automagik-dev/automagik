@@ -5,11 +5,11 @@
 // Cards live in a file per Bot and part (<home>/btw/<botId>/<partId>.json), not
 // in state.json, so a save never rewrites them; only the host that owns the
 // team writes them.
+import { assembleLlmStream } from './models.js'
 import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { refusal } from './refusal.js'
 import { dirname, join } from 'node:path'
 import { replaceFile } from './files.js'
-import { assembleLlmStream } from './models.js'
 
 export const RESTART_ERROR = 'Omni restarted before this answer finished.'
 export const TOOL_ERROR = 'The model called a tool again after being told not to, so this aside was not answered.'

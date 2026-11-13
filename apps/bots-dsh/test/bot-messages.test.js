@@ -46,6 +46,7 @@ async function start(seed) {
   const agentOf = (sessionId) => {
     if (!agents.has(sessionId)) {
       const calls = []
+      const messages = []
       const agentCtx = {
         tools: {
           restrict: (filter) => {
@@ -1058,7 +1059,7 @@ for (const id of ['b', 'gb']) {
     ctx.llm.resolveModelInfo = async () => ({ context: { contextWindow: 192_000 } })
     const preStep = async (agent) => {
       agent.session.requestHeader = () => ({ config: { provider: 'custom', model: 'model' } })
-      return ctx.listeners.get('agent/pre-step').at(-1)({ agent, messages: [], step: 1, signal: AbortSignal.timeout(60_000) }, async () => 'next')
+      return ctx.listeners.get('agent/pre-step').find(listener => listener.toString().includes('switchBeforeStep'))({ agent, messages: [], step: 1, signal: AbortSignal.timeout(60_000) }, async () => 'next')
     }
     const overflow = agent => fire('agent/request-error', { agent, failure: { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'Tools exceed the context window' }, signal: AbortSignal.timeout(60_000) })
     const waitForHandoff = async (sessionId) => {
@@ -1138,8 +1139,8 @@ for (const id of ['b', 'gb']) {
       assert.ok(ctx.get('tokenMeter').measure(agent.session).totalTokens + estimateTokens(textOf(input.content)) > 50_000, 'it overflows together with the handoff')
 
       if (pending) {
-        const decision = await ctx.listeners.get('agent/pre-step').at(-1)({ agent, messages: [input], step: 1, signal: AbortSignal.timeout(60_000) }, async () => 'next')
-        assert.deepEqual(decision, { kind: 'enter', messages: [] })
+        const decision = await ctx.listeners.get('agent/pre-step').find(listener => listener.toString().includes('switchBeforeStep'))({ agent, messages: [input], step: 1, signal: AbortSignal.timeout(60_000) }, async () => 'next')
+        assert.deepEqual(decision, { kind: 'reject' })
       } else {
         record('user/message', input)
         await fire('agent/request-error', { agent, failure: { code: 'CONTEXT_WINDOW_EXCEEDED' }, signal: AbortSignal.timeout(60_000) })
@@ -1255,11 +1256,11 @@ test('a fresh part gets its Bot\'s deny list before the handoff turn', async (t)
   t.after(stop)
   const agent = agentOf('b')
   agent.session.seq = 10
-  agent.session.eventAt = () => ({ type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'INVALID_REQUEST' } } } })
+  agent.session.eventAt = () => ({ type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'IMAGE_OFFLOAD_REQUIRED' } } } })
   emit('b', 'turn/start', { turn: 1 })
   emit('b', 'user/message', { content: textBlock('work'), source: { kind: 'user' } })
-  await fire('agent/request-error', { failure: { code: 'INVALID_REQUEST' }, signal: AbortSignal.timeout(60_000), agent })
-  emit('b', 'turn/end', { turn: 1, reason: { kind: 'error', error: { code: 'INVALID_REQUEST' } } })
+  await fire('agent/request-error', { failure: { code: 'IMAGE_OFFLOAD_REQUIRED' }, signal: AbortSignal.timeout(60_000), agent })
+  emit('b', 'turn/end', { turn: 1, reason: { kind: 'error', error: { code: 'IMAGE_OFFLOAD_REQUIRED' } } })
   for (let count = 0; count < 200 && agents.get('s1')?.calls.find(([, message]) => message.source?.handoff === true) === undefined; count += 1) await delay(5)
   assert.ok(agents.get('s1')?.calls.some(([, message]) => message.source?.handoff === true), 'the Bot moved on to a fresh part')
   const applied = restricted.filter(entry => entry.sessionId === 's1')

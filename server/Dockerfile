@@ -9,14 +9,15 @@
 #
 # The runtime is the distroless nodejs24 rootfs (node and glibc), cleaned in the tools stage
 # (no man pages or changelogs), plus the image's code and the tools Bots need in their shell
-# (bash, dash as /bin/sh, git core, ripgrep). No npm, apt, curl or build toolchain. The release
+# (bash, dash as /bin/sh, git core, ripgrep, tar, gzip and find for Omni's installer).
+# No npm, apt, curl or build toolchain. The release
 # pins are build args; every plugin tarball is checked against the release's plugins.json
 # (sha512 integrity, size) and PLUGINS.SHA256SUMS (sha256) before dsh installs it
 # (server/fetch-plugins.mjs).
 
 FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS base
 
-FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS builder
+FROM node:24.22.3-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0 AS builder
 
 ARG AUTOMAGIK_VERSION=3.90.1
 ARG DSH_VERSION=0.2.2-rc.2
@@ -58,10 +59,10 @@ COPY --from=base / /out/rootfs
 RUN set -eux; \
     rm -rf /out/rootfs/usr/share/doc /out/rootfs/usr/share/man /out/rootfs/usr/share/info /out/rootfs/usr/share/lintian; \
     apt-get update; \
-    apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates util-linux; \
+    apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates util-linux tar gzip findutils; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /out/bin /out/lib /out/data/dsh /out/data/bots /out/data/workspace /out/data/secrets; \
-    for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/bin/flock /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
+    for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/bin/flock /bin/tar /bin/gzip /usr/bin/find /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
       | awk '/=>/ {print $3}' | sort -u > /tmp/libs; \
     while read -r lib; do \
       case "$lib" in \
@@ -69,7 +70,7 @@ RUN set -eux; \
       esac; \
       cp -L "$lib" /out/lib/; \
     done < /tmp/libs; \
-    cp /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/bin/flock /out/bin/; \
+    cp /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/bin/flock /bin/tar /bin/gzip /usr/bin/find /out/bin/; \
     ln -s /bin/dash /out/bin/sh; \
     cp -a /usr/lib/git-core /out/git-core; \
     cp -a /usr/share/git-core /out/git-core-share; \
@@ -111,6 +112,9 @@ COPY --from=tools /out/bin/sh /bin/sh
 COPY --from=tools /out/bin/git /usr/bin/git
 COPY --from=tools /out/bin/rg /usr/bin/rg
 COPY --from=tools /out/bin/flock /usr/bin/flock
+COPY --from=tools /out/bin/tar /usr/bin/tar
+COPY --from=tools /out/bin/gzip /usr/bin/gzip
+COPY --from=tools /out/bin/find /usr/bin/find
 COPY --from=tools /out/git-core /usr/lib/git-core
 COPY --from=tools /out/git-core-share /usr/share/git-core
 COPY --from=tools /out/certs /etc/ssl/certs

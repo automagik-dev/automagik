@@ -540,7 +540,7 @@ export function doctor(ctx, part) {
   // Healthy, with a note and the command that changes it: never a reason for am to roll an install back.
   const note = (check, detail, fix = null) => checks.push({ part: part.id, check, ok: true, detail, fix });
   const done = (code) => ({ code: code ?? (checks.every((c) => c.ok) ? 0 : 1), checks });
-  if (part.kind === "pack") note("restart-path", "In a Herdr bot pane, restart the session with automagik-herdr restart <bot> (or am restart <bot>), never /restart.");
+  if (part.kind === "pack") note("restart-path", "In a Herdr bot pane, restart the session with am restart <bot>, never /restart.");
   const reinstall = `am install ${part.id}`;
   if (ctx.platform !== "darwin") { add("os", true, `not applicable: Automagik Herdr runs on macOS (Herdr is a Mac app); this is ${ctx.platform}`); return done(2); }
 
@@ -617,13 +617,13 @@ export function doctor(ctx, part) {
     note("dsh-tui", dsh.dsh ? `dsh is ${dsh.dsh}` : "dsh is not on this process's PATH: dsh-TUI is skipped (install DSH Desktop or @deepseek-ai/dsh)");
     note("dsh-tui-profile", dsh.profile
       ? `the dsh-tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
-      : "not installed (opt-in: `automagik-herdr dsh-tui install`)");
+      : "not installed (opt-in: `am dsh-tui install`)");
     note("dsh-tui-shim", dsh.shimOurs
       ? dsh.shimLegacy
-        ? `${dsh.shim} is the earlier release's shim: \`automagik-herdr dsh-tui install\` replaces it`
+        ? `${dsh.shim} is the earlier release's shim: \`am dsh-tui install\` replaces it`
         : `${dsh.shim} (exec dsh --profile dsh-tui "$@")`
       : dsh.shimExists ? `${dsh.shim} is not this installer's`
-        : dsh.profile ? `${dsh.shim} is missing: \`automagik-herdr dsh-tui install\` adds it` : "not installed");
+        : dsh.profile ? `${dsh.shim} is missing: \`am dsh-tui install\` adds it` : "not installed");
     // Antigravity (#793): a bot or worker on it can't start without agy, and its models come
     // from `agy models`. A note, never a broken pack (agy is the person's install, not am's).
     const agy = programOn(ctx, "agy");

@@ -825,5 +825,5 @@ test("#805 pack doctor describes the supported restart path", (t) => {
   const note = doctorOf(m, "herdr.pack").checks.find((l) => l.check === "restart-path");
   assert.ok(note);
   assert.equal(note.ok, true);
-  assert.match(note.detail, /automagik-herdr restart <bot>.*am restart <bot>.*never \/restart/);
+  assert.match(note.detail, /with am restart <bot>, never \/restart/);
 });

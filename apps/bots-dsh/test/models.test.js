@@ -742,3 +742,124 @@ test('a pick of a sign-in route a CLI covers lands on that CLI, or is refused wi
   const off = connections({ routes: { 'acp-codex': [] }, agents: [], records: { 'openai-codex': true } })
   await assert.rejects(off.rt.resolveModel('openai-codex/gpt-5.6-sol'), /ChatGPT plan runs Bots only through Codex/)
 })
+
+function invalidationRuntime() {
+  const listeners = new Map()
+  let signedIn = false
+  let reads = 0
+  const rt = {
+    state: { bots: {} },
+    ctx: {
+      on: (name, fn) => listeners.set(name, fn),
+      get: name => name === 'acpAgents' ? { status: async () => {
+        reads++
+        return { agents: [{ id: 'acp-codex', signedIn }] }
+      } } : undefined,
+      llm: {
+        listProviders: () => [{ id: 'acp-codex' }],
+        listModels: async () => [{ id: 'default', name: 'Codex' }],
+      },
+    },
+  }
+  install(rt)
+  return { rt, listeners, reads: () => reads, signIn: () => { signedIn = true } }
+}
+
+test('an adapter event makes an ordinary catalog read sign-in status again', async () => {
+  const h = invalidationRuntime()
+  assert.equal((await h.rt.catalog({ fresh: true }))[0].needsSignIn, true)
+  h.signIn()
+  h.listeners.get('llm/adapters-updated')()
+  assert.equal((await h.rt.catalog())[0].needsSignIn, undefined)
+  assert.equal(h.reads(), 2)
+  await h.rt.catalog()
+  assert.equal(h.reads(), 2)
+})
+
+test('a catalog build crossing an invalidation cannot overwrite the new cache', async () => {
+  const h = invalidationRuntime()
+  let release
+  let started
+  const waiting = new Promise(resolve => { started = resolve })
+  h.rt.ctx.llm.listModels = () => {
+    started()
+    return new Promise(resolve => { release = resolve })
+  }
+  const stale = h.rt.catalog({ fresh: true })
+  await waiting
+  h.listeners.get('llm/adapters-updated')()
+  h.signIn()
+  h.rt.ctx.llm.listModels = async () => [{ id: 'default', name: 'New name' }]
+  const current = await h.rt.catalog()
+  release([{ id: 'default', name: 'Old name' }])
+  await stale
+  assert.deepEqual(await h.rt.catalog(), current)
+  assert.equal(h.rt.cachedCatalog()[0].name, 'New name')
+})
+
+test('a build crossing invalidation keeps the previous list until the next build', async () => {
+  const h = invalidationRuntime()
+  h.signIn()
+  const previous = await h.rt.catalog({ fresh: true })
+  assert.ok(previous.length > 0)
+  const defaultModel = h.rt.cachedDefault()
+  assert.equal(defaultModel, 'acp-codex/default')
+  let release, started
+  const waiting = new Promise(resolve => { started = resolve })
+  h.rt.ctx.llm.listModels = () => {
+    started()
+    return new Promise(resolve => { release = resolve })
+  }
+  const stale = h.rt.catalog({ fresh: true })
+  await waiting
+  h.listeners.get('llm/adapters-updated')()
+  assert.deepEqual(h.rt.cachedCatalog(), previous)
+  assert.equal(h.rt.cachedDefault(), defaultModel)
+  release([{ id: 'default', name: 'Stale name' }])
+  await stale
+  assert.deepEqual(h.rt.cachedCatalog(), previous)
+  assert.equal(h.rt.cachedDefault(), defaultModel)
+  h.rt.ctx.llm.listModels = async () => [{ id: 'default', name: 'New name' }]
+  const current = await h.rt.catalog()
+  assert.equal(current[0].name, 'New name')
+  assert.deepEqual(h.rt.cachedCatalog(), current)
+})
+
+test('a status read crossing an adapter event cannot restore the old sign-in mark', async () => {
+  const h = invalidationRuntime()
+  let release, started
+  const waiting = new Promise(resolve => { started = resolve })
+  const get = h.rt.ctx.get
+  h.rt.ctx.get = name => name === 'acpAgents' ? { status: () => {
+    started()
+    return new Promise(resolve => { release = resolve })
+  } } : get(name)
+  const stale = h.rt.catalog({ fresh: true })
+  await waiting
+  h.listeners.get('llm/adapters-updated')()
+  h.signIn()
+  h.rt.ctx.get = get
+  await h.rt.catalog()
+  release({ agents: [{ id: 'acp-codex', signedIn: false }] })
+  await stale
+  assert.equal((await h.rt.catalog({ fresh: true }))[0].needsSignIn, undefined)
+})
+
+test('an adapter event during the first status read leaves the next catalog dirty', async () => {
+  const h = invalidationRuntime()
+  let release, started
+  const waiting = new Promise(resolve => { started = resolve })
+  const get = h.rt.ctx.get
+  h.rt.ctx.get = name => name === 'acpAgents' ? { status: () => {
+    started()
+    return new Promise(resolve => { release = resolve })
+  } } : get(name)
+  const stale = h.rt.catalog({ fresh: true })
+  await waiting
+  h.listeners.get('llm/adapters-updated')()
+  release({ agents: [{ id: 'acp-codex', signedIn: true }] })
+  await stale
+  h.rt.ctx.get = get
+  assert.equal((await h.rt.catalog())[0].needsSignIn, true)
+  assert.equal(h.reads(), 1)
+})

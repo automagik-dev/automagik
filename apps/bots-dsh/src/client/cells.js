@@ -68,16 +68,16 @@ export function Bubbles({ texts, roster, selfId, actions, streaming, sessionId, 
     Number.isFinite(time) ? h('div', { className: 'bt-utime', title: clockLabel(time) }, messageClock(time)) : null)
 }
 
-// A folded message's last code block shows only its start; Omni draws its own
-// copy control for it, bound to the whole block. DSH's and the app's copy
-// buttons live in the block's banner and their markup differs, so none of
-// theirs is intercepted or cloned.
+// A folded message's last code block shows only its start. The host's Markdown would
+// give that part a copy control holding just the part, so the block is drawn here,
+// with a copy bound to the whole block: `code` is its text, or a function that reads
+// it when the message is kept as a file.
 function FoldCodeCopy({ code, actions }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try {
       if (typeof code === 'function' && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-        // Safari needs the clipboard write inside the click, before the attachment loads.
+        // Safari needs the clipboard write inside the click, before the file loads.
         const text = Promise.resolve().then(code).then(value => new Blob([value], { type: 'text/plain' }))
         await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })])
       } else {
@@ -87,23 +87,23 @@ function FoldCodeCopy({ code, actions }) {
       setCopied(true); setTimeout(() => setCopied(false), 1000)
     } catch (error) { actions?.reportError?.(error, 'copy') }
   }
-  return h('button', { type: 'button', className: 'bt-tool bt-fold-copy', 'aria-label': copied ? t('Copied') : t('Copy'), title: copied ? t('Copied') : t('Copy'), onClick: copy }, copied ? h(CheckIcon) : h(CopyIcon))
+  return h('button', { type: 'button', className: 'bt-fold-copy', onClick: copy }, copied ? t('Copied') : t('Copy'))
 }
 
-// A folded message's last code block shows only its start. The start is not
-// given to the host's Markdown — its block would carry a copy bound to the
-// part shown — so Omni draws the part itself, with a copy bound to the
-// whole block. `body` renders the markdown before the block.
+// `body` is the Markdown before the cut block (null when the message opens with it).
+// The block is drawn as the host draws a code block, its copy in the same place, so a
+// folded message reads the same as before.
 const foldArea = (body, code, codeHead, actions) => (code === undefined ? body
   : h('div', { className: 'bt-fold-code' },
     body,
-    h('pre', { className: 'bt-fold-pre' }, h('code', null, codeHead)),
-    h(FoldCodeCopy, { code, actions })))
+    h('div', { className: 'bt-fold-block' },
+      h('div', { className: 'bt-fold-bar' }, h(FoldCodeCopy, { code, actions })),
+      h('pre', { className: 'bt-fold-pre' }, h('code', null, codeHead)))))
 
 function Bubble({ text, index, roster, selfId, actions, sessionId, msgKey, mentions, fold, picked, live, lead, whole }) {
   // A reply with a canvas is never folded: a cut would split the canvas from its source.
   const canvas = hasCanvas(text)
-  const { shown, folded, control, code, codeHead } = useFold(text, { limit: canvas ? NEVER : fold, whole, live })
+  const { shown, folded, control, code, codeHead } = useFold(text, { limit: canvas ? NEVER : fold, whole, live, ownCode: !canvas })
   const key = msgKey ? `${msgKey}:${index}` : undefined
   const markdown = value => h(MarkdownText, { text: linkMentions(value, roster.bots, selfId), streaming: live, labels: mdLabels(), variant: 'compact', fileMentions: mentions })
   const body = canvas || shown === '' ? null : markdown(shown)
@@ -1341,7 +1341,9 @@ export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessio
   const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards, hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages, useComputer } }
   return h(Fragment, null, drawn.map((call, index) => {
     const stop = stops.get(call.callId)
-    return h(Fragment, { key: call.callId ?? index }, renderCall(call, env),
+    // A call that draws nothing leaves the empty mark: one of this plugin's own, or a
+    // card another plugin registered (extend.js) that returned nothing.
+    return h(Fragment, { key: call.callId ?? index }, renderCall(call, env) ?? h(CellEmpty),
       stop ? h('div', { className: 'bt-event bt-event-error', role: 'status', title: stop.why }, stop.line) : null)
   }))
 }

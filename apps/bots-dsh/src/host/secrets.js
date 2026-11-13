@@ -4,7 +4,7 @@
 // has it replaced by [secret:<NAME>] before it leaves.
 import { randomUUID } from 'node:crypto'
 import { refusal } from './refusal.js'
-import { copyFileSync, readFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, readFileSync } from 'node:fs'
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -138,10 +138,6 @@ export function install(rt) {
   // A reading host reloads on every request, so a held value is reported once per change,
   // not once per read.
   let heldWarned = ''
-  // Reads may overlap (each load of an unreadable file starts one). Only the newest may change
-  // the store: an older one that lands late (it opened what was there before) would undo it,
-  // clearing a key just saved or blocking a file just fixed; it waits for the newest instead.
-  let readGen = 0
   const loadSecrets = () => {
     if (loaded !== null && (loadedReadOnly || rt.readOnly() !== undefined || blocked !== undefined)) loaded = null
     return loaded ??= readSecrets()
@@ -149,14 +145,11 @@ export function install(rt) {
   // Synchronous on purpose: a shell resolves its environment without an await, so the
   // map must be full before the first resolve after a start reads it.
   const readSecrets = async () => {
-    const gen = ++readGen
-    const superseded = () => gen !== readGen
     loadedReadOnly = rt.readOnly() !== undefined
     let contents
     try {
       contents = readFileSync(path, 'utf8')
     } catch (error) {
-      if (superseded()) return loaded
       if (error?.code === 'ENOENT') {
         blocked = undefined
         secrets.clear()
@@ -168,7 +161,6 @@ export function install(rt) {
       changed()
       return
     }
-    if (superseded()) return loaded
     let parsed
     try {
       parsed = JSON.parse(contents)
@@ -211,7 +203,7 @@ export function install(rt) {
         ...(Number.isFinite(entry.lastUsedAt) ? { lastUsedAt: entry.lastUsedAt } : {}),
       })
     }
-    if (!loadedReadOnly) await chmod(path, 0o600).catch(() => {})
+    if (!loadedReadOnly) try { chmodSync(path, 0o600) } catch {}
     const heldNotice = heldNames.join(',')
     if (heldNotice !== heldWarned) {
       heldWarned = heldNotice

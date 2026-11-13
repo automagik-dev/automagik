@@ -910,7 +910,7 @@ const ZH = {
   'HTTP status': 'HTTP 状态码',
   'Request ID': '请求 ID',
   'Provider message': '原文',
-  'Omni': 'Omni',
+  'Back to Automagik': '返回 Automagik',
 
   // Header
   'Message {name}': '给 {name} 发消息',

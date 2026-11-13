@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) is not delivered; 8 open; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10; amended by [RFC 0026](0026-bot-tag-coverage.md) (#914), 2026-11-10) |
+| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) met on one machine, accepted by the owner 2026-11-12, #1115; 8 open until #1126 explains and repairs the backfill's rollup total change (reported in #1114; cause fixed by #1127); Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10; amended by [RFC 0026](0026-bot-tag-coverage.md) (#914), 2026-11-10) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); herdr (3.N.P) for ledger rows; meter (3.N.P, RFC 0017) for the crate |
 | Created | 2026-11-09 |
@@ -674,15 +674,24 @@ release.
    the pack's pin to it. Its delivery 5 (keys) and the rest of 6 (the signed pointer) follow on
    their own; attribution does not wait for them. Delivery 2 here must merge before RFC 0017's
    delivery 4.
-   *Check:* a machine that took the pack release runs a meter whose `query --by bot` answers.
-   *Status (2026-11-10):* not delivered. v3.114.1 shipped the meter with #875 and the meter-lane
-   pointer names it, but no machine is shown running the pack release's `query --by bot`.
+   *Check:* a machine that took the meter through the signed meter lane runs a meter whose
+   `query --by bot` answers. Amended by the owner, 2026-11-12: this read "a machine that took the
+   pack release"; since RFC 0017's delivery 6 the pack itself installs the meter only from that
+   signed pointer, so delivery through the lane, by the pack or by am, meets it.
+   *Status (2026-11-12):* met. A machine that took a released meter from the signed meter-lane
+   pointer by way of am answers `query --by bot` with bot rows
+   ([evidence](../meter/0021-d7-d8-evidence.md), #1115); accepted by the owner.
 8. **The backfill** (the operator, per machine). `usagemeter sync --evidence-backfill` back to the
    later of the oldest ledger row and the retention bound.
    *Acceptance (the Reviewer's item, required):* `--days` never asks past the retention bound
    (90 days), whatever the oldest ledger row says.
    *Check:* `actor_unattributed` falls for the backfilled hours; rows before the ledger stay
    unknown.
+   *Status (2026-11-12):* open. On the same machine both halves of the Check hold, but the
+   store's hourly rollup total fell by 0.70% across the backfill, against "totals never change"
+   ([evidence](../meter/0021-d7-d8-evidence.md), reported in #1114). #1127 fixed the cause, so a
+   backfill loses nothing new; it does not explain or repair the 0.70% already lost on that
+   store. The delivery stays open until #1126 does.
 
 agy follows once the meter has an agy source and Herdr launches agy workers with start rows.
 

@@ -2,11 +2,11 @@
 // reaches a model that cannot read them, each image becomes text from a vision model.
 // Texts are kept per attachment, so later requests repeat the same words and the
 // prompt cache still hits.
+import { assembleLlmStream } from './models.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { OCR_CACHE_MAX, OCR_PROMPT, OCR_RETRY_MS, OCR_TIMEOUT_MS } from './constants.js'
 import { replaceFile } from './files.js'
-import { assembleLlmStream } from './models.js'
 import { splitRef } from './text.js'
 
 export function offloadTargets(session, beforeSeq) {

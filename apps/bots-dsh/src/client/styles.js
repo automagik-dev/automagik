@@ -171,11 +171,12 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* A Bot's capability pills (capability-pills.js). In a sidebar row they have a line of their
-   own, and a pill that does not fit wraps out of sight whole rather than cut mid-word. */
+   own, and a pill that does not fit beside the others goes on to a line below, whole: the row
+   grows by that line, so no pill is cut or left out of sight (issue 1157). */
 .bt-caps{display:flex;align-items:center;gap:4px;min-width:0}
 .bt-cap{cursor:default}
-.bt-row-caps{flex-wrap:wrap;height:16px;overflow:hidden;margin-top:2px}
-.bt-row-caps>.bt-cap{font-size:11px;line-height:14px;padding:1px 5px}
+.bt-row-caps{flex-wrap:wrap;row-gap:2px;margin-top:2px}
+.bt-row-caps>.bt-cap{font-size:11px;line-height:14px;padding:1px 4px}
 .bt-drawer-caps{flex-wrap:wrap;justify-content:center;max-width:100%;margin-top:8px}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview-ask{color:var(--st-warn,var(--bt-ink-2));font-weight:500}
@@ -397,12 +398,16 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-exchange .bt-dialog-log{max-width:none;margin:0;padding:39px max(16px,calc((100% - 960px)/2)) 116px;scrollbar-width:thin}
 .bt-exchange .bt-tools{display:none}
 .bt-fold{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-top:4px;white-space:normal}
-.bt-fold-code{position:relative}
-.bt-fold-code>.bt-tool{position:absolute;right:6px;bottom:6px}
-/* The part of a cut code block the preview keeps, drawn by Omni so the host's
-   Markdown draws no copy control of its own for it. */
-.bt-fold-code>.bt-fold-pre{margin:0;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,currentColor 6%,transparent);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:20px;overflow-x:auto}
-.bt-fold-code>*+.bt-fold-pre{margin-top:6px}
+/* The part of a cut code block the preview keeps, drawn here so the host's Markdown
+   draws no copy control of its own for it (cells.js foldArea). It wears the host's code
+   block tokens, banner and copy place, so a folded message looks as it did. */
+.bt-fold-block{color:var(--dsw-alias-label-primary,inherit);background:var(--dsw-alias-markdown-code-block,color-mix(in srgb,currentColor 6%,transparent));border-radius:var(--dsw-radius-lg,16px)}
+.bt-fold-code>*+.bt-fold-block{margin-top:4px}
+.bt-fold-bar{display:flex;justify-content:flex-end;align-items:center;padding:9px 14px;font:11px/18px var(--dsw-font-family,inherit);background:var(--dsw-alias-markdown-code-block-banner,transparent);border-radius:var(--dsw-radius-lg,16px) var(--dsw-radius-lg,16px) 0 0}
+.bt-fold-copy{border:0;margin:-6px -8px;padding:6px 8px;border-radius:8px;background:none;color:inherit;font:inherit;cursor:pointer}
+.bt-fold-copy:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px}
+.bt-fold-pre{margin:0;padding:16px;font:var(--dsw-font-markdown-code-block,11px/19px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);white-space:pre-wrap;word-break:break-all;overflow-x:auto}
+.bt-fold-pre code{font:inherit}
 .bt-fold-note{font-size:12px;line-height:16px;color:var(--bt-ink-3)}
 [data-folded] .bt-fold-body{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent)}
 .bt-ubody .bt-fold .bt-more,.bt-ububble .bt-fold .bt-more,.bt-ubody .bt-fold-note,.bt-ububble .bt-fold-note{color:inherit;opacity:.7}
@@ -1096,11 +1101,12 @@ body:not([data-bt-advanced]) [data-step-process]>[data-step-process-body]{displa
 body:not([data-bt-advanced]) :is([data-step-process],[data-turn-process-hidden])[hidden]{content-visibility:visible!important}
 [class*="_flowItem"]:has(> [data-slot="conversation.chat.node"]:empty, > [data-slot="conversation.chat.node"][data-bt-emptied]){display:none!important}
 /* A turn's process seat is a flow child of its own, not a flowItem: a seat whose
-   member cells all emptied themselves (a hidden exchange turn, a turn whose
-   calls draw nothing) still kept its margin, stacking a blank band per hidden
-   call. Only the slot a Omni cell marked counts, so a seat another renderer
-   fills — even with plain text and no element child — is never taken for empty. */
-[data-step-process]:has(> [data-step-process-body] [data-slot="conversation.chat.node"][data-bt-emptied]):not(:has(> [data-step-process-body] [data-slot="conversation.chat.node"]:not([data-bt-emptied]))){display:none!important}
+   member cells all emptied themselves (a hidden exchange turn, a turn whose calls
+   draw nothing) still kept its margin, stacking a blank band per hidden call. Only
+   the slot one of this plugin's cells marked counts (cell-empty.js), so a seat another
+   renderer fills, even with plain text and no element child, is never taken for empty.
+   Advanced keeps DSH's own seat, with its header. */
+body:not([data-bt-advanced]) [data-step-process]:has(> [data-step-process-body] [data-slot="conversation.chat.node"][data-bt-emptied]):not(:has(> [data-step-process-body] [data-slot="conversation.chat.node"]:not([data-bt-emptied]))){display:none!important}
 [class*="_header"]:has(.bt-head){border-bottom-color:transparent!important;box-shadow:none!important}
 /* The header is a band of its own above the transcript, never a layer over it: floating,
    the transcript scrolled under its buttons, and once the column met the button row on a
@@ -1295,6 +1301,14 @@ div:has(> nav [class*="_marks"]){display:none!important}
 [class*="_toBottomSlot"]>button svg{display:none}
 [class*="_toBottomSlot"]>button::before{content:"";width:20px;height:20px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4v12M5 11l5 5 5-5'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4v12M5 11l5 5 5-5'/%3E%3C/svg%3E") center/contain no-repeat}
 @keyframes bt-tobottom-in{from{translate:0 8px;scale:.8}}
+/* The arrow (and the "new messages" pill that takes its place) stands over the transcript. A
+   band of the page's own colour comes with it, from above the arrow down to the end of the
+   composer's seat, fading out at its top: the messages pass under the band, so the arrow is
+   never on a message's text, and none shows through the open parts of the seat below it (the
+   suggestion chips, the gaps of the stack) (issue 1138). The seat is drawn over the band, and the
+   band is there only while the arrow is: at the latest message nothing is under it. It ends
+   where the transcript's own box ends, so it adds nothing to the chat's scroll range. */
+[class*="_toBottomSlot"]::before{content:"";position:absolute;z-index:-1;left:0;right:0;bottom:calc(0px - var(--dsh-composer-height,152px));height:calc(var(--dsh-composer-height,152px) + 64px);background:linear-gradient(to bottom,transparent,var(--bt-main) 24px);pointer-events:none;animation:bt-veil-in .16s ease-out}
 [data-bt-news] [class*="_toBottomSlot"]>button{visibility:hidden!important;pointer-events:none!important}
 .bt-news{position:fixed;z-index:30;transform:translateX(-50%);display:inline-flex;align-items:center;overflow:hidden;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink);box-shadow:inset 0 0 0 1px rgba(20,20,20,.05),0 1px 3px 0 rgba(0,0,0,.12);font-family:var(--bt-font);animation:bt-news-in ${SPRING_TAP.duration}ms ${SPRING_TAP.easing},bt-veil-in .16s ease-out}
 @keyframes bt-news-in{from{translate:0 8px;scale:.9}}
@@ -1306,7 +1320,7 @@ div:has(> nav [class*="_marks"]){display:none!important}
 .bt-news-x{position:absolute;right:4px;top:50%;z-index:1;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:999px;background:transparent;color:inherit;opacity:.75;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .bt-news-x svg{width:12px;height:12px}
 .bt-news-x:hover{opacity:1;background:rgba(20,20,20,.5)}
-@media (prefers-reduced-motion:reduce){.bt-news,[class*="_toBottomSlot"]>button{animation:none}}
+@media (prefers-reduced-motion:reduce){.bt-news,[class*="_toBottomSlot"]>button,[class*="_toBottomSlot"]::before{animation:none}}
 .bt-new-sep{display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:2px 0;font-size:11px;line-height:14px;font-weight:500;letter-spacing:.02em;text-transform:uppercase;color:var(--bt-accent);font-family:var(--bt-font)}
 .bt-new-sep::before,.bt-new-sep::after{content:"";flex:1;height:1px;background:color-mix(in srgb,var(--bt-accent) 20%,transparent)}
 .bt-open-new{display:flex;flex-direction:column}

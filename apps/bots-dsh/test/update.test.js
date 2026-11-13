@@ -381,7 +381,7 @@ test('a newer release is offered in the run that reported the last update', asyn
   const { rt } = start({
     home,
     source: `${PKG.name}@^${PKG.version}`,
-    answers: { [`https://registry.npmjs.org/${PKG.name}/latest`]: { version: '9.0.0' } },
+    answers: { [`https://registry.npmjs.org/${encodeName(PKG.name)}/latest`]: { version: '9.0.0' } },
   })
   assert.equal(rt.updateView().phase, 'updated')
   const view = await rt.updateCheck({ fresh: true })

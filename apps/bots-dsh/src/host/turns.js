@@ -612,19 +612,6 @@ export function install(rt) {
     const room = rt.roomOf(rt.groupOwners.get(id)?.roomId) ?? rt.roomOf(id)
     return room ? `group "${room.name}"` : 'own chat'
   }
-  const noteTurnFailure = (id, failure) => {
-    rt.noteFailure({
-      source: 'turn',
-      text: failure.message || 'the model call failed',
-      code: failure.code,
-      status: failure.status,
-      requestId: failure.requestId,
-      bot: rt.botOf(rt.selfOf(id))?.name ?? (rt.roomOf(id) ? undefined : 'unknown Bot'),
-      where: placeOf(id),
-      sessionId: id,
-    })
-  }
-
   // A turn cut off at the output limit is not a finish, but no failure either. The
   // record names the route and the size of the input, so a route whose declared
   // window is larger than the service really serves can be found from it.
@@ -640,6 +627,19 @@ export function install(rt) {
       text: `${wroteNothing
         ? 'the turn was cut off at the output limit before it wrote anything'
         : 'the turn was cut off at the output limit, so its answer is not complete'}${facts.length > 0 ? ` (${facts.join(', ')})` : ''}`,
+      bot: rt.botOf(rt.selfOf(id))?.name ?? (rt.roomOf(id) ? undefined : 'unknown Bot'),
+      where: placeOf(id),
+      sessionId: id,
+    })
+  }
+
+  const noteTurnFailure = (id, failure) => {
+    rt.noteFailure({
+      source: 'turn',
+      text: failure.message || 'the model call failed',
+      code: failure.code,
+      status: failure.status,
+      requestId: failure.requestId,
       bot: rt.botOf(rt.selfOf(id))?.name ?? (rt.roomOf(id) ? undefined : 'unknown Bot'),
       where: placeOf(id),
       sessionId: id,
@@ -1004,16 +1004,13 @@ export function install(rt) {
         const joined = entry.joined ?? []
         // What the group already saw of the turn is not posted again.
         const texts = entry.texts.slice(entry.shown)
-        // Whether the turn wrote any text, also text the group already saw.
         const wroteText = entry.texts.length > 0
-        const shown = entry.shown > 0 || (info?.retried === true && promisedOpenings.delete(info.exchangeId))
+        const shown = entry.shown > 0
         const { lastText, lastCalled } = entry
         const toolCount = entry.toolCount ?? 0
         const suppressedSubagent = entry.suppressedSubagent === true
         // A turn stopped for a switch goes on in the next part, which answers instead.
         const switched = entry.switched === true
-        // A turn the plugin watched start. A turn/end replayed after a restart, whose
-        // turn is settled from the Session's log, is not one (resume.js does that).
         const watched = entry.turn !== undefined
         entry.turn = undefined
         entry.info = undefined
@@ -1052,22 +1049,10 @@ export function install(rt) {
         if (failure !== undefined) setFailed(id, failure)
         const held = rt.groupOwners.has(id) ? rt.takeRoomSteps?.(id) ?? '' : ''
         if (switched) break
-        const owner = rt.chatOwners.get(id)
-        // A turn cut off at the output limit is not a finish: whoever reads its answer
-        // is told, and the diagnostics record it. Nothing written at all, twice in a
-        // row, is what a route over the window it really has leaves behind, and the
-        // context check then moves the part on instead of sending the same size again.
         const cutOff = watched && failure === undefined && reason?.kind === 'max-tokens'
         const wroteNothing = cutOff && !wroteText
         rt.noteCutOffTurn?.(id, { withoutText: wroteNothing })
         if (cutOff) noteCutOffTurn(id, { session, wroteNothing })
-        if (failure !== undefined) {
-          if (blockBot(id, session, failure) && owner !== undefined && info?.role === 'kickoff') rt.holdKickoffAgain(owner)
-        } else if (reason?.kind === 'completed') {
-          unblockBot(rt.selfOf(id))
-          // A turn the user opened, or the Retry that answers the user.
-          if (owner !== undefined && (info === undefined || info.role === 'continue')) rt.userAnswered(owner)
-        }
         // A model that writes its tool call as text ends the turn as if it were done,
         // though nothing ran. It gets one more turn on the same trigger, so a waiting
         // round or sender gets the real answer; a second time, the text goes on without

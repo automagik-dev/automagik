@@ -21,7 +21,7 @@ export const CLAY_TOKENS = `
   --oai-cast:rgba(111,81,53,.2);--oai-cast-far:rgba(121,91,53,.1);--oai-ring:#b4498f;
   --oai-r:19px 22px 18px 21px;--oai-r-sm:12px 14px 12px 13px;
   --oai-font:"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --oai-head:Manrope,"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --oai-head:Fredoka,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
   color-scheme:light}
 body[data-ds-dark-theme] .oai-overlay,body[data-ds-dark-theme] .oai-acp-page,body[data-ds-dark-theme] .oai-aside{
   --oai-bg:#1e1923;--oai-card:#2a2330;--oai-clay:#322a39;--oai-niche:#16121a;

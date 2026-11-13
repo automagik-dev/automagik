@@ -2194,3 +2194,26 @@ test('rc.2 Continue reaches the same ACP session once with no runtime notes', as
   assert.match(textIn(chunks), /turn 2: you said "Continue\."/)
   assert.doesNotMatch(textIn(chunks), /Internal runtime note/)
 })
+
+test('a kept Codex model missing from the live session fails before any prompt', async t => {
+  const h = host()
+  t.after(h.close)
+  const trace = join(h.agent.session.header.cwd, 'kept-model-trace.jsonl')
+  const agent = h.adapter.agents.get('acp-fake')
+  agent.catalog.spec.fallback = AGENTS['acp-codex'].fallback
+  agent.catalog.saved = { models: [
+    ...AGENTS['acp-codex'].fallback, { id: 'gpt-6.1-sol', name: '6.1 Sol' },
+  ] }
+  agent.catalog.spec.key = () => undefined
+  const spawn = agent.spawn
+  agent.spawn = () => {
+    const launch = spawn()
+    return { ...launch, env: { ...launch.env, FAKE_ACP_TRACE: trace } }
+  }
+  assert.ok((await h.adapter.listModels('acp-fake')).some(row => row.id === 'gpt-6.1-sol'))
+  const events = await step(h.adapter, [{ role: 'user', source: { kind: 'user' },
+    content: [{ type: 'text', text: 'x' }] }], { model: 'gpt-6.1-sol' })
+  assert.equal(events.at(-1).reason.kind, 'error')
+  assert.match(events.at(-1).reason.failure.message, /it offers no model gpt-6.1-sol/)
+  assert.equal(traceEvents(trace).filter(event => event.event === 'prompt').length, 0)
+})

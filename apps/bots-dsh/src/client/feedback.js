@@ -39,7 +39,10 @@ function entrySummary(entry) {
   return entry.text
 }
 
-const SOURCES = { turn: 'Model call', host: 'Omni', api: 'Omni', browser: 'This window' }
+// Where a recorded problem came from. The plugin's own host and its endpoint are the app,
+// Automagik (#1160): Omni is one of its Bots.
+const SOURCES = { turn: 'Model call', host: 'Automagik', api: 'Automagik', browser: 'This window' }
+export const sourceName = source => SOURCES[source] ?? 'Automagik'
 
 // Where the new issue opens; `go(url)` tells whether it did.
 const issueWindow = reserveWindow
@@ -114,7 +117,7 @@ export function FeedbackPage({ actions, run, Section, Row, roster }) {
             h('span', { className: 'bt-fb-dot', 'data-level': entry.level, 'aria-hidden': true }),
             h('div', { className: 'bt-set-copy' },
               h('span', { className: 'bt-fb-text' }, entrySummary(entry)),
-              h('span', { className: 'bt-set-hint' }, [whenText(entry.time), entry.bot, entry.where, t(SOURCES[entry.source] ?? 'Omni')].filter(Boolean).join(' · '))),
+              h('span', { className: 'bt-set-hint' }, [whenText(entry.time), entry.bot, entry.where, t(sourceName(entry.source))].filter(Boolean).join(' · '))),
             entry.code ? h('span', { className: 'bt-tag bt-fb-code' }, entry.status ? `${entry.code} ${entry.status}` : entry.code) : null)),
       h(Row, { label: t('Error log'), hint: t('Kept on this computer across restarts, up to about 1 MB.') },
         h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: downloadLog }, t('Download')),

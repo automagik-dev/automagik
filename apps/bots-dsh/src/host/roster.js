@@ -1198,8 +1198,7 @@ export function install(rt) {
     rt.capTasks(task => task.from === id)
     if (bot.permissionAuto) rt.endAuto?.(bot)
     delete state.bots[id]
-    // The shared capability list is the user's and keeps its items; only a
-    // still-unapproved local MCP this Bot alone asked for leaves with it.
+    // Only a still-unapproved local MCP this Bot alone asked for leaves with it.
     rt.dropOrphanCapabilities?.(bot)
     for (const part of parts) {
       delete state.questions[part]

@@ -10,8 +10,8 @@ import { dateLocale, t } from './i18n.js'
 import { SPRING_POP, SPRING_SHAPE, spring } from './motion.js'
 import { useDockHold } from './card-hold.js'
 import { heldCardKey } from './sources.js'
-import { GITHUB_FIELDS, githubPermissions, githubTokenUrl } from '../shared/github-token.js'
 import { CellEmpty } from './cell-empty.js'
+import { GITHUB_FIELDS, githubPermissions, githubTokenUrl } from '../shared/github-token.js'
 
 const MIN_VALUE = 4
 const NONE = {}

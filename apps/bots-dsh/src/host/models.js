@@ -1,6 +1,7 @@
 // Models. Every Bot runs on one model of its own, fixed when it is created and changed
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
+import { BlockAssembler, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { cliRoute, leavesCli, piAiRoutes, routeOf } from '../shared/routes.js'
 import { refusal } from './refusal.js'
 import { normalize, splitRef } from './text.js'
@@ -71,6 +72,99 @@ function resolvedDefault(provider, model) {
   return name ? { resolvesTo: name } : {}
 }
 
+const TRANSIENT_LLM_CODES = new Set(['TRANSPORT', 'TIMEOUT'])
+
+function retryPolicyOf(ctx, provider) {
+  try {
+    const resolved = ctx.llm?.providerRetryPolicy?.(provider)
+    if (resolved !== undefined) return resolved
+  } catch {}
+  return resolveRetryPolicy(undefined, 'ds-bot')
+}
+
+function retryDelayMs(policy, failure, retry, backoff, random) {
+  const initialDelayMs = backoff?.initialDelayMs ?? policy.initialDelayMs
+  const maxDelayMs = backoff?.maxDelayMs ?? policy.maxDelayMs
+  const jitterRatio = backoff?.jitterRatio ?? policy.jitterRatio
+  const providerAfter = failure?.providerRetryAfterMs
+  if (providerAfter !== undefined && Number.isFinite(providerAfter) && providerAfter > 0) {
+    if (providerAfter <= maxDelayMs) return providerAfter
+    if (policy.mode === 'normal') return undefined
+  }
+  const exponential = Math.min(initialDelayMs * 2 ** Math.min(retry - 1, 1024), maxDelayMs)
+  const jitter = 1 - jitterRatio + 2 * jitterRatio * random()
+  return Math.min(exponential * jitter, maxDelayMs)
+}
+
+function waitRetryDelay(delayMs, signal) {
+  if (signal?.aborted) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve(true)
+    }, delayMs)
+    function onAbort() {
+      clearTimeout(timer)
+      resolve(false)
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function abortedAssembler(failure) {
+  const assembler = new BlockAssembler()
+  assembler.push({ type: 'finish', reason: { kind: 'aborted', failure: failure ?? { code: 'ABORTED', message: 'aborted' } } })
+  return assembler
+}
+
+function canRetryPolicy(policy, code, retry) {
+  if (policy.mode === 'always') return true
+  if (policy.mode !== 'normal') return false
+  return Array.isArray(policy.retryableCodes) && policy.retryableCodes.includes(code) && retry <= policy.maxRetries
+}
+
+// Auxiliary calls (memory, learning, handoff, steward, OCR, side chats, browser_task)
+// bypass the agent loop's `agent/request-error` hook, so `dsh-llm-retry` never sees
+// their transport or stream-idle failures. Retry those transient codes on the same
+// route with the provider's own retry policy, discarding partial chunks from failed attempts.
+export async function assembleLlmStream(ctx, options, { signal, backoff, random = Math.random, check } = {}) {
+  const fused = options.signal && signal ? AbortSignal.any([options.signal, signal]) : (options.signal ?? signal)
+  const request = fused === options.signal ? options : { ...options, signal: fused }
+  for (let retry = 1; ; retry += 1) {
+    const assembler = new BlockAssembler()
+    let thrown
+    try {
+      for await (const chunk of ctx.llm.stream(request)) {
+        check?.()
+        assembler.push(chunk)
+      }
+    } catch (error) {
+      thrown = error
+    }
+    if (thrown !== undefined) {
+      const code = thrown?.failure?.code ?? thrown?.code
+      const failure = thrown?.failure ?? { code, message: thrown?.message || String(thrown) }
+      if (fused?.aborted || !TRANSIENT_LLM_CODES.has(code)) throw thrown
+      const policy = retryPolicyOf(ctx, options.provider)
+      if (!canRetryPolicy(policy, code, retry)) throw thrown
+      const delayMs = retryDelayMs(policy, failure, retry, backoff, random)
+      if (delayMs === undefined) throw thrown
+      if (!await waitRetryDelay(delayMs, fused)) throw fused?.reason ?? thrown
+      continue
+    }
+    const finish = assembler.finish
+    if (finish.kind !== 'error' || fused?.aborted) return assembler
+    const failure = finish.failure
+    const code = failure?.code
+    if (!TRANSIENT_LLM_CODES.has(code)) return assembler
+    const policy = retryPolicyOf(ctx, options.provider)
+    if (!canRetryPolicy(policy, code, retry)) return assembler
+    const delayMs = retryDelayMs(policy, failure, retry, backoff, random)
+    if (delayMs === undefined) return assembler
+    if (!await waitRetryDelay(delayMs, fused)) return abortedAssembler({ code: 'ABORTED', message: failure?.message ?? 'aborted' })
+  }
+}
+
 export function install(rt) {
   const { ctx, state } = rt
   // Bots a plugin answers for on its own engine (host-models.js) never run on a DSH model.
@@ -79,58 +173,30 @@ export function install(rt) {
 
   let modelsSynced = null
   let catalogCache = { at: 0, value: [] }
-  // Routes DSH serves that cannot answer a request at all — a hosted loop engine
-  // publishes one so its Sessions can be prompted. Once one refuses with
-  // HOSTED_ENGINE_ROUTE it is remembered with the models its provider served then,
-  // and nothing chooses it again until that provider serves different models.
-  const refused = new Map()
-  const answerable = entries => (refused.size === 0 ? entries : entries.filter(entry => !refused.has(entry.ref)))
-  // The models a ref's provider serves, as a string to compare; undefined when it
-  // cannot be listed, e.g. the provider is not registered.
-  async function servedModels(ref) {
-    try { return JSON.stringify(await ctx.llm.listModels(splitRef(ref).provider)) } catch { return undefined }
-  }
-  // An adapter update may have replaced a refused placeholder with a real route, which
-  // serves other models; the same models again are the same route, still refused.
-  async function forgetChangedRefusals() {
-    for (const [ref, served] of refused) {
-      const now = await servedModels(ref)
-      if (now !== undefined && now !== served) refused.delete(ref)
-    }
-  }
+  let catalogEpoch = 0
+  let signInsRead = false
+  let signInsDirty = false
   // A model's thinking levels, resolved once and kept for a short while: they change
   // only with the provider, which also drops the catalog cache.
   const reasoningCache = new Map()
-  const dropCatalog = () => { catalogCache = { at: 0, value: [] } }
-  // A key set or a sign-in may be the user's fix for a Bot's failed turn (turns.js); a
-  // key removed or a sign-out is not. A provider that registers or changes fixes
-  // nothing by itself: providers register late at every start.
-  ctx.on?.('llm/adapters-updated', () => { dropCatalog(); reasoningCache.clear(); return forgetChangedRefusals() })
-  ctx.on?.('credentials/reference-updated', async (ref) => {
-    dropCatalog()
-    if (await inPlace(credentials => credentials.describe(ref))) rt.unblockBots?.({ ref })
+  const invalidate = () => {
+    catalogEpoch += 1
+    catalogCache.at = 0
+  }
+  ctx.on?.('llm/adapters-updated', () => {
+    invalidate()
+    reasoningCache.clear()
+    // Invalidate a status already requested, including one still being read. Until the
+    // first request, keep the ordinary catalog's lazy sign-in check.
+    signInsDirty = signInsRead
   })
-  // A sign-in writes the account's record. A sign-out removes it, and so does a token
-  // the provider refused, while the turn that failed on it still runs. Other plugins'
-  // records (an OAuth token refresh) say nothing about the account.
-  ctx.on?.('credentials/record-updated', async (key) => {
-    dropCatalog()
-    if (String(key) !== ACCOUNT_RECORD) return
-    if (await inPlace(credentials => credentials.describeRecord(key))) rt.unblockBots?.({ signedIn: true })
-  })
-  ctx.on?.('settings/document-updated', dropCatalog)
-
-  // Whether a credential is there after a change. One that cannot be read counts as
-  // there, so a fix is not missed.
-  async function inPlace(describe) {
-    const credentials = ctx.get?.('credentials')
-    if (credentials === undefined) return true
-    try { return (await describe(credentials))?.configured !== false } catch { return true }
+  for (const name of ['credentials/reference-updated', 'settings/document-updated']) {
+    ctx.on?.(name, invalidate)
   }
 
   // The thinking levels a model serves: `{efforts: [{id, name, description?}],
   // defaultEffort?}`, or undefined when it has none or the provider cannot say.
-  async function reasoningOf(ref) {
+  async function reasoningOf(ref, epoch = catalogEpoch) {
     const cached = reasoningCache.get(ref)
     if (cached !== undefined && Date.now() - cached.at < CATALOG_TTL_MS) return cached.value
     const route = splitRef(ref)
@@ -139,14 +205,15 @@ export function install(rt) {
       efforts: (info.reasoning.efforts ?? []).map(effort => ({ id: effort.id, name: effort.name ?? effort.id, ...(effort.description ? { description: effort.description } : {}) })),
       ...(info.reasoning.defaultEffort === undefined ? {} : { defaultEffort: info.reasoning.defaultEffort }),
     }
-    reasoningCache.set(ref, { at: Date.now(), value })
+    if (epoch === catalogEpoch) reasoningCache.set(ref, { at: Date.now(), value })
     return value
   }
 
   // Each agent's sign-in as acp-dsh last saw it: true, false, or absent while unknown. A
   // fresh catalog (a menu about to open) reads acp-dsh's `status()`, which spawns nothing; any
-  // other catalog keeps the last answer. An unknown agent ready to run is checked once in the
-  // background (acp-dsh's `inspect`, one `auth status`), at most every SIGN_IN_CHECK_MS.
+  // other catalog keeps the last answer unless adapters changed. An unknown agent ready to run
+  // is checked once in the background (acp-dsh's `inspect`, one `auth status`), at most every
+  // SIGN_IN_CHECK_MS.
   const agentSignIn = new Map()
   // The agents signed in to an account the person has not confirmed (acp-dsh's `consent`). An
   // older acp-dsh says nothing, and nothing is asked.
@@ -160,14 +227,16 @@ export function install(rt) {
   }
   const signInChecks = new Map()
   const acpAgents = () => { try { return ctx.get?.('acpAgents') } catch { return undefined } }
-  async function readAgentSignIns() {
+  async function readAgentSignIns(epoch) {
     const agents = acpAgents()
     if (typeof agents?.status !== 'function') return
+    signInsRead = true
     let timer
     const late = new Promise((resolve) => { timer = setTimeout(resolve, STATUS_WAIT_MS) })
     let rows
     try { rows = (await Promise.race([Promise.resolve().then(() => agents.status()), late]))?.agents } catch {} finally { clearTimeout(timer) }
-    if (!Array.isArray(rows)) return
+    if (epoch !== catalogEpoch || !Array.isArray(rows)) return
+    signInsDirty = false
     for (const row of rows) {
       if (typeof row?.id !== 'string') continue
       noteConsent(row)
@@ -177,7 +246,7 @@ export function install(rt) {
       if (row.on === false || row.connector?.state !== 'ready' || typeof agents.inspect !== 'function' || (last !== undefined && Date.now() - last < SIGN_IN_CHECK_MS)) continue
       signInChecks.set(row.id, Date.now())
       void Promise.resolve().then(() => agents.inspect(row.id)).then((seen) => {
-        if (typeof seen?.signedIn !== 'boolean') return
+        if (epoch !== catalogEpoch || typeof seen?.signedIn !== 'boolean') return
         noteConsent({ ...seen, id: row.id })
         agentSignIn.set(row.id, seen.signedIn)
         catalogCache = { at: 0, value: [] }
@@ -190,6 +259,7 @@ export function install(rt) {
   // also carry their `reasoning`, so the picker can offer thinking levels.
   async function catalog({ fresh = false, remember = true } = {}) {
     if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return catalogCache.value
+    const epoch = catalogEpoch
     const listed = []
     let directory = []
     try { directory = ctx.llm.listConfigurableProviders?.() ?? [] } catch {}
@@ -226,7 +296,7 @@ export function install(rt) {
     const agentsListed = entries.some(entry => routeOf(entry.provider).connectedBy === 'acp')
     const [auth] = await Promise.all([
       Promise.resolve().then(() => rt.routeAuth?.(providers)).catch(() => undefined).then(value => value ?? new Map()),
-      fresh && agentsListed ? readAgentSignIns() : undefined,
+      (fresh || signInsDirty) && agentsListed ? readAgentSignIns(epoch) : undefined,
     ])
     for (const entry of entries) {
       const how = routeOf(entry.provider).connectedBy === 'acp' ? { via: 'cli', ...(agentSignIn.get(entry.provider) === false ? { needsSignIn: true } : {}) } : auth.get(entry.provider)
@@ -239,11 +309,11 @@ export function install(rt) {
     for (const entry of entries) if (coveredBy(entry) !== undefined) entry.covered = true
     if (remember) noteConnected(entries)
     await Promise.all(entries.filter(entry => used.has(entry.ref)).map(async (entry) => {
-      const reasoning = await reasoningOf(entry.ref)
+      const reasoning = await reasoningOf(entry.ref, epoch)
       if (reasoning !== undefined) entry.reasoning = reasoning
     }))
-    catalogCache = { at: Date.now(), value: entries }
-    return answerable(entries)
+    if (epoch === catalogEpoch) catalogCache = { at: Date.now(), value: entries }
+    return entries
   }
 
   // The profile default model of DSH as set, served or not, and able to answer.
@@ -588,34 +658,13 @@ export function install(rt) {
     }
   }
 
-  // A route that refused a request for not being a model endpoint: it stays out of
-  // the catalog from now on, the Bots pinned to it move to what they would be given
-  // today, and each of them re-selects even when its record looks applied (`force`):
-  // its Session may still be on the route, or on another Bot's route in a group.
-  async function routeRefused(ref, bot) {
-    const served = await servedModels(ref)
-    if (!refused.has(ref)) {
-      refused.set(ref, served)
-      rt.warn('omni-ui: %s is not a model endpoint, so it is not chosen again', ref)
-      const entries = await catalog()
-      const pinned = Object.values(state.bots).filter(other => other.model === ref || other.appliedModel === ref)
-      for (const other of pinned) {
-        if (other.model === ref) other.model = pickDefault(entries)
-        if (other.appliedModel === ref) delete other.appliedModel
-      }
-      await rt.save()
-      for (const other of pinned) {
-        if (other !== bot) await applyModel(other, { force: true }).catch(error => rt.warn('omni-ui: model for %s not applied: %s', other.name, error))
-      }
-    }
-    if (bot !== undefined) await applyModel(bot, { force: true })
-  }
-
   const lifetime = new AbortController()
-  ctx.effect?.(() => () => { lifetime.abort() }, 'omni-ui: auxiliary llm retry')
-  const assembleLlm = options => assembleLlmStream(ctx, options, { signal: lifetime.signal, backoff: rt.config?.llmRetryBackoff })
+  ctx.effect?.(() => () => { lifetime.abort() }, 'ds-bot: auxiliary llm retry')
+  const assembleLlm = (options, { check } = {}) => assembleLlmStream(ctx, options, { signal: lifetime.signal, backoff: rt.config?.llmRetryBackoff, check })
 
   Object.assign(rt, {
+    assembleLlm,
+    modelsEpoch: () => catalogEpoch,
     catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
     defaultRef, defaultModel, defaultEffort, resolveModel, modelAccess, assertModelAccess, desiredModel, assertNotOffCli, reasoningOf, resolveEffort, desiredEffort,
     backgroundModel, cachedBackground: () => pickBackground(catalogCache.value), answersAside: answersAsideRef,

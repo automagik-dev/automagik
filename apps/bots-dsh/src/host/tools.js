@@ -476,25 +476,15 @@ export function install(rt) {
     const room = rt.roomOf(rt.groupOwners.get(exec.agent.id)?.roomId)
     const home = rt.workDirOf({ botId: bot.id, roomId: room?.id }) ?? rt.teamFolder()
     const target = await rt.folderAt(rt.sessionFolder(session), cd)
-    if (target === undefined || !(await rt.isFolder(target)) || home === undefined || within(target, await rt.real(home))) return next()
+    if (target === undefined || !(await rt.isFolder(target))) return next()
+    // Even an in-place move inside the workspace must stay out of protected data.
+    const workDir = await rt.workFolder(target)
+    if (home === undefined || within(target, await rt.real(home))) return next()
     if (room?.workDir) throw new Error(`Every member of "${room.name}" works in ${room.workDir} here, so you stay inside it. The user or a Main Bot can change the group's folder.`)
     const readOnly = rt.readOnly()
     if (readOnly !== undefined) throw new Error(`Your working folder cannot change now: ${readOnly}`)
     // Saved folders are trimmed like typed ones, so such a name would save another folder.
     if (unquote(target) !== target) throw new Error(`${JSON.stringify(target)} cannot be a working folder: its name starts or ends with a space or a quote mark.`)
-    const workDir = await rt.workFolder(target)
-    if (room !== undefined) {
-      // The folder holds only for this group conversation, so only this Session's
-      // writes widen; the private-Bot check is the one updateBot would run.
-      await rt.checkPrivacyChange(bot, { moving: true, workDir })
-      await rt.approveFolder(exec, { path: workDir, sessions: [exec.agent.id], who: { en: bot.name, zh: ` ${bot.name} ` } })
-      const result = await next()
-      if (result?.isError !== true) {
-        ;(room.memberDirs ??= {})[bot.id] = workDir ?? null
-        await rt.save()
-      }
-      return result
-    }
     await rt.approveFolder(exec, { path: workDir, sessions: rt.sessionsOfBot(bot.id), who: { en: bot.name, zh: ` ${bot.name} ` } })
     const result = await next()
     if (result?.isError !== true) await rt.updateBot(bot.id, { workDir: workDir ?? '' }, rt.selfOf(exec.agent?.id))

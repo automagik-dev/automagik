@@ -14,6 +14,7 @@ import { install as installSide } from './side.js'
 import { handoffReply, questionReply, viewReply } from './parts.js'
 import { defaultRelayLimit } from './groups.js'
 import { validateViewAnswer } from '../shared/views.js'
+import { previewText } from '../shared/plain-text.js'
 import { normalizeAddressList } from './browser/address-policy.js'
 import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
 
@@ -86,7 +87,16 @@ export function install(rt) {
   // Models come from DSH, not state.json, so a provider added in Harness settings
   // changes the view without a new revision. So do the permission presets DSH offers and
   // the Bots and groups whose Auto runs as workspace-write (permissions.js).
-  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.needsSignIn ? '?' : ''}${entry.needsAccount ? '~' : ''}${entry.covered ? '=' : ''}${entry.via ? `@${entry.via}` : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.cachedBackground?.() ?? ''}|${rt.permissionKey?.() ?? ''}`
+  const modelsKey = () => [
+    rt.cachedCatalog().map(entry => [
+      entry.ref, entry.needsKey ? '!' : '', entry.needsSignIn ? '?' : '',
+      entry.needsAccount ? '~' : '', entry.covered ? '=' : '',
+      entry.via ? `@${entry.via}` : '',
+      entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : '',
+    ].join('')).join(','),
+    rt.cachedDefault() ?? '', rt.cachedBackground?.() ?? '', rt.permissionKey?.() ?? '',
+    rt.modelsEpoch?.() ?? 0,
+  ].join('|')
   const view = () => ({
     revision: state.revision,
     workspaceId: state.workspaceId ?? null,
@@ -111,7 +121,9 @@ export function install(rt) {
     rooms: Object.values(state.rooms).map(({ log, seen, lateRounds, relays, sessions, segments, ...room }) => {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
-      return { ...room, relayLimitDefault: defaultRelayLimit(room), parts, ...rt.permissionFallbackOf('room', room), ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
+      // The row's one line: the start of the last message, without its markdown marks (#1155).
+      const said = last ? previewText(last.text) : ''
+      return { ...room, relayLimitDefault: defaultRelayLimit(room), parts, ...rt.permissionFallbackOf('room', room), ...(said ? { preview: last.who === 'User' ? said : `${last.who}：${said}` } : {}) }
     }),
     // `sessionId` is the group's own Session's current part, `ownParts` its earlier
     // ones; `parts` the members' hidden group Sessions and their earlier segments,

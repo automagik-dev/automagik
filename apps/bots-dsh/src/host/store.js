@@ -2,8 +2,8 @@
 // host on the same data from writing it, and the indexes that map a Session to the Bot
 // or group chat it belongs to.
 import { createHash } from 'node:crypto'
-import { constants, mkdirSync, statSync } from 'node:fs'
-import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { constants, copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
 // The saved team's format. A file may carry an older version this build still reads and
 // migrates (the formats before the stamp count as LEGACY_VERSION); any other value means a
@@ -83,15 +83,15 @@ export function install(rt) {
   // The name is the content's hash, so a restart that sees the same corrupt bytes finds and
   // reuses that one copy instead of adding a timestamped backup on every restart.
   let aside = false
-  const setAside = async (error, bytes) => {
+  const setAside = (error, bytes) => {
     aside = true
     const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
     const backup = `${statePath}.broken-${digest}`
     // What is at the backup's name: a complete copy of exactly these bytes, readable bytes
     // that differ (a torn or foreign copy), or something that cannot be read at all.
-    const classify = async () => {
+    const classify = () => {
       try {
-        return { case: (await readFile(backup)).equals(bytes) ? 'same' : 'torn' }
+        return { case: readFileSync(backup).equals(bytes) ? 'same' : 'torn' }
       } catch (readError) {
         const reason = readError?.code ?? readError?.message ?? String(readError)
         return { case: 'unreadable', reason }
@@ -99,7 +99,7 @@ export function install(rt) {
     }
     try {
       // COPYFILE_EXCL: a complete copy an earlier load made is reused, never rewritten.
-      await copyFile(statePath, backup, constants.COPYFILE_EXCL)
+      copyFileSync(statePath, backup, constants.COPYFILE_EXCL)
     } catch (copyError) {
       // A copy that failed for another reason keeps the team read-only, as before.
       if (copyError?.code !== 'EEXIST') {
@@ -109,7 +109,7 @@ export function install(rt) {
       }
       // Reuse only a complete copy of exactly these bytes. A torn or foreign copy is the
       // incomplete case readOnly() names; one that cannot be read is named apart from it.
-      const existing = await classify()
+      const existing = classify()
       if (existing.case !== 'same') {
         stuck = existing.case === 'torn'
           ? 'the set-aside backup is incomplete'
@@ -123,11 +123,12 @@ export function install(rt) {
     return undefined
   }
 
-  const readFileState = async () => {
+  // Populate the roster and Session indexes before a synchronous shell env resolve.
+  const readFileState = () => {
     aside = false
     let contents
     try {
-      contents = await readFile(statePath)
+      contents = readFileSync(statePath)
     } catch (error) {
       seen = stamp()
       if (error?.code === 'ENOENT') {
@@ -175,6 +176,7 @@ export function install(rt) {
   // Fill `state` from the saved file and bring an older team up to date. Returns the
   // groups whose Session titles still need the new name.
   const adopt = (parsed) => {
+    lockEpoch += 1
     // Until the end of this: a file that could not be read, or was set aside as corrupt,
     // leaves an empty team in memory that is not the saved one.
     teamRead = false
@@ -395,7 +397,7 @@ export function install(rt) {
 
   const load = () => loaded ??= (async () => {
     claimLock()
-    if (holder !== undefined) warn('omni-ui: %s', readOnly())
+    if (holder !== undefined) warn('ds-bot: %s', readOnly())
     const { migrated, stale } = adopt(readFileState())
     if (holder !== undefined) return
     // A file set aside just now stays where it is: the person's bytes were copied, and the
@@ -425,9 +427,9 @@ export function install(rt) {
         const aside = `${statePath}.replaced-${Date.now()}`
         try {
           await writeFile(aside, JSON.stringify(state))
-          warn('omni-ui: %s changed while no host held the team; it is adopted and this host\'s state is kept as %s', statePath, aside)
+          warn('ds-bot: %s changed while no host held the team; it is adopted and this host\'s state is kept as %s', statePath, aside)
         } catch (error) {
-          warn('omni-ui: %s changed while no host held the team; it is adopted, and this host\'s state is lost because it could not be kept aside: %s', statePath, error)
+          warn('ds-bot: %s changed while no host held the team; it is adopted, and this host\'s state is lost because it could not be kept aside: %s', statePath, error)
         }
       }
       adopt(readFileState())
@@ -523,7 +525,10 @@ export function install(rt) {
     state.exchanges = state.exchanges.slice(-MAX_EXCHANGES)
     const copy = JSON.parse(JSON.stringify(state))
     change(copy)
-    return writeSnapshot(JSON.stringify(copy))
+    // Permission copies belong to the state the caller inspected. Never apply one
+    // to a replacement team adopted while this write waited.
+    const snapshot = JSON.stringify(copy)
+    return writeSnapshot(() => snapshot, { required: true, epoch: lockEpoch })
   }
 
   const save = ({ required = false } = {}) => {
@@ -531,44 +536,39 @@ export function install(rt) {
     indexSessions()
     // A reading host keeps the file's revision, so its window does not skip the next change.
     if (!writable()) return required ? Promise.reject(new Error(`This host cannot save the Bot team: ${readOnly()}`)) : writing
-    rt.sweepAuto?.()
-    state.revision += 1
-    state.autoStamp = state.revision
-    state.version = STATE_VERSION
-    state.exchanges = state.exchanges.slice(-MAX_EXCHANGES)
-    const snapshot = JSON.stringify(state)
-    return writeSnapshot(snapshot)
+    return writeSnapshot(() => {
+      rt.sweepAuto?.()
+      state.revision += 1
+      state.autoStamp = state.revision
+      state.version = STATE_VERSION
+      state.exchanges = state.exchanges.slice(-MAX_EXCHANGES)
+      return JSON.stringify(state)
+    }, { required })
   }
 
-  const writeSnapshot = (snapshot) => {
+  const writeSnapshot = (snapshotOf, { required = false, epoch: copyEpoch } = {}) => {
     const run = writing.then(async () => {
-      // Re-check writability once the queued write runs: an adopt queued before
-      // it may have made this host read-only (e.g. a file a newer Omni wrote).
+      // An adopt ahead of this save may have made the team read-only.
       if (stuck !== undefined || holder !== undefined) {
         if (required) throw new Error(`This host cannot save the Bot team: ${readOnly()}`)
         warnReadOnly()
         return
       }
-      // The snapshot is taken here, so a save made while an adopt was pending
-      // writes the adopted state, not the stale one it had.
-      const epoch = lockEpoch
-      state.revision += 1
-      state.exchanges = state.exchanges.slice(-MAX_EXCHANGES)
-      const snapshot = JSON.stringify(state)
+      const epoch = copyEpoch ?? lockEpoch
+      // Ordinary saves use the adopted state, not a snapshot of the replaced team.
+      const snapshot = snapshotOf()
       const temp = `${statePath}.${process.pid}.tmp`
       try {
         await mkdir(home, { recursive: true })
         const ensureLock = () => {
           if (lockBroken) return
           const owned = lock.owns()
-          // An outside edit under this host's lock goes through the adopt step
-          // instead of being written over; a removed file is just written again.
-          const changed = owned && stamp() !== '' && stamp() !== seen
+          const current = stamp()
+          // An outside edit is adopted instead of overwritten; deletion can be saved again.
+          const changed = owned && current !== '' && current !== seen
           if (changed) void adoptAfterReclaim().catch(() => {})
-          // A different epoch means an adopt replaced the state this snapshot was
-          // taken from — another host's writes, or an outside edit it adopted.
           if (!owned || changed || lockEpoch !== epoch) {
-            const error = new Error(changed ? 'omni-ui: the Bot team file changed under this host\'s lock' : 'ds-bot lost the state lock to another dsh')
+            const error = new Error(changed ? 'ds-bot: the Bot team file changed under this host\'s lock' : 'ds-bot lost the state lock to another dsh')
             error.code = 'ELOCKLOST'
             throw error
           }
@@ -630,7 +630,6 @@ export function install(rt) {
   /** @type {Map<string, {botId:string, roomId?:string}>} */
   const pastOwners = new Map()
   const chatOf = botId => botOf(botId)?.sessionId ?? botId
-  const sessionOfRoom = room => (room === undefined ? undefined : room.sessionId ?? room.id)
   // DSH turns away every step of an archived Session and every task aimed at it, so a
   // Session the team speaks from now leaves the archive: an earlier open of an old part
   // could leave one there, and DSH's own Session list can archive one. Earlier parts
@@ -645,13 +644,13 @@ export function install(rt) {
     } catch {
       return
     }
-    const held = [...chatOwners.keys(), ...groupOwners.keys(), ...roomOwners.keys()].filter(id => archived.has(id))
+    const held = [...chatOwners.keys(), ...groupOwners.keys(), ...Object.keys(state.rooms)].filter(id => archived.has(id))
     if (held.length === 0) return
     restoring = (async () => {
       for (const sessionId of held) {
         await registry.unarchiveSession(sessionId)
-          .then(() => warn('omni-ui: current Session %s was archived in DSH; taken back out', sessionId))
-          .catch(error => warn('omni-ui: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
+          .then(() => warn('ds-bot: current Session %s was archived in DSH; taken back out', sessionId))
+          .catch(error => warn('ds-bot: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
       }
     })().finally(() => { restoring = undefined })
   }
@@ -679,7 +678,6 @@ export function install(rt) {
     // the scoped tools with this ownership (drops Sessions that left, scopes
     // live Agents that joined); both install after this.
     rt.indexAgents?.()
-    rt.syncScopedTools?.()
     restoreCurrent()
   }
   // The Bot a Session speaks for: its own chat, one of its group Sessions, or an

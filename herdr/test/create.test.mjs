@@ -240,7 +240,7 @@ test("Copy copies only a line the form would save; a refused one shows why", asy
   form.inputs.name.type("qa", cx);
   draw();
   await click("bot-copy");
-  assert.match(cx.clip, /^automagik-herdr create --name=qa /);
+  assert.match(cx.clip, /^am create --name=qa /);
   // The model is read once per agent, not on every render.
   assert.ok(form.models.has("claude"));
 });
@@ -371,7 +371,29 @@ test("Code bot toggle (#774): defaults on, toggles into the copied line and save
   await edited.click("bot-copy");
   assert.match(edited.cx.clip, / --code=true /);
   await edited.click("bot-save");
-  assert.equal("code" in stored().bots.find((b) => b.id === writer.id), false);
+  assert.equal(stored().bots.find((b) => b.id === writer.id).code, true);
+});
+
+test("toggles #848: code and planned change independently and keep their accessible labels", async () => {
+  seed([MAIN]);
+  const { form, draw, click } = await open({ form: "create" });
+  draw();
+  const label = (id) => nodes.get(id)?.calls.find(([call]) => call === "accessibility_label")?.[1];
+  assert.equal(label("bot-code"), "Code bot (worker instruction in Git projects)");
+  assert.equal(label("bot-planned"), "Planned for a later wave");
+  assert.equal(form.s.code, true);
+  assert.equal(form.s.planned, false);
+  await click("bot-planned");
+  assert.equal(form.s.planned, true);
+  assert.equal(form.s.code, true);
+  draw();
+  await click("bot-code");
+  assert.equal(form.s.code, false);
+  assert.equal(form.s.planned, true);
+  draw();
+  await click("bot-planned");
+  assert.equal(form.s.planned, false);
+  assert.equal(form.s.code, false);
 });
 
 test("Bot settings (pick) with no bot: one New bot line that opens the Create form and closes the list", async () => {
@@ -885,7 +907,7 @@ test("the CLI and the form word the pull warning for an uncommitted or changed b
   assert.equal(first.status, 0, first.stderr);
   assert.equal(untracked, warningOf(first.stderr));
   // A long TMPDIR adds the CLI's tidy warning after the note; the compare keeps the note alone.
-  assert.equal(warningOf(`${first.stderr}\nautomagik-herdr: tidy: hc ls --json failed: socket path too long`), untracked);
+  assert.equal(warningOf(`${first.stderr}\nam: tidy: hc ls --json failed: socket path too long`), untracked);
   // Modified: commit it in the main checkout, then change it there.
   g("add", ".herdr/bots.json");
   g("commit", "-q", "-m", "bots");

@@ -1,4 +1,4 @@
-import { dmSansLatin, manropeLatin } from './art/inline.js'
+import { dmSansLatin, fredokaLatin } from './art/inline.js'
 
 // -------------------------------------------------------------------------
 // Direction C, "stage and bench": the team's default look (themes.js `deepseek`, the id saved
@@ -13,14 +13,16 @@ export const STAGE_LIGHT = Object.freeze({ bg: '#f6eee2', sidebar: '#fbf6ee', bu
 export const STAGE_DARK = Object.freeze({ bg: '#1e1923', sidebar: '#262029', bubble: '#22414a', card: '#2b2431', text: '#f3e9dd', user: '#5c3556', userText: '#fdf0f8', accent: '#7fd8ea' })
 
 const FONT = '"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif'
-const HEAD = 'Manrope,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif'
+// The brand's title face and its three weights (docs/brand: tokens/tokens.json, fonts/). 536 is the
+// logo letters' weight; Fredoka is never set heavier.
+const HEAD = 'Fredoka,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif'
 const DSH_TEXT = '"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Helvetica,Arial,sans-serif'
 
 const TOKENS = `
 @font-face{font-family:"DM Sans";font-style:normal;font-weight:100 1000;font-display:swap;src:url("${dmSansLatin}") format("woff2")}
-@font-face{font-family:Manrope;font-style:normal;font-weight:200 800;font-display:swap;src:url("${manropeLatin}") format("woff2")}
+@font-face{font-family:"Fredoka";font-style:normal;font-weight:300 700;font-display:swap;size-adjust:105%;src:url("${fredokaLatin}") format("woff2")}
 html body{
-  --bt-font:var(--dsh-font-family-text,${FONT}),${FONT};--bt-head-font:${HEAD};--dsh-font-family-text-default:${DSH_TEXT};
+  --bt-font:var(--dsh-font-family-text,${FONT}),${FONT};--bt-head-font:${HEAD};--bt-weight-title:536;--bt-weight-strong:469;--bt-weight-label:402;--dsh-font-family-text-default:${DSH_TEXT};
   --st-stage:linear-gradient(170deg,#d3eff4 0%,#e4dcf5 55%,#f7d9ea 100%);--st-spot:rgba(255,253,249,.62);--st-tag:rgba(255,253,249,.92);
   --st-raised:#fbf6ee;--st-paper:#fffdf9;--st-sunk:#efe5d6;
   --st-r-stage:26px;--st-r-dialog:24px;--st-r-menu:14px;--st-r-seg:9px;
@@ -57,14 +59,14 @@ html body [class*="_rightbarCol"]{background:var(--bt-main)!important;border:0!i
 html body [class*="_rightbarCol"] section[class*="_tabHost"][class*="_pane"]{background:var(--bt-main);border:0;box-shadow:none}
 html body .bt-head{min-height:64px;padding:18px 24px 12px}
 html body header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]{padding-top:18px;padding-bottom:12px}
-html body .bt-head :is(.bt-head-title,.bt-head-name){font:700 20px/26px var(--bt-head-font);letter-spacing:-.01em}
+html body .bt-head :is(.bt-head-title,.bt-head-name){font:var(--bt-weight-title) 20px/26px var(--bt-head-font);letter-spacing:-.01em}
 `
 
 // The stage: the brand, the team as characters standing in a row, the open one in a cream
 // spotlight on a clay pedestal; the round buttons are cream tags.
 const STAGE = `
 html body .bt-side{font-family:var(--bt-font);color:var(--bt-ink)}
-html body .bt-brand-name,html body .bt-brand{font:700 16px/22px var(--bt-head-font)}
+html body .bt-brand-name,html body .bt-brand{font:var(--bt-weight-strong) 16px/22px var(--bt-head-font)}
 html body .bt-round{width:30px;height:30px;border:0;border-radius:10px;background:var(--st-tag);color:var(--bt-ink);box-shadow:none}
 html body .bt-round:hover{background:var(--st-paper)}
 html body .bt-side-top{margin-bottom:8px}
@@ -164,13 +166,13 @@ html body :is(.bt-q,.bt-create-inline,.bt-create-looks,.bt-addlist,.bt-mem-reply
 html body .bt-q-raised{box-shadow:var(--st-lift)}
 html body .bt-q-opt[aria-pressed=true],html body button.bt-q-opt:active{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body .bt-key{border:1px solid var(--st-line-2);border-radius:6px;background:var(--st-raised)}
-html body :is(.bt-q-title,.bt-create-name,.bt-drawer-name,.bt-mem-head h2,.bt-mem-summary h3,.bt-mem-empty-title){font-family:var(--bt-head-font);font-weight:700;letter-spacing:-.01em}
+html body :is(.bt-q-title,.bt-create-name,.bt-drawer-name,.bt-mem-head h2,.bt-mem-summary h3,.bt-mem-empty-title){font-family:var(--bt-head-font);font-weight:var(--bt-weight-title);letter-spacing:-.01em}
 html body .op-task{padding:0;background:none;border-radius:16px}
 html body .op-task-in{border:1px solid var(--st-line);border-radius:16px;padding:12px 14px;background:var(--st-raised);box-shadow:none}
 html body .op-task-mark{border-radius:10px;background:var(--st-cyan);color:var(--st-cyan-ink);box-shadow:none}
 html body .op-task[data-state=done] .op-task-mark{background:var(--st-ok);color:var(--st-paper)}
 html body .op-task[data-state=failed] .op-task-mark{background:var(--st-bad);color:var(--st-paper)}
-html body .op-task-title{font-family:var(--bt-head-font);font-weight:700}
+html body .op-task-title{font-family:var(--bt-head-font);font-weight:var(--bt-weight-strong)}
 html body .op-task-bar{height:6px;border-radius:6px;background:var(--st-sunk);box-shadow:none}
 html body .op-task-bar i{border-radius:6px;background:var(--st-work);box-shadow:none}
 html body .op-task-open{color:var(--bt-accent);font-weight:600}

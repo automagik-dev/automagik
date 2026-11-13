@@ -76,8 +76,8 @@ export function install(rt) {
 
   // A Bot that could write where DSH or the team keeps its data could change its own
   // permissions or the team, so neither those folders nor one that holds them is allowed.
-  // The workspace exception covers only a workspace lying inside the data root (the
-  // plugin's default does): one that holds or is a data root does not open it up.
+  // Only a workspace strictly inside a data root (like the default) is an exception:
+  // one that holds or equals a data root must not open that root to Bots.
   async function guarded(path) {
     const team = await realTeam()
     for (const root of dataRoots()) {
@@ -89,8 +89,7 @@ export function install(rt) {
   }
 
   // A file a Bot names to read into the team, such as a photo, may not come from DSH's or
-  // the team's data; the team workspace, which can lie in it, is the exception, for the
-  // same reason as in guarded().
+  // the team's data; only a workspace strictly inside each root is an exception.
   async function inData(path) {
     const team = await realTeam()
     for (const root of dataRoots()) {
@@ -172,8 +171,7 @@ export function install(rt) {
       const modes = [policy.resolve(), ...agents.map(agent => policy.resolve({ session: agent.session }))].map(entry => entry.mode)
       if (!modes.includes('workspace-write')) return
     }
-    // With no policy service a Session's bounds cannot be checked, so a folder outside
-    // the workspace asks like a bounded one would; when nobody can be asked it throws.
+    // Without the policy service we cannot establish a Session's bounds, so ask.
     const approval = ctx.get?.('approval')
     const agent = exec.agent
     if (approval === undefined || agent?.session === undefined) throw refusal(`Working in ${path} needs the user's approval, and there is no way to ask for it here, so nothing changed. The user can make this change in the settings.`)

@@ -112,11 +112,16 @@ export function install(rt) {
       name,
       kind,
       description: String(body.description ?? '').trim().slice(0, 2000),
-      createdBy: previous?.createdBy ?? (ui ? null : botId),
+      // An edit never claims creation: null is the user's entry, and missing
+      // provenance is unknown. Neither may become the editing Bot's orphan.
+      createdBy: previous ? previous.createdBy ?? null : ui ? null : botId ?? null,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     }
     if (kind === 'mcp') {
+      // Older saves could misattribute a user entry to its Bot editor. Only a new
+      // Bot request establishes provenance; edits never upgrade an unmarked entry.
+      if (previous?.botRequested === true || (!previous && !ui && rt.botOf(botId))) item.botRequested = true
       const transport = body.transport === 'streamable-http' ? 'streamable-http' : 'stdio'
       if (transport === 'stdio') {
         const command = String(body.command ?? '').trim()
@@ -172,16 +177,17 @@ export function install(rt) {
     await rt.save()
     return true
   }
-  // Called with the Bot being deleted, after it left the team. The shared list belongs to
-  // the user, so only a local MCP this Bot added, nobody approved and no other Bot or pack
-  // uses goes: no one is left to ask for it, and approving it would start a server for no one.
-  // Anything a pack lists stays.
+  // Called after the Bot leaves the team. The shared library belongs to the user:
+  // only an attached, unapproved local MCP this Bot verifiably requested goes.
+  // Unmarked legacy entries have uncertain provenance and always stay.
+  // A pack keeps its members even when no Bot currently has that pack attached.
   const dropOrphanCapabilities = (bot) => {
     const items = library()
     const packed = name => Object.values(items).some(item => item.kind === 'pack' && (item.items ?? []).includes(name))
     for (const name of bot.capabilities ?? []) {
       const item = own(items, name)
       if (item === undefined || item.kind !== 'mcp' || item.transport !== 'stdio' || item.approved === true) continue
+      if (item.botRequested !== true) continue
       if (item.createdBy !== bot.id || usedByOthers(name, bot.id) || packed(name)) continue
       delete items[item.name]
     }

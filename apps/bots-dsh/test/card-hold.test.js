@@ -71,7 +71,7 @@ runInNewContext(outputFiles[0].text, {
   HTMLInputElement: class {}, HTMLTextAreaElement: class {}, HTMLSelectElement: class {}, HTMLElement: class {},
   URL,
 })
-const { installLocale, useDockHold, PendingQuestion, QuestionCard, SecretCard, PendingView, AnsweredReply, AnsweredCell, HandoffCall, HandoffDock, PendingHandoff, SettledHandoff } = module.exports
+const { installLocale, useDockHold, PendingQuestion, QuestionCard, SecretCard, PendingView, AnsweredReply, AnsweredCell, HandoffCall, HandoffDock, PendingHandoff, SettledHandoff, CellEmpty } = module.exports
 const mount = (Component, props) => {
   const instance = {
     slots: [], effects: [], props,

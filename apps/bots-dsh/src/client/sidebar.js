@@ -824,13 +824,14 @@ export function FooterAccount(props) {
 }
 
 // The only entry registered in every mode: in Agent mode the whole Bot surface is
-// withdrawn, and this button in the shell's own footer is the way back.
+// withdrawn, and this button in the shell's own footer is the way back. It carries the
+// app's mark, so the name beside it is the app's, Automagik (#1160): Omni is one of its Bots.
 export function BotReturn({ wide, useSurface, actions }) {
   const mode = useSurface(value => value.mode)
   if (mode !== 'agent') return null
-  return h('button', { type: 'button', className: 'bt-return', 'aria-label': t('Omni'), title: t('Omni'), onClick: () => actions.setSurface('bot') },
+  return h('button', { type: 'button', className: 'bt-return', 'aria-label': t('Back to Automagik'), title: t('Back to Automagik'), onClick: () => actions.setSurface('bot') },
     h(OmniMark, { size: 20 }),
-    wide ? h('span', { className: 'bt-return-name' }, t('Omni')) : null)
+    wide ? h('span', { className: 'bt-return-name' }, t('Automagik')) : null)
 }
 
 // Agent mode has none of the shell-group styles, so the return button carries its own.

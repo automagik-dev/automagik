@@ -178,7 +178,7 @@ test('a non-object root is copied byte for byte before any rewrite', async (t) =
 test('a non-object state stays read-only when its backup cannot be copied', async (t) => {
   const original = '[]'
   const { rt, home, statePath } = runtime(t, original)
-  const restore = patch('copyFile', () => async () => {
+  const restore = patchSync('copyFileSync', () => () => {
     throw Object.assign(new Error('synthetic copy failure'), { code: 'EACCES' })
   })
   try {
@@ -677,10 +677,10 @@ test('a save paused while another host held the team does not overwrite its fina
     // The other dsh writes its final state and exits; this host takes over.
     fs.writeFileSync(statePath, JSON.stringify({ version: 1, revision: 901, prefs: { marker: 'final' } }))
     fs.rmSync(join(home, 'state.lock'))
-    const refreshing = rt.refresh()
+    // Let the asynchronous read adopt the new team before the old write resumes.
+    await rt.refresh()
     unblock()
     await assert.rejects(saving, { code: 'ELOCKLOST' })
-    await refreshing
     assert.equal(rt.state.prefs.marker, 'final')
     assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf8')).prefs.marker, 'final')
   } finally {
@@ -881,4 +881,37 @@ test('a state newer than v2 is refused without rewriting its ACP model', async (
   assert.equal(fs.readFileSync(statePath, 'utf8'), original)
   assert.equal(rt.state.bots.a?.model, undefined)
   assert.ok(warnings.length > 0)
+})
+
+for (const copy of [false, true]) {
+  test(`an outside edit under the held lock survives a ${copy ? 'permission-copy' : 'normal'} save`, async (t) => {
+    const { rt, home, statePath } = runtime(t)
+    await rt.load()
+    rt.state.prefs.marker = 'ours'
+    await rt.save()
+    const edited = JSON.stringify({ version: 1, revision: 900, prefs: { marker: 'outside edit' } })
+    fs.writeFileSync(statePath, edited)
+    const saving = copy ? rt.saveCopy(state => { state.prefs.permission = 'stale change' }) : rt.save()
+    await assert.rejects(saving, { code: 'ELOCKLOST' })
+    await rt.refresh()
+    assert.equal(fs.readFileSync(statePath, 'utf8'), edited)
+    assert.equal(rt.state.prefs.marker, 'outside edit')
+    const backups = fs.readdirSync(home).filter(name => name.startsWith('state.json.replaced-'))
+    assert.equal(backups.length, 1)
+    assert.equal(JSON.parse(fs.readFileSync(join(home, backups[0]), 'utf8')).prefs.marker, 'ours')
+  })
+}
+
+test('a permission copy queued behind adoption cannot change the replacement team', async (t) => {
+  const { rt, home, statePath } = runtime(t)
+  await rt.load()
+  rt.state.prefs.marker = 'ours'
+  await rt.save()
+  const edited = JSON.stringify({ version: 1, revision: 900, prefs: { marker: 'outside edit' } })
+  fs.writeFileSync(statePath, edited)
+  fs.rmSync(join(home, 'state.lock'))
+  await assert.rejects(rt.saveCopy(state => { state.prefs.permission = 'stale change' }), { code: 'ELOCKLOST' })
+  assert.equal(fs.readFileSync(statePath, 'utf8'), edited)
+  assert.equal(rt.state.prefs.marker, 'outside edit')
+  assert.equal(rt.state.prefs.permission, undefined)
 })

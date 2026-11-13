@@ -68,7 +68,7 @@ async function start(home, logs, inspect) {
     // test can give it a route or a size; otherwise only the id is known.
     const session = agents.get(id)?.session ?? { id }
     for (const listener of ctx.listeners.get('session/event') ?? []) {
-      if (listener.length >= 2) listener(session, { type, seq: ++seq, data })
+      if (listener.length >= 2) listener(agents.get(id)?.session ?? { id }, { type, seq: ++seq, data })
     }
   }
   const tool = (name, args, sessionId, exec = {}) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId }, ...exec })
@@ -1067,48 +1067,6 @@ test('a tool call written as text gets one more turn on the same round slot', as
   assert.equal(host.agentOf('gb').calls.length, 2)
 })
 
-test('a group member that leaves only the call tags gets the same retry, and never posts the tags', async (t) => {
-  const home = freshHome(t)
-  const host = await start(home)
-  const result = await openRoomTurn(t, host)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
-  await settle(() => host.agentOf('gb').calls.length === 2)
-  const retry = host.agentOf('gb').calls[1]
-  assert.deepEqual([retry.source.role, retry.source.retried, retry.source.exchangeId], ['room', true, host.agentOf('gb').calls[0].source.exchangeId])
-  assert.match(text(retry), /^\[Group chat "Ops" · your tool call did not run\]/)
-  assert.equal(result(), undefined)
-
-  // Leftover tags again: the round gets one readable line, no markup.
-  run(host, 'gb', 2, retry)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
-  await settle(() => result() !== undefined)
-  assert.deepEqual(result().replies.map(reply => reply.text), ['Tried to run a tool but wrote the call as text, so it did not run.'])
-  assert.equal(host.agentOf('gb').calls.length, 2)
-})
-
-test('call tags mixed into the text are stripped, and the readable part still goes out', async (t) => {
-  const home = freshHome(t)
-  const host = await start(home)
-  const result = await openRoomTurn(t, host)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
-  await settle(() => host.agentOf('gb').calls.length === 2)
-  const retry = host.agentOf('gb').calls[1]
-  assert.equal(retry.source.retried, true)
-  assert.equal(result(), undefined)
-
-  // Written again: what was said around the tags goes on, without them.
-  run(host, 'gb', 2, retry)
-  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
-  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
-  await settle(() => result() !== undefined)
-  const [reply] = result().replies.map(entry => entry.text)
-  assert.match(reply, /Hi, everyone\./)
-  assert.doesNotMatch(reply, /parameter|function|tool_call/)
-})
-
 test('a group member cut off on the token limit is not counted as a silent pass', async (t) => {
   const home = freshHome(t)
   const host = await start(home)
@@ -1165,4 +1123,46 @@ test('a written tool call is told apart from text about one', () => {
   assert.equal(stripWrittenCalls('plain <text> with an angle or two'), 'plain <text> with an angle or two')
   assert.equal(writesToolCall('plain <text> with an angle or two'), false)
   assert.equal(stripWrittenCalls('a < b or c > d'), 'a < b or c > d')
+})
+
+test('a group member that leaves only the call tags gets the same retry, and never posts the tags', async (t) => {
+  const home = freshHome(t)
+  const host = await start(home)
+  const result = await openRoomTurn(t, host)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  await settle(() => host.agentOf('gb').calls.length === 2)
+  const retry = host.agentOf('gb').calls[1]
+  assert.deepEqual([retry.source.role, retry.source.retried, retry.source.exchangeId], ['room', true, host.agentOf('gb').calls[0].source.exchangeId])
+  assert.match(text(retry), /^\[Group chat "Ops" · your tool call did not run\]/)
+  assert.equal(result(), undefined)
+
+  // Leftover tags again: the round gets one readable line, no markup.
+  run(host, 'gb', 2, retry)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: ORPHAN_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
+  await settle(() => result() !== undefined)
+  assert.deepEqual(result().replies.map(reply => reply.text), ['Tried to run a tool but wrote the call as text, so it did not run.'])
+  assert.equal(host.agentOf('gb').calls.length, 2)
+})
+
+test('call tags mixed into the text are stripped, and the readable part still goes out', async (t) => {
+  const home = freshHome(t)
+  const host = await start(home)
+  const result = await openRoomTurn(t, host)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  await settle(() => host.agentOf('gb').calls.length === 2)
+  const retry = host.agentOf('gb').calls[1]
+  assert.equal(retry.source.retried, true)
+  assert.equal(result(), undefined)
+
+  // Written again: what was said around the tags goes on, without them.
+  run(host, 'gb', 2, retry)
+  host.emit('gb', 'assistant/message', { message: { content: [{ type: 'text', text: MIXED_TAGS }] } })
+  host.emit('gb', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
+  await settle(() => result() !== undefined)
+  const [reply] = result().replies.map(entry => entry.text)
+  assert.match(reply, /Hi, everyone\./)
+  assert.doesNotMatch(reply, /parameter|function|tool_call/)
 })

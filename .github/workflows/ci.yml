@@ -174,7 +174,7 @@ jobs:
     # Only when herdr/ changed, or the workflows and lane tooling that test and pack it.
     name: herdr pack (Node ${{ matrix.node }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       HERDR_CHANGED_PATHS: '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|\.github/scripts/herdr-app-check\.mjs$|scripts/(lane|version)\.ts$)'
     strategy:
@@ -779,18 +779,60 @@ jobs:
           fi
           echo "ran: ${OUTCOMES}"
 
-  pocket-link:
-    # Pocket Link's bridge (herdr/mods/pocket-link, Pocket's, never in the pack): syntax and its
-    # dependency-free tests (the pre-pairing limits, the pairing code, where its state lives,
-    # public-status.json, how the dialog finds Node), on Linux and macOS. The pack's own gate above
-    # does not run them: they live beside the mod, not in herdr/test/. Also the chat projection in
-    # chat/ (RFC 0015): its decoders, cleaner and transcript folder rule, whose cases it shares with
-    # am-sidebar in herdr/test/fixtures/transcript-folder-rule.json.
-    name: Pocket Link bridge (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+  pocket-link-changes:
+    # Decide on Linux before the matrix can request a scarce macOS runner. The shared
+    # transcript fixture is the tests' only repository input outside Pocket Link itself.
+    name: Pocket Link changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      link: ${{ steps.changed.outputs.link }}
     env:
       POCKET_LINK_CHANGED_PATHS: '^(herdr/mods/pocket-link/|herdr/test/fixtures/transcript-folder-rule\.json$|\.github/workflows/ci\.yml$)'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether Pocket Link changed
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "link=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/link-changed.txt"
+          # PRs compare from the merge base; pushes compare the complete before/after trees.
+          range="${BASE}..${HEAD_SHA}"
+          if [[ "${EVENT}" == pull_request ]]; then range="${BASE}...${HEAD_SHA}"; fi
+          if ! git diff --no-renames --name-only "${range}" > "${diff_file}"; then
+            echo "::error::git diff ${range} failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "link=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "link=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
+
+  pocket-link:
+    # The real socket-boundary test skips on Linux, so relevant changes need both OSes.
+    # Job-level if is evaluated before matrix expansion and runner allocation.
+    name: Pocket Link bridge (${{ matrix.os }})
+    needs: pocket-link-changes
+    if: needs.pocket-link-changes.outputs.link == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -801,92 +843,60 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Whether Pocket Link changed
-        id: changed
-        working-directory: .
-        env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-            echo "link=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
-          # match, and pipefail reads that as "did not change" (#895).
-          diff_file="${RUNNER_TEMP}/link-changed.txt"
-          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
-            echo "::error::git diff ${BASE}...HEAD failed"
-            exit 1
-          fi
-          grep_status=0
-          grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
-          case "${grep_status}" in
-            0) echo "link=true" >> "$GITHUB_OUTPUT" ;;
-            1) echo "herdr/mods/pocket-link/ did not change: nothing to test" ;;
-            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
-          esac
-
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        if: steps.changed.outputs.link == 'true'
         with:
           node-version: '22'
 
       - name: Syntax
         id: syntax
-        if: steps.changed.outputs.link == 'true'
         run: |
           set -euo pipefail
           for f in bridge/*.mjs chat/*.js chat/*.mjs find-node.js main.js; do node --check "$f"; done
 
       - name: Test
         id: test
-        if: steps.changed.outputs.link == 'true'
         run: node --test bridge/*.test.mjs chat/*.test.mjs find-node.test.mjs
 
-      # The change check and this assertion read the same diff in two independent steps: a skip
-      # in the first one cannot hide a change from the second (#895, as usagemeter's).
       - name: Assert the steps ran
         if: always()
-        working-directory: .
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           OUTCOMES: syntax=${{ steps.syntax.outcome }} test=${{ steps.test.outcome }}
         run: |
           set -euo pipefail
-          changed=false
-          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-            changed=true
-          else
-            diff_file="${RUNNER_TEMP}/link-assert.txt"
-            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
-              echo "::error::git diff ${BASE}...HEAD failed"
+          for outcome in ${OUTCOMES}; do
+            if [[ "${outcome#*=}" != success ]]; then
+              echo "::error::Pocket Link ${outcome%%=*} did not succeed"
               exit 1
             fi
-            grep_status=0
-            grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
-            case "${grep_status}" in
-              0) changed=true ;;
-              1) ;;
-              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
-            esac
-          fi
-          if [[ "${changed}" != true ]]; then
-            echo "herdr/mods/pocket-link/ unchanged: no steps expected"
-            exit 0
-          fi
-          missing=''
-          for outcome in ${OUTCOMES}; do
-            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
           done
-          if [[ -n "${missing}" ]]; then
-            echo "::error::herdr/mods/pocket-link/ changed but these steps did not succeed:${missing}"
+          echo "ran: ${OUTCOMES}"
+
+  pocket-link-required:
+    # Branch protection must require this stable aggregate, not either conditional OS job.
+    name: Pocket Link bridge
+    needs: [pocket-link-changes, pocket-link]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful coverage when Pocket Link changed
+        env:
+          DETECTION: ${{ needs.pocket-link-changes.result }}
+          CHANGED: ${{ needs.pocket-link-changes.outputs.link }}
+          TESTS: ${{ needs.pocket-link.result }}
+        run: |
+          set -euo pipefail
+          if [[ "${DETECTION}" != success ]]; then
+            echo "::error::Pocket Link path detection did not succeed (${DETECTION})"
             exit 1
           fi
-          echo "ran: ${OUTCOMES}"
+          case "${CHANGED}:${TESTS}" in
+            true:success) echo "Pocket Link passed on Linux and macOS" ;;
+            false:skipped) echo "Pocket Link unchanged: no macOS runner needed" ;;
+            *) echo "::error::Pocket Link coverage missing (changed=${CHANGED}, tests=${TESTS})"; exit 1 ;;
+          esac
 
   meter:
     # Meter's local tools (meter/statusline: the Claude Code status line and the limits logger that
@@ -1283,6 +1293,22 @@ jobs:
         # fails, rather than skips, when it finds no browser (#323).
         if: matrix.app == 'bots-dsh'
         run: echo "CHROME_BIN=/usr/bin/google-chrome" >> "$GITHUB_ENV"
+
+      - name: Electron for the Bot team's script wall check
+        # browser_exec's process wall is checked on both runtimes the Bot team ships on. The
+        # desktop app's is Electron as Node: the Electron apps/desktop pins, from its lock.
+        # Under CI that half fails, rather than skips, when it finds no Electron.
+        if: matrix.app == 'bots-dsh'
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          npm ci --no-fund --no-audit
+          # The package fetches its binary on first use, checked against its own checksums,
+          # and says so on stdout: fetch first, then ask for the path alone.
+          node node_modules/electron/install.js
+          bin="$(node -p "require('electron')")"
+          test -x "${bin}"
+          echo "ELECTRON_BIN=${bin}" >> "$GITHUB_ENV"
 
       - name: Generated files are current
         # A package with no browser half has no client to build.
