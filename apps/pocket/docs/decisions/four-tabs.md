@@ -54,8 +54,8 @@ placement and the progress strip do not.
   (`c.chat != null`, `Teams.deckAnswerable`, `Teams.kt:395`) stays out. `Teams.deckView` (`Teams.kt:376`) and `Teams.swipe` (`Teams.kt:413`) hold the end state
   and the gesture rule; `Teams.deckAfterSelection` (`Teams.kt:405`) keeps the deck through a card's
   Back and closes it for any other selection. Home's needs-you count and badge use
-  `Projects.Pulse.answerableNeedsYou`, the same terminal rows, while chat rows stay listed with
-  "In chat" or "On computer".
+  `Projects.Pulse.homeNeedsYou`, every blocked row; chat rows stay listed with "In chat" or
+  "On computer" but are not deck cards.
   `PocketApp` owns the open state
   (`MainActivity.kt:128`), and Home's needs-you count tile and **Review** bar open it
   (`MainActivity.kt:443`, `:472`), so a later "Answer all" button opens the same screen. A card's

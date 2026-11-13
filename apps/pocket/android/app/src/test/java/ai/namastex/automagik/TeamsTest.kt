@@ -2,11 +2,13 @@ package ai.namastex.automagik
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import java.io.File
 import java.time.ZoneOffset
 
@@ -592,15 +594,36 @@ class TeamsTest {
         assertEquals(3, answered.size)
     }
 
-    @Test fun aLeavingCardKeepsItsMenuAndTheDeckAdvancesWithoutAnAnimation() {
+    @Test fun aLeavingCardKeepsItsMenu() {
         val menu = Prompt.Menu(listOf("1. Yes", "2. No"), 0, "Run?")
         val next = menu.copy(cursor = 1)
         assertSame(menu, Teams.deckMenu(menu, null, sending = true))
         assertSame(menu, Teams.deckMenu(menu, next, sending = true))
         assertSame(next, Teams.deckMenu(menu, next, sending = false))
-        assertFalse(Teams.deckExitDone(0))
-        assertFalse(Teams.deckExitDone(699))
-        assertTrue(Teams.deckExitDone(700))
+    }
+
+    @Test fun theLeavingCardIsNotTheCardBehind() {
+        val cards = Teams.deckCards(listOf(deckEntry("t1"), deckEntry("t2"), deckEntry("t3"))) { "P" }
+        val under = Teams.deckUnder(cards, Teams.deckKey(cards[0]))
+        assertEquals(cards[1], under.next)
+        assertEquals(2, under.behind)
+        val normal = Teams.deckUnder(cards.drop(1), null)
+        assertEquals(cards[2], normal.next)
+        assertEquals(1, normal.behind)
+    }
+
+    @Test fun anAnswerIsRecordedWhenTheCardMotionIsCancelled() {
+        // Close, Back and Open all dispose the card's scope during the confirm window.
+        for (reason in listOf("Close", "Back", "Open")) {
+            val recorded = mutableListOf<String>()
+            var done: ((Boolean) -> Unit)? = null
+            val scope = CoroutineScope(Job())
+            DeckSend(scope, record = { recorded += it }, finish = { _ -> }, returnMotion = {}).send("k",
+                dispatch = { done = it }, exit = {})
+            scope.cancel()
+            done!!.invoke(true)
+            assertEquals(reason, listOf("k"), recorded)
+        }
     }
 
     @Test fun eachPreviewRequestShowsItsOwnCommand() {

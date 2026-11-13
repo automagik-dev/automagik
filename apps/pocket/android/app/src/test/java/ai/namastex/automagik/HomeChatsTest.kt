@@ -183,13 +183,13 @@ class HomeChatsTest {
         assertEquals(listOf("Bot chats", "Bot chats", "W"), cards.map { it.where })
     }
 
-    /** Home's needs-you count is the deck's answerable count: chat rows stay listed but are not counted. */
-    @Test fun homeCountsOnlyTheRowsTheDeckCanAnswer() {
-        val rows = listOf(row("s1", "blocked", kind = "question"), row("s2", "blocked", kind = "permission"))
+    /** Home's badge and tile count every waiting request, including one waiting in a Bot chat. */
+    @Test fun homeCountsARequestWaitingInABotChat() {
+        val rows = listOf(row("s1", "blocked", kind = "question"))
         val p = pulse(chats(rows), pane("t1", "blocked"))
-        assertEquals(3, p.needsYou)
+        assertEquals(2, p.homeNeedsYou)
         assertEquals(1, p.answerableNeedsYou)
-        assertEquals(1, Nav.badge(Nav.HOME_TAB, p.answerableNeedsYou, 0))
+        assertEquals(2, Nav.badge(Nav.HOME_TAB, p.homeNeedsYou, 0))
     }
 
     /** A pane row raised to its chat keeps the pane's name and project, and opens the chat. */

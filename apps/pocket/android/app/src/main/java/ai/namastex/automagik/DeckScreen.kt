@@ -37,11 +37,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** A card's menu read: [done] separates "not read yet" from a read that found no menu. */
 private data class MenuRead(val menu: Prompt.Menu?, val done: Boolean)
+
+/**
+ * One answer: the view-model callback records it, while the card's scope only plays the motion. A deck closed
+ * during the confirm window still counts the answer; a cancelled scope only skips the animation.
+ */
+class DeckSend(private val scope: CoroutineScope, private val record: (String) -> Unit,
+               private val finish: (sent: Boolean) -> Unit, private val returnMotion: suspend () -> Unit) {
+    fun send(key: String, dispatch: (done: (Boolean) -> Unit) -> Unit, exit: suspend () -> Unit) {
+        val result = CompletableDeferred<Boolean>()
+        scope.launch {
+            withTimeoutOrNull(Teams.DECK_EXIT_MS) { exit() }
+            if (result.await()) finish(true) else { returnMotion(); finish(false) }
+        }
+        dispatch { sent ->
+            if (sent) record(key)
+            result.complete(sent)
+        }
+    }
+}
 
 /** The deck's answers and requests seen, kept in PocketApp so opening a card and coming Back keeps them. */
 class DeckMemory {
@@ -119,9 +139,9 @@ class DeckMemory {
                 val key = Teams.deckKey(card)
                 val cached = menuCache[key]
                 val cardsNow = (view as? Teams.DeckView.Cards)?.cards.orEmpty()
-                // While a card is leaving, the next card is the first of the list that no longer holds it.
-                val next = if (leaving != null) cardsNow.firstOrNull() else cardsNow.getOrNull(1)
-                val behind = if (leaving != null) cardsNow.size else (cardsNow.size - 1).coerceAtLeast(0)
+                val under = Teams.deckUnder(cardsNow, leaving?.let(Teams::deckKey))
+                val next = under.next
+                val behind = under.behind
                 key(key) {
                     DeckCard(vm, card, next = next, behind = behind,
                         initialMenu = cached?.menu, initialMenuDone = cached?.done == true, modifier = Modifier.weight(1f),
@@ -217,20 +237,16 @@ class DeckMemory {
         onSending()
         view.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
         // The card travels off while the agent confirms, so it never parks at the edge; a rejected answer returns it.
-        val result = CompletableDeferred<Boolean>()
-        scope.launch {
-            withTimeoutOrNull(Teams.DECK_EXIT_MS) { dx.animateTo(direction * 1400f, tween(500)) }
-            if (result.await()) {
-                onAnswered()
-                onGone(true)
-            } else {
-                sending = false
-                launch { dx.animateTo(0f, tween(180)) }; dy.animateTo(0f, tween(180))
-                onGone(false)
-            }
-        }
         val short = if (choice.index == yes?.index) "Yes" else if (choice.index == no?.index) "No" else choice.button
-        vm.answer(card.ref, card.message, m.dialog, m.options, choice, short = short) { sent -> result.complete(sent) }
+        DeckSend(scope = scope, record = { onAnswered() }, finish = { sent ->
+            if (!sent) sending = false
+            onGone(sent)
+        }, returnMotion = {
+            dx.animateTo(0f, tween(180))
+            dy.animateTo(0f, tween(180))
+        }).send(Teams.deckKey(card), dispatch = { done ->
+            vm.answer(card.ref, card.message, m.dialog, m.options, choice, short = short) { sent -> done(sent) }
+        }, exit = { dx.animateTo(direction * 1400f, tween(500)) })
     }
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {

@@ -274,7 +274,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             }
         },
         // The terminal has the whole screen; the keyboard has the bar's place while it is up.
-        bottomBar = { if (Nav.barShown(Nav.Place(state.screen, state.project, state.space, selected)) && !keyboard) PocketTabs(state.screen, pulse.answerableNeedsYou, teams.sumOf { it.needsYou }) { vm.navigate(it) } }
+        bottomBar = { if (Nav.barShown(Nav.Place(state.screen, state.project, state.space, selected)) && !keyboard) PocketTabs(state.screen, pulse.homeNeedsYou, teams.sumOf { it.needsYou }) { vm.navigate(it) } }
     ) { padding ->
         CompositionLocalProvider(LocalIconsVersion provides state.iconsVersion) { Box(Modifier.fillMaxSize().padding(padding)) {
             when {
@@ -432,7 +432,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         }
         // Today: the counts and nothing else above the agents; spent today joins them once a usage meter reports.
         if (space == null) item(key = "today") {
-            val needsYou = pulse.answerableNeedsYou
+            val needsYou = pulse.homeNeedsYou
             val fontScale = LocalDensity.current.fontScale
             val tile = TodayTiles.heightDp(fontScale)
             val spend = rememberSpend(state).takeIf { !it.coverage.none }

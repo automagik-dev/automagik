@@ -382,7 +382,19 @@ object Teams {
 
     /** The deck's exit window: after this the deck advances even if the exit animation never reported back. */
     const val DECK_EXIT_MS = 700L
-    fun deckExitDone(elapsedMs: Long) = elapsedMs >= DECK_EXIT_MS
+
+    /** The next card and how many sit behind the top card. */
+    data class Under(val next: DeckCard?, val behind: Int)
+
+    /**
+     * [Under] for the card being answered: [leaving] is dropped from [cards] before choosing the next one, so the
+     * card behind is never the answered card itself while Home still lists it.
+     */
+    fun deckUnder(cards: List<DeckCard>, leaving: String?): Under {
+        if (leaving == null) return Under(cards.getOrNull(1), (cards.size - 1).coerceAtLeast(0))
+        val rest = cards.filter { deckKey(it) != leaving }
+        return Under(rest.firstOrNull(), rest.size)
+    }
 
     /** A leaving card keeps its last menu; a new read lands only while the card is not leaving. */
     fun deckMenu(current: Prompt.Menu?, incoming: Prompt.Menu?, sending: Boolean): Prompt.Menu? =
