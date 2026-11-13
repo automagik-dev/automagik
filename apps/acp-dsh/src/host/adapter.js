@@ -1040,6 +1040,7 @@ export class AcpAdapter extends LlmAdapter {
               onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
               onAsked: () => { if (state.own === true && state.bridge !== undefined) state.bridge.agentAsked = true },
               onToolCall: tool => this.checkDrift(sessionId, agent, tool),
+              onIgnored: message => this.warn(message),
               onMode: seen => this.diagnostics?.mode(sessionId, state, seen),
               ...(agent.startMs === undefined ? {} : { startMs: agent.startMs }),
               ...(agent.requestMs === undefined ? {} : { requestMs: agent.requestMs }),
@@ -1236,6 +1237,9 @@ export class AcpAdapter extends LlmAdapter {
       // Ordinary strict sessions have no Auto record until an own-mode attempt or a late answer.
       this.diagnostics?.own(sessionId, live, live.ownSent === true || ['yes', 'late', 'changed', 'refused'].includes(own) ? { answer: own, taken: live.own } : undefined)
       if (live.bridge !== undefined) live.bridge.agentAsked = false
+      // The previous turn's mirrors are finished for DSH; continuation steps keep these above.
+      live.calls.clear()
+      live.toolIds?.clear()
       live.run.prompt(prompt).catch(() => {})
     }
     // The turn stays open until its end is drained here: the agent may finish it before DSH
@@ -1262,6 +1266,8 @@ export class AcpAdapter extends LlmAdapter {
         yield* blocks.add('reasoning', event.text)
       } else if (event.type === 'tool') {
         const tool = live.run.tools.get(event.id)
+        // Its entry went with a fork or retirement.
+        if (tool === undefined) continue
         this.diagnostics?.call(sessionId, live, tool)
         // A DSH tool call is not a mirror call: the bridge writes its rows and DSH draws the one
         // card from them. On `acp-codex` no structured name is proven, so any MCP call there is
