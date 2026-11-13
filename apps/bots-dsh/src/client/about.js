@@ -11,7 +11,8 @@ import { SPRING_POP } from './motion.js'
 import { BotMark } from './mark.js'
 import { MAIN_LOOK } from './characters.js'
 import { showsDshRow } from './dsh-offer.js'
-import { appState, pluginName, splitsPlugins, updatePill, useDesktopUpdate, useDesktopVersions } from './desktop-update.js'
+import { appState, pluginName, updatePill, useDesktopUpdate, useDesktopVersions } from './desktop-update.js'
+import { opensIntoPlugins, splitsPlugins } from './update-hold.js'
 import { Switch } from './bot-settings.js'
 
 // The length of the mark's `done` hop (bt-done in styles.js).
@@ -90,22 +91,6 @@ function pluginRows({ app, Row }) {
     }, h(Switch, { on: auto, label: t('Apply plugin updates automatically'), onChange: on => { void app.bridge.setAutoApply(on).catch(() => {}) } })))
   }
   return rows
-}
-
-// An app from before `check` (v3.120.0) has only `open`, and its `open` puts staged plugins in at
-// once, with DSH restarted, never asking whether an agent is at work (#1029). Auto-apply does not
-// change that: it only says whether the app goes ahead by itself or waits for the person, and
-// either way `open` restarts DSH there and then. So `open` is not asked of that app while it says
-// plugins are staged (in the plugins' own part, or the whole marked as the plugins'), while they
-// are still coming (they are staged a moment later, perhaps before the click is heard), or before
-// it has said anything. What is left: the page reads what the app last said, so plugins staged
-// since are not seen.
-const PLUGINS_COMING = new Set(['ready', 'downloading'])
-function opensIntoPlugins(bridge, state) {
-  if (!bridge || typeof bridge.check === 'function') return false
-  if (state == null) return true
-  if (!splitsPlugins(state)) return false
-  return PLUGINS_COMING.has(state.plugins.phase) || (state.kind === 'plugins' && PLUGINS_COMING.has(state.phase))
 }
 
 const linkProps = href => ({ className: 'bt-soft bt-soft-sm bt-about-link', href, target: '_blank', rel: 'noopener noreferrer' })
