@@ -3732,7 +3732,8 @@ test("restart --tree failing with a gone folder on the project list: pruned, no 
   assert.equal(r.code, 1, r.err);
   assert.ok(!JSON.parse(readFileSync(list, "utf8")).includes(gone), "the prune still ran");
   assert.doesNotMatch(r.err, /taken off the project list/);
-  assert.equal(restartAnswer({ code: r.code, err: r.err }).refused, r.err.trim().split("\n").at(-1).trim());
+  assert.equal(restartAnswer({ code: r.code, err: r.err }).refused,
+    "Genie's helper probe: t102 replaces t10, resuming its session by id (resume ***); check the log and try again.");
   assert.doesNotMatch(restartAnswer({ code: r.code, err: r.err }).refused, /^am: tidy:/);
   assert.match(r.err, /t8 \(rev-1\) wasn't run again: hc run failed/);
 });

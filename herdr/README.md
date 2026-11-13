@@ -426,9 +426,13 @@ restarts it (Restart runs `automagik-herdr restart`; Restart on… restarts it o
 agent, a new conversation, the bot's definition keeping its agent), attaches it to the focused
 pane or detaches it; What happened shows `automagik-herdr history` for it (its panes, starts,
 sessions, the newest transcript, which a click copies, its workers) and the helpers its pane runs
-now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A refusal offers
-"Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
-knows and refresh behind.
+now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A busy-pane
+refusal offers "Restart anyway". With helpers, choose "Restart with its helpers" to restart immediately and resume
+those conversations, or "End helpers and restart" to end them. On a linked machine, the first choice
+runs the installed CLI's local `--tree --force` restart on the machine holding the panes, then updates
+this sidebar's attachment. Saved configuration changes use these same choices when you restart to apply
+them. Pack updates reload mods and do not restart bot panes. The Bots list and the Attach picker open
+on the bots the sidebar already knows and refresh behind.
 
 A project on a linked machine (`hc machine ls`) is managed from here too. Its bots' menu has
 Configure, Prompt and Run (Start, Focus, Restart, Attach to a focused pane of that machine,
@@ -652,6 +656,11 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   lists the queue; `restart --cancel <bot>` (or `restart <bot> --cancel`) cancels one. Both
   accept `--project DIR` and `--json`. A second request replaces that bot's queued options.
   `--force` restarts immediately; helpers still require `--tree` or `--force`.
+- A paired Hermes bot keeps its `programs.json` command, including wrapper scripts and
+  `--tui`, and adds its profile and Bot Chat options once; a different `--profile` must be
+  corrected to match the pairing. Start and Restart errors show a short explanation in the
+  menu. The CLI records the diagnostic and trace in `automagik-herdr/actions.log` under the
+  app home; failures in the sidebar itself go to Herdr's app log.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports

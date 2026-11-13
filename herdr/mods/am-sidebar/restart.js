@@ -8,7 +8,8 @@ import { agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeProblem, agySettingsArg
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
-import { hermesPairArgs } from "./hermesPair.js";
+import { hermesPairRun } from "./hermesPair.js";
+import { actionError } from "./actionError.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
 const SESSION = "agent.session";
@@ -130,10 +131,8 @@ export function withoutPrompt(args) {
 export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null,
   agy = null, newSession = null }) {
   if (bot.agent === "hermes" && bot.hermes !== undefined) {
-    const pair = hermesPairArgs(bot);
-    if (fresh || agent !== undefined || model !== undefined || template) throw new Error("This Hermes bot is paired: unpair it before a fresh session, agent/model swap or template launch.");
-    const argv = run.length === 1 ? [...run, ...pair] : run;
-    if (JSON.stringify(argv.slice(1)) !== JSON.stringify(pair)) throw new Error("The paired Hermes launch does not match its stored binding.");
+    if (fresh || (agent !== undefined && agent !== "hermes") || model || template) throw new Error("This Hermes bot is paired; unpair it before a fresh session, agent/model swap or template launch.");
+    const argv = hermesPairRun(run, bot);
     return { mode: "resume", agent: "hermes", model: null, resume: ["--continue", "Bot Chat"], argv,
       source: argv, template: null, agySettings: null, sessionId: null, canonicalBot: true, note: "paired Bot Chat, resolved by exact title" };
   }
@@ -465,10 +464,8 @@ export function isPaneIdle(get, screenText = null) {
  * A pane mid-turn would have the turn cut in half; a helper hc ends with its parent
  * (die_with_parent, as a worker is) would end with it. --tree (`tree`) restarts those helpers
  * under the new pane (one mid-turn is waited for before anything starts: the CLI's treeIdle).
- * --force (`force`) overrides all. `onMachine`: the pane is on a linked machine, where --tree isn't
- * built yet (#437): the way out for helpers is to wait for a working one, end each pane by hand
- * (a finished worker's pane stays open), then restart, never --tree, nor --force (it drops the
- * other checks too).
+ * --force (`force`) overrides all. `onMachine`: the pane is on a linked machine, where --tree is
+ * run by the CLI on the machine holding the pane, using its existing local tree restart.
  */
 export function restartRefusal({ name, old, helpers = [], force = false, tree = false, onMachine = false, screen = null }) {
   if (force) return null;
@@ -480,11 +477,8 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
   if (doomed.length) {
     const one = doomed.length === 1;
     if (onMachine) {
-      const working = doomed.filter((h) => h.status?.state === "working").map((h) => h.address);
       return `${old.address} has ${one ? "a helper that ends" : "helpers that end"} with it: ${doomed.map((h) => h.address).join(", ")}. `
-        + `Restarting helpers on a linked machine isn't built yet, so nothing was restarted. `
-        + (working.length ? `Wait for ${working.join(", ")} to finish, then end` : "End")
-        + ` ${one ? "its pane" : "each one's pane"} (${doomed.map((h) => `hc kill ${h.address}`).join(", ")}) and restart ${name} again.`;
+        + "Choose Restart with its helpers (--tree runs on their machine), or End helpers and restart (--force).";
     }
     return `${old.address} has ${one ? "a helper that ends" : "helpers that end"} with it: ${doomed.map((h) => h.address).join(", ")}. `
       + `Let ${one ? "it" : "them"} finish, pass --tree to restart ${one ? "it" : "them"} too (resumed, under the new pane), `
@@ -649,9 +643,9 @@ export function planText(plan, session) {
  * this app home): `agent`: Restart on… (a swap); `force`: past a working pane or its helpers;
  * `fresh`: a new conversation.
  */
-export function restartArgs({ botId, projectKey, agent = null, force = false, fresh = false, machine = null }) {
+export function restartArgs({ botId, projectKey, agent = null, force = false, fresh = false, tree = false, machine = null }) {
   return ["restart", botId, "--project", projectKey, ...(machine ? ["--machine", machine] : []),
-    ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : [])];
+    ...(agent ? ["--agent", agent] : []), ...(force ? ["--force"] : []), ...(fresh ? ["--fresh"] : []), ...(tree ? ["--tree"] : [])];
 }
 
 /**
@@ -660,15 +654,24 @@ export function restartArgs({ botId, projectKey, agent = null, force = false, fr
  * overrides, or one a new conversation, --fresh, avoids).
  */
 export function restartAnswer(r) {
+  if (r?.out?.refused === "helpers" || (r?.code !== 0 && /has (?:a helper that ends|helpers that end) with it:/.test(r?.err ?? ""))) {
+    return { refused: "Its helpers would end with it; choose whether to restart them or end them.", helpers: true, forceable: false, freshable: false };
+  }
   if (r?.code === 0 && r.out?.queued) return { terminal: r.out.terminal, replaced: null, queued: true,
     reason: r.out.reason ?? null, dialog: r.out.dialog ?? null, warnings: [] };
-  if (r?.code === 0 && r.out?.terminal) {
-    return { terminal: r.out.terminal, replaced: r.out.replaced ?? null, warnings: Array.isArray(r.out.warnings) ? r.out.warnings : [] };
+  // A tree restart can replace the lead and then fail to bring back a helper. Do not
+  // offer to restart the lead again: show exactly which helper needs attention.
+  if (r?.out?.terminal && !r.out.error && (r.code === 0 || Array.isArray(r.out.helpers))) {
+    const warnings = [...(Array.isArray(r.out.warnings) ? r.out.warnings : [])];
+    for (const helper of r.out.helpers ?? []) if (helper.error) {
+      warnings.push(actionError(`${helper.name ?? helper.replaced}: ${helper.error}`, "Helper restart"));
+    }
+    return { terminal: r.out.terminal, replaced: r.out.replaced ?? null, warnings };
   }
   if (r?.code === 0 && r.out?.running) return { refused: `It is already running in ${r.out.running}.`, forceable: false, freshable: false };
   // Not run, or ended by Herdr (launch.js machineCli, #444): neither --force nor --fresh is the answer.
-  if (r?.asIs) return { refused: r.err, forceable: false, freshable: false };
+  if (r?.asIs) return { refused: actionError(r.err, "Restart"), forceable: false, freshable: false };
   // The CLI's refusal is its last stderr line (warnings come before it).
-  const refused = String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? `Restart failed (exit ${r?.code ?? "?"}).`;
-  return { refused, forceable: /pass --force/.test(refused), freshable: /--fresh\b/.test(refused) };
+  const raw = String(r?.err ?? "");
+  return { refused: actionError(raw, "Restart"), forceable: /pass --force/.test(raw), freshable: /--fresh\b/.test(raw) };
 }

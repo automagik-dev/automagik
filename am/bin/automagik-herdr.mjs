@@ -10,13 +10,14 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
+import { accessSync, appendFileSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, uptime } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { hermesPairEnv } from "../hermesPair.js";
+import { actionError } from "../actionError.js";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, cleanProjectPath, collectProjectMap, crossMemberWarnings, crossMembersOf, defaultLook, descendantsOf, effectiveLead, leadsBackTo, listedProjects, mainBotOf, newBotId, newCategoryId,
@@ -1464,8 +1465,8 @@ keys to (its git main checkout), or --project's. With --machine, --project is an
 folder on that machine and the file is read and written there by the same rule (a file
 changed since it was read is never overwritten); its panes run there (M/tN). A pane that
 reports no status to hc can't say it is waiting for an approval: restart refuses it unless
---force, which still sends it no keys. restart --tree is this computer's only for now: with
---machine it is refused before anything is read or started there, and a bot whose helpers
+--force, which still sends it no keys. restart --tree works on this computer and, with
+--machine, on that machine (there it needs --force, since it runs at once); a bot whose helpers
 end with its pane there is refused until each helper's pane is ended (hc kill M/tN).`;
 
 /** `proxy approve`'s own help: the residual is part of the command's contract. */
@@ -3096,9 +3097,85 @@ async function startOnMachine(opts, project, bot) {
   return opts.json ? seatOnJson(bot, seat) : seat.address;
 }
 
+// Execute the existing local tree transaction where the panes and worker ledger live.
+// Every argument is positional shell data; no controller path or --machine is forwarded.
+async function restartTreeOnMachine(opts, project, bot) {
+  // A queue on the holding machine would outlive this controller transaction and leave
+  // its attachment on the old pane. The sidebar's explicit helper choice is immediate.
+  if (!opts.force) throw new CliError("Restart with its helpers runs immediately; pass --tree --force to restart them on their machine now.", 2);
+  if (opts.space) throw new CliError("A restart on a linked machine keeps the old pane's window place.", 2);
+  const { machine, key } = project;
+  const m = await connectedMachine(machine, "nothing was restarted");
+  const view = await attachView();
+  const held = liveFor(view, bot.id, project);
+  if (unknownFor(view, bot.id, project)) throw new CliError(`${machine} isn't answering; reconnect it and retry the restart.`);
+  const paneEnv = await paneEnvOn(machine, key);
+  if (paneEnv.refused) throw new CliError(`The project's pane environment on ${machine} could not be read; fix it and retry the restart.`);
+  const args = ["restart", bot.id, "--project", key, "--tree", "--json"];
+  for (const flag of ["force", "fresh", "fresh-shared", "save"]) if (opts[flag]) args.push(`--${flag}`);
+  for (const flag of ["agent", "model"]) if (opts[flag] !== undefined) args.push(`--${flag}`, opts[flag]);
+  const script = `
+if [ -n "$1" ]; then HERDR_APP_HOME=$1; export HERDR_APP_HOME; fi
+PATH="$HOME/.local/bin:$PATH"
+if [ -n "$2" ]; then PATH="$2:$PATH"; fi
+export PATH
+restart_terminal=$3; restart_bot=$4; restart_project=$5
+shift 5
+unset HC_TERMINAL_ID
+if command -v automagik-herdr >/dev/null 2>&1; then restart_cli=automagik-herdr
+elif command -v am >/dev/null 2>&1; then restart_cli=am
+else
+  printf '%s\\n' 'Automagik is missing on this machine; install it there and retry.' >&2
+  exit 127
+fi
+if [ -n "$restart_terminal" ]; then
+  "$restart_cli" attach "$restart_bot" "$restart_terminal" --project "$restart_project" --json >/dev/null || exit $?
+fi
+exec "$restart_cli" "$@"`;
+  const result = await remoteIo.exec("sh", ["-c", script, "sh", paneEnv.appHome ?? "", paneEnv.prepend ?? "",
+    held?.binding.terminal ?? "", bot.id, key, ...args], machine, { cwd: key, timeout: 540 });
+  let out;
+  try { out = JSON.parse(result.stdout); } catch { /* a missing CLI or a lost reply */ }
+  if (!out || out.error || !out.terminal) {
+    if (result.stderr) console.error(result.stderr);
+    const message = out?.error ?? (result.code === 127
+      ? `Automagik is missing on ${machine}; install it there and retry.`
+      : result.code !== -1 && result.stderr.trim() ? actionError(result.stderr, "Restart")
+      : `The restart on ${machine} gave no completion result; inspect its panes before retrying.`);
+    throw new CliError(message, 1, out?.refused ? { refused: out.refused, terminal: out.terminal } : undefined);
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(out.terminal)) throw new CliError(`The restart on ${machine} returned an invalid pane; inspect its panes before retrying.`);
+  if (!out.queued) {
+    const address = `${machine}/${out.terminal}`;
+    const get = await hcGet(address).catch(() => null);
+    if (!get || get.state !== "live" || !Number.isSafeInteger(get.created_ms) || get.labels?.[BOT_LABEL] !== bot.id) {
+      throw new CliError(`The restart ran on ${machine}, but its replacement pane could not be confirmed; inspect its panes before retrying.`);
+    }
+    try {
+      await underLedger(async ({ machines, heldBy, holds, write }) => {
+        const now = heldBy(bot.id, m.id);
+        const sameReplacement = now?.terminal === out.terminal && now.created_ms === get.created_ms && now.project === key;
+        if (now && (!held || attachKey(now) !== attachKey(held.binding)) && !sameReplacement && await holds(now)) {
+          throw new Error(`${bot.name} was attached to ${addressOf(now, machines)} while it restarted`);
+        }
+        write([...(now ? [closingRow(now, "detach", "start", "moved")] : []),
+          attachRow({ event: "attach", bot: bot.id, project: key, terminal: out.terminal, core: m.id,
+            created_ms: get.created_ms, machine, by: "start" })]);
+      });
+    } catch (e) {
+      console.error(e);
+      throw new CliError(`${bot.name} restarted in ${address}, but its sidebar attachment could not be saved; attach that pane before restarting again.`);
+    }
+  }
+  exitAfter.code = result.code === 0 ? 0 : 1;
+  report(out.warnings ?? []);
+  if (result.code !== 0 && result.stderr) console.error(result.stderr);
+  return opts.json ? { ...out, machine } : `${bot.name}: ${out.queued ? "restart queued in" : "restarted in"} ${machine}/${out.terminal}.`;
+}
+
 /**
- * restart --machine: cmdRestart's rule on the project's linked machine, without --tree (cmdRestart
- * refuses it there, #437). The old pane must say whether its agent is busy: one that reports no
+ * restart --machine without --tree: the controller manages the replacement. Tree restarts
+ * use restartTreeOnMachine instead. The old pane must say whether its agent is busy: one that reports no
  * status to hc (Hermes) is refused unless --force, as is a busy one or one with helpers. The new pane starts in the old one's place and
  * folder, resuming as restartPlan says (an agent's own --continue resumes the folder's latest
  * conversation: refused while another bot's same agent runs in that folder there); the old
@@ -3116,7 +3193,10 @@ async function restartOnMachine(opts, project, bot, entry) {
   }
   const old = held ? { ...held.get, address: addressOf(held.binding, view.machines) } : null;
   if (old) {
-    const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force, onMachine: true });
+    const helpers = await helpersOf(old.address);
+    const helperRefusal = restartRefusal({ name: bot.name, old: { ...old, status: { state: "idle" } }, helpers, force: opts.force, onMachine: true });
+    if (helperRefusal) throw new CliError(helperRefusal, 1, { refused: "helpers", terminal: old.address });
+    const refusal = restartRefusal({ name: bot.name, old, force: opts.force, onMachine: true });
     if (refusal) throw busyRefusal(refusal, old);
     if (!old.status && !opts.force) {
       throw new CliError(`${old.address} doesn't tell hc whether ${bot.name}'s agent is busy or waiting for an approval, so a restart `
@@ -3142,8 +3222,9 @@ async function restartOnMachine(opts, project, bot, entry) {
   let cwd = key;
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
   if (oldCwd && oldCwd !== key) { try { if ((await remoteProjectOf(machine, oldCwd)).key === key) cwd = oldCwd; } catch { /* the project's */ } }
-  // A session counts only when the command really resumes it by id (--resume <id> in its argv).
-  let session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
+  // Each agent spells resume differently (Codex: resume ID, omp: --resume=ID).
+  // Use the same validated identity as a local restart, rather than Claude's flag spelling.
+  let session = plan.mode === "resume" && !plan.canonicalBot && resumesById(plan.agent) ? sessionFor(plan.agent, label) : null;
   // #598: dsh-tui's id-less -c only once a turn has finished in the old pane (hc's turn counter;
   // missing or unreadable is 0): else a new conversation, and why, in --json's warnings too (F3).
   let turnNote = null;
@@ -4303,16 +4384,6 @@ async function cmdRestart(opts, [ref]) {
   if (opts.cwd !== undefined && opts.machine !== undefined) {
     throw new CliError("--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's.", 2);
   }
-  // --tree on a linked machine isn't built yet (#437): refused before anything is read there, so
-  // its helpers are never left behind by a restart that looks done. Each sentence that says what
-  // happened names no flag: the Accounts panel shows a refusal without the clauses that name one.
-  if (opts.tree && opts.machine !== undefined) {
-    throw new CliError(`Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: `
-      + `${ref} and its helpers on ${opts.machine} still run as they were, on the account they started with. `
-      + `By hand: wait for a helper still working to finish, end each helper's pane (hc kill ${opts.machine}/tN for one), `
-      + `then restart ${ref} there without --tree. A helper that still had work to do, start again yourself with hc run `
-      + `on ${opts.machine} once ${ref} is back.`, 2);
-  }
   if (opts.cwd !== undefined) {
     const dir = opts.cwd ? realDir(resolvePath(opts.cwd)) : null;
     if (!dir || !isDir(dir)) throw new CliError(`--cwd ${opts.cwd || '""'} isn't a folder on this computer.`, 2);
@@ -4324,6 +4395,7 @@ async function cmdRestart(opts, [ref]) {
   const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
+  if (project.machine && opts.tree) return restartTreeOnMachine(opts, project, bot);
   // A swap's agent and model are checked as an edit checks them (entryFrom); a new agent
   // without --model drops the old agent's pin. bots.json changes only with --save.
   let entry = null;
@@ -4428,7 +4500,7 @@ async function cmdRestart(opts, [ref]) {
       + `or pick a folder whose slug is the same.`);
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
-  let resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
+  let resumeId = plan.mode === "resume" && !plan.canonicalBot && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
   // With no id, a resume takes the folder's latest conversation (--continue, codex resume
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
@@ -7131,7 +7203,16 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     if (TIDIES.has(command) && opts.machine === undefined) { await tidyQuietly(); await recordSessions(); }
     return exitAfter.code;
   } catch (e) {
-    const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
+    const botAction = command === "start" || command === "restart";
+    if (botAction) {
+      try {
+        const dir = join(appHome(), "automagik-herdr");
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        appendFileSync(join(dir, "actions.log"), unprinted(`${new Date().toISOString()} ${command}: ${e?.stack ?? e}\n`), { mode: 0o600 });
+      } catch { /* A log that cannot be written must not hide the original failure. */ }
+    }
+    const message = e instanceof CliError ? e.message : botAction
+      ? actionError(e, command === "start" ? "Start" : "Restart") : `${e?.stack ?? e}`;
     process.stderr.write(unprinted(`am: ${message}\n`));
     if (opts.json && e instanceof CliError && e.detail) process.stdout.write(unprinted(`${JSON.stringify({ error: message, ...e.detail }, null, 2)}\n`));
     return e instanceof CliError ? e.code : 1;
