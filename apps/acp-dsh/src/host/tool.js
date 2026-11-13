@@ -43,6 +43,7 @@ export function callArguments(tool) {
 const judgedText = tool => `Auto's judge refused ${tool.title}: ${tool.judgeReason}.`.replace(/\s+/g, ' ').slice(0, 300)
 
 function resultText(tool) {
+  if (tool.sessionFileResult !== undefined) return tool.sessionFileResult
   if (typeof tool.judgeReason === 'string') return judgedText(tool)
   const text = contentText(tool.content) || tool.output || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
   return text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text
@@ -188,35 +189,45 @@ export function mirrorTool(host) {
       if (isImageCall(tool)) {
         try { host.images?.()?.start?.({ callId: exec.callId, sessionId: exec.agent?.session?.id, via: live.name }) } catch {}
       }
+      live.mirrorBodies = (live.mirrorBodies ?? 0) + 1
       try {
-        for (;;) {
-          if (exec.signal?.aborted) {
-            tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
-            // The agent may ignore the cancel: the host gives its prompt a bounded time to end.
-            host.cancelled?.(exec.agent?.session?.id, live)
-            await live.run.cancel()
-            break
+        try {
+          for (;;) {
+            if (exec.signal?.aborted) {
+              tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
+              // The agent may ignore the cancel: the host gives its prompt a bounded time to end.
+              host.cancelled?.(exec.agent?.session?.id, live)
+              await live.run.cancel()
+              break
+            }
+            const permission = tool.permission
+            if (permission && !permission.asked) {
+              permission.asked = true
+              if (live.sessionFileEnabled && permission.call?.structuredName === 'request_permissions') {
+                try { tool.sessionFileResult = await host.sessionFiles?.(live, tool, exec, permission) } catch {
+                  tool.sessionFileResult = 'The image was not approved for this chat session.'
+                }
+                permission.answer({ outcome: { outcome: 'cancelled' } })
+                break
+              }
+              permission.answer(optionFor(await ask(host, live, tool, exec, permission), permission.options))
+              continue
+            }
+            if (isTerminal(tool) || !live.run.busy) break
+            await changed(tool, exec.signal)
           }
-          const permission = tool.permission
-          if (permission && !permission.asked) {
-            permission.asked = true
-            permission.answer(optionFor(await ask(host, live, tool, exec, permission), permission.options))
-            continue
-          }
-          if (isTerminal(tool) || !live.run.busy) break
-          await changed(tool, exec.signal)
+        } finally {
+          // The card's body is done asking, however it left: a question that comes for the call
+          // now has nobody to ask it, and the agent's run answers it as cancelled (acp.js
+          // onPermission). One still stored when the body failed is withdrawn the same way.
+          tool.mirrored = true
+          tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
         }
-      } finally {
-        // The card's body is done asking, however it left: a question that comes for the call
-        // now has nobody to ask it, and the agent's run answers it as cancelled (acp.js
-        // onPermission). One still stored when the body failed is withdrawn the same way.
-        tool.mirrored = true
-        tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
-      }
-      // Only an image-generation call is answered as a kept image; any other call that answers
-      // with an image (a Read, a screenshot) keeps its own result, image blocks included.
-      if (isImageCall(tool)) return imageResult(host, live, tool, exec)
-      return resultOf(tool, host.attachments?.())
+        // Only an image-generation call is answered as a kept image; any other call that answers
+        // with an image (a Read, a screenshot) keeps its own result, image blocks included.
+        if (isImageCall(tool)) return await imageResult(host, live, tool, exec)
+        return await resultOf(tool, host.attachments?.())
+      } finally { live.mirrorBodies -= 1 }
     },
     presentCall(args) {
       const title = typeof args?.title === 'string' ? args.title : 'Tool'

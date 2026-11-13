@@ -74,6 +74,15 @@ export function canRunProfile(codexPath, profile, { cwd, env, run = execFileSync
   return ok
 }
 
+// One source for the restricted base, including the process-local exact-file profiles.
+export function restrictedChatGrants(codexHome, access, runtime) {
+  const grants = { ':root': 'deny', ':minimal': 'read', ':workspace_roots': access, ':project_roots': 'read' }
+  if (access === 'write') Object.assign(grants, { ':tmpdir': 'write', ':slash_tmp': 'write' })
+  grants[join(codexHome, 'skills')] = 'read'
+  if (runtime !== undefined) grants[runtime] = 'read'
+  return grants
+}
+
 function profilesConfig(codexHome, hex, runtime) {
   const lines = [BOTTOM]
   for (const [id, description, access] of [
@@ -81,10 +90,7 @@ function profilesConfig(codexHome, hex, runtime) {
     [`automagik-workspace-${hex}`, 'Automagik Workspace: work in the chat workspace', 'write'],
   ]) {
     lines.push(`[permissions.${id}]`, `description = ${toToml(description)}`, `[permissions.${id}.filesystem]`)
-    const grants = { ':root': 'deny', ':minimal': 'read', ':workspace_roots': access, ':project_roots': 'read' }
-    if (access === 'write') Object.assign(grants, { ':tmpdir': 'write', ':slash_tmp': 'write' })
-    grants[join(codexHome, 'skills')] = 'read'
-    if (runtime !== undefined) grants[runtime] = 'read'
+    const grants = restrictedChatGrants(codexHome, access, runtime)
     for (const [key, value] of Object.entries(grants)) lines.push(`${toToml(key)} = ${toToml(value)}`)
   }
   return [...lines, ''].join('\n')

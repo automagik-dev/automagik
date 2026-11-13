@@ -404,8 +404,9 @@ isolated home; the chat spawn writes them and keeps the person's other lines in 
   home's skills and the layout of Codex's own executable (Linux's sandbox re-runs it for every
   command, and its `codex-path` holds Codex's `rg`; for npm's launcher, the native package it
   starts). Workspace also writes in the workspace, `/tmp` and `$TMPDIR`. Reads outside those
-  grants ask through DSH's approval, like writes do. This covers Codex's own `view_image` and
-  `image_gen` local inputs in chat, through the step's sandbox in Codex 0.167.
+  grants stay denied unless supported exact-file session consent below authorizes them.
+  Ordinary tool approvals do not add filesystem grants. This covers Codex's own `view_image`
+  and `image_gen` local inputs in chat, through the step's sandbox in Codex 0.167.
 - **When they are used.** Only after `codex sandbox -P <profile> -- true` passed with the chat's
   environment (once per executable); otherwise, and for an executable that does not resolve,
   the chat keeps the legacy modes. The home's `default_permissions` stays Codex's own
@@ -413,6 +414,46 @@ isolated home; the chat spawn writes them and keeps the person's other lines in 
 - **Ids.** Per-home random ids keep a project's config from extending the profiles while the id
   stays unknown. An Auto or Full access chat in the same home can read that home's
   `config.toml`, and so could plant a matching project config for later chats.
+
+**Outside image files: explicit chat-session consent.** In a managed Codex chat using a strict
+Read only or Workspace profile, a structured `request_permissions` request for exact regular
+image files can ask **Allow for this chat session** or **Reject** through DSH's person-answer
+questions. The card names every canonical path and the session duration. Tool approval
+policies, Auto review and native Allow once cannot create this authorization. Directories,
+writes, network access and ambiguous requests are refused by this flow.
+
+Allowing ends the current turn and cancels the native permission request. **Send a new message
+asking to open the image.** The approval click does not open it, retry the interrupted task or
+start a replacement process. The next genuine user message waits for bounded old-process,
+bridge and mirror-result drain, rechecks the file identities, then starts the authorized
+process. A failed stop, startup or exact profile acknowledgement sends no granted prompt.
+
+The filesystem overlay exists only in that process's `CODEX_CONFIG`: it copies the strict base
+and adds the approved canonical files as reads. It selects the current spawn's already-offered
+random per-home managed profile id and requires acknowledgement, with no legacy fallback for
+a granted read. The id is metadata, not authorization, and is not a fresh session id. No
+approved path is written to the shared home config. Another chat using the same id gets its
+ordinary base. Auto, Full, effective agent-own mode, catalogs and one-off drawing keep their
+ordinary configuration; the base's workspace, temporary, minimal and runtime allowances stay
+unchanged. This adds no attachment or runtime roots.
+
+Authority belongs to that live root chat and is revoked on Stop, level/route changes (including
+away and back), agent/chat/provider/account/plugin teardown, native request invalidation or
+failed activation. Revocation retires a process holding the overlay. Reopened transcripts,
+forks and other chats cannot recover it. New files need new consent; siblings are not implied.
+The grant is path-based read authority, not an immutable byte snapshot: realpath/stat checks
+at consent and activation do not eliminate later filesystem races. The per-home naming and
+project-config limitations above still apply.
+
+`test/session-files-native.test.js` records credential-free Linux evidence on Codex 0.169.0
+and codex-acp 2.6.0 with a fixed loopback SSE peer: exact approved PNG bytes on the next user
+turn, sibling/sentinel denial, concurrent same-home/id process isolation, fresh-base denial
+after revocation and shared-config byte equality. It is opt-in via `AUTOMAGIK_TEST_CODEX` and
+`AUTOMAGIK_TEST_CODEX_ACP`; `AUTOMAGIK_REQUIRE_SESSION_FILE_TEST=1` refuses absent prerequisites.
+`AUTOMAGIK_TEST_SESSION_FILE_ROOT` optionally confines its disposable fixtures. This proves
+the tested Read only flow, not Workspace `/tmp` denial, other versions/platforms or observed
+application acceptance. Unsupported ordinary sessions retain their existing base behavior;
+they cannot fall back to another mode to activate a session-file grant.
 
 **Security warning (#870): full-disk reads remain in the legacy fallback.** Auto keeps `agent`:
 codex-acp 2.6.0 gives profile modes one reviewer per session. Full access is unrestricted by

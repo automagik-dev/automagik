@@ -40,6 +40,28 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
+// src/client/session-file-approval.js
+var ALLOW = "Allow for this chat session";
+function selectSessionFileApproval(pending) {
+  if (pending?.kind !== "question" || pending.questions?.length !== 1) return null;
+  const item = pending.questions[0];
+  const intent = item.intent;
+  if (!/^acp-session-file:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(item.id) || intent?.kind !== "approval" || intent.approve !== ALLOW || intent.reject !== "Reject" || intent.always !== void 0 || item.multiSelect !== void 0 || typeof item.detail !== "string" || item.detail === "" || item.options?.length !== 2 || item.options[0]?.label !== ALLOW || item.options[1]?.label !== "Reject") return null;
+  return { pending, item };
+}
+function SessionFileApproval({ matched: { pending, item }, renderFactorySlot }) {
+  const answer = (label) => pending.answer({ answers: [{ id: item.id, selected: [label] }] });
+  return renderFactorySlot("conversation.approval.card", {
+    requestKey: pending.key,
+    title: item.question,
+    description: item.detail,
+    allowLabel: ALLOW,
+    canAnswer: () => pending.snapshot().channel !== "none" && !pending.snapshot().closed,
+    onAllow: () => answer(ALLOW),
+    onReject: () => answer("Reject")
+  });
+}
+
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
@@ -30292,6 +30314,10 @@ function apply(ctx) {
     () => shadow("conversation.input.left", { id: "bot-plus", order: -100, inject: face }, ComposerPlus),
     () => shadow("conversation.input.left", { id: "bot-permission-chip", order: -99, inject: face }, ComposerPermission),
     () => shadow("conversation.input.right", { id: "bot-voice", order: 100, inject: face }, ComposerVoice),
+    () => shadow("conversation.composer", {
+      priority: BOT_PRIORITY + 1,
+      select: (owner) => selectSessionFileApproval(owner.pendingInteraction)
+    }, SessionFileApproval),
     () => shadow("conversation.composer", {
       priority: BOT_PRIORITY,
       select: (owner) => owner.pendingInteraction?.kind === "question" ? owner.pendingInteraction : null

@@ -724,14 +724,19 @@ export class AgentRun {
     // A second question for the call while the first was not asked yet: the first is withdrawn,
     // or nothing would ever answer it. One already in its dialog keeps the dialog's answer.
     const earlier = tool.permission
+    earlier?.invalidate?.()
     if (earlier !== undefined && earlier.asked !== true) earlier.answer({ outcome: { outcome: 'cancelled' } })
     return new Promise((resolve) => {
       let done = false
+      const lifetime = new AbortController()
       const permission = {
+        signal: lifetime.signal,
+        invalidate: () => lifetime.abort(),
         options: params.options ?? [],
         answer: (response) => {
           if (done) return
           done = true
+          lifetime.abort()
           if (tool.permission === permission) tool.permission = undefined
           resolve(response)
           for (const listener of tool.listeners) listener()
