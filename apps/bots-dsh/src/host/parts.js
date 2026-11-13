@@ -375,8 +375,9 @@ export function install(rt) {
     engine.compactRegion = function compactRegionOutsideBots(start, end, target, signal) {
       if (!ownedByBot(target)) return original.compactRegion.call(this, start, end, target, signal)
       // Without the summary hook the backend would summarize a Bot conversation itself,
-      // so that case keeps the refusal.
-      if (original.summarize === undefined) return refuseCompaction()
+      // so that case keeps the refusal. So does a conversation whose checkpoint is
+      // reserved: one operation makes room at a time.
+      if (original.summarize === undefined || checkpoints.has(target.session.id)) return refuseCompaction()
       return condenseRange(target, () => original.compactRegion.call(this, start, end, target, signal), { forSwitch: true })
     }
     if (original.summarize !== undefined) {

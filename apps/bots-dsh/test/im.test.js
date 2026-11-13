@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 import { adapters } from '../src/host/im/platforms/index.js'
+import { install as installIm } from '../src/host/im/index.js'
 
 // A platform adapter that records sends/edits and lets the test feed inbound
 // messages, actions and statuses. `fail` makes send throw once per call queued.
@@ -93,13 +94,22 @@ async function start({ platform = 'telegram', adapter, seed } = {}) {
   const real = adapters[platform]
   adapters[platform] = fake
   const rt = createRuntime(ctx, { home })
+  // The chat-app layer is carried but not installed (index.js: channels are Omni's).
+  // This file installs it itself, so the carried code stays tested until it is.
+  installIm(rt)
   const emitEvent = (sessionId, type, data) => {
     for (const listener of ctx.listeners.get('session/event') ?? []) {
       if (listener.length >= 2) listener({ id: sessionId }, { type, data, time: Date.now() })
     }
   }
-  const fireApprovals = (request, next) => Promise.all((ctx.listeners.get('approval/request') ?? [])
-    .map(listener => listener(request, next)))
+  // The request runs down the answerers as DSH's waterfall does: each one's `next` is
+  // the one after it, and the last one's is the test's. Automagik has answerers ahead
+  // of the team's own (the phone's, the Auto review), which pass a request on.
+  const fireApprovals = async (request, next) => {
+    const chain = ctx.listeners.get('approval/request') ?? []
+    const run = at => (at === chain.length ? next() : chain[at](request, () => run(at + 1)))
+    return [await run(0)]
+  }
   const stop = async () => {
     adapters[platform] = real
     await ctx.dispose()
