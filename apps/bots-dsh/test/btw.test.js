@@ -13,7 +13,8 @@ const call = (id, name = 'read') => ({ type: 'tool-call', id, name, arguments: '
 const result = (id, text = 'ok') => ({ role: 'tool', toolCallId: id, content: [{ type: 'text', text }] })
 
 const team = (extra = {}) => ({
-  version: 1,
+  // The state version v0.3.6 writes: an older one is brought up on the first load, which is a save.
+  version: 2,
   mainBotIds: ['b1'],
   whaleStored: true,
   // Omni's whale-to-octopus migration already ran, so loading saves nothing.

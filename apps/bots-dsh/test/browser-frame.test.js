@@ -43,7 +43,11 @@ test('browser-frame refuses when no Bot browser is open', async () => {
 })
 
 test('browser-frame refuses when browsers are off', async () => {
-  const { call, stop } = start()
+  const { rt, call, stop } = start()
+  // Here the browser part is always installed and answers "no open browser" itself; off is a host
+  // that has neither the frame reader nor the Desktop channel.
+  rt.browserFrame = undefined
+  rt.browserChannel = undefined
   const response = await call('browser-frame', { botId: 'b-1' })
   assert.equal(response.ok, false)
   assert.equal(response.error.code, 'bot/browser-off')

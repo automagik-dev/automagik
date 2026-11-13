@@ -196,12 +196,14 @@ test('goal state opened for one group does not open another group after a move',
   assert.equal(find(elsewhere, 'bt-goal-input'), null)
 })
 
-test('a group without a goal renders today\'s pill with no island', () => {
+// Automagik's header shows the pill only when it says more than the sidebar does (the way back, a memory
+// that changed, a goal): a group with no goal has neither pill nor island.
+test('a group without a goal renders no island and no pill', () => {
   const roster = team()
   roster.roomsById.r1.goal = undefined
   const node = renderHeader(roster)
   assert.equal(find(node, 'bt-island'), null)
-  assert.ok(find(node, 'bt-pill'))
+  assert.equal(find(node, 'bt-pill'), null)
   assert.equal(find(node, 'bt-goal-pod'), null)
 })
 

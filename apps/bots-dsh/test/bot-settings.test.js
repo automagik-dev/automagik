@@ -14,6 +14,8 @@ const react = {
   useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
   useEffect() {}, useLayoutEffect() {}, useMemo: make => make(), useCallback: fn => fn,
   useRef: current => ({ current }), useId: () => 'id', Fragment: Symbol('Fragment'),
+  // The settings page reads stores (the pets') through this since v0.3.6.
+  useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
 }
 const module = { exports: {} }
 runInNewContext(outputFiles[0].text, {

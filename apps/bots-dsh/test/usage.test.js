@@ -318,8 +318,8 @@ test('a ledger from the previous version keeps its metered calls and gains the s
   const second = start(home)
   const view = (await second.call('usage', { timeZone: 'Asia/Shanghai' })).value
   await second.ctx.dispose()
-  assert.equal(totals(view)['Chief/compaction'], 1100)
-  assert.equal(totals(view)['Chief/chat'], 160 + 220 + 10)
+  assert.equal(totals(view)['Omni/compaction'], 1100)
+  assert.equal(totals(view)['Omni/chat'], 160 + 220 + 10)
   assert.deepEqual(second.warnings, [])
 })
 
@@ -348,7 +348,7 @@ async function seedV3Ledger(home, { details = false, listed = false } = {}) {
   db.close()
 }
 
-test('usage v4 upgrades both v3 schemas, preserving details, live rows, and marks.listed', async (t) => {
+test('usage v4 upgrades both v3 schemas, preserving details and live rows, and makes the marks again', async (t) => {
   for (const shape of [{ details: false, listed: false }, { details: true, listed: true }]) {
     const home = mkdtempSync(join(tmpdir(), 'ds-bot-usage-v3-'))
     await seedV3Ledger(home, shape)
@@ -359,8 +359,12 @@ test('usage v4 upgrades both v3 schemas, preserving details, live rows, and mark
     const db = new DatabaseSync(join(home, 'usage.sqlite'))
     assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4)
     assert.equal(db.prepare('SELECT live, input, output FROM calls WHERE key = ?').get('live-1').live, 1)
-    assert.deepEqual(db.prepare('SELECT listed FROM marks WHERE session = ?').get('s-b1').listed, shape.listed ? 17 : null)
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM usage_details').get().count, shape.details ? 1 : 0)
+    // A mark is a cursor over the Session's log, not a record: the upgrade resets it and the replay makes it
+    // again, with the listed column in both shapes. An open Session is unsealed, so its watermark is empty.
+    assert.equal(db.prepare('PRAGMA table_info(marks)').all().some(column => column.name === 'listed'), true)
+    assert.equal(db.prepare('SELECT listed FROM marks WHERE session = ?').get('s-b1').listed, null)
+    // The detail row the old store held is kept; the replay after the upgrade adds the rows of the logged calls.
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM usage_details WHERE key = ?').get('live-1').count, shape.details ? 1 : 0)
     db.close()
   }
 })

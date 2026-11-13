@@ -208,10 +208,4 @@ test('a panel that takes the column\'s room moves the edge to the rail', () => {
   assert.equal(at(809, 280, { panel: details(true) }).column, RAIL_WIDTH)
 })
 
-test('opening new chat closes the floating drawer', () => {
-  const { ui, actions } = bench(false)
-  ui.set(state => ({ ...state, leftDrawer: true }))
-  actions.openNewChat('new')
-  assert.equal(ui.getSnapshot().newChat, 'new')
-  assert.equal(ui.getSnapshot().leftDrawer, false)
-})
+// Upstream's test that new chat closes the floating drawer is left out: Automagik's left column has none.
