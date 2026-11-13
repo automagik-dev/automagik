@@ -99,24 +99,46 @@ export function redactor(entries, { wholeWords = true } = {}) {
     }
     return 0
   }
+  // A UTF-8 cut can leave up to three replacement characters (one per remaining byte)
+  // before the kept text; they belong to the cut, before the value's tail starts.
+  const replacementPrefix = (text) => {
+    let at = 0
+    while (at < 3 && text.charCodeAt(at) === 0xFFFD) at++
+    return at
+  }
   return (text) => {
     if (typeof text !== 'string') return text
     const contains = pairs.some(([value]) => text.includes(value))
     let lead
     if (text.length >= TAIL_FLOOR) {
+      const skip = replacementPrefix(text)
+      const rest = skip === 0 ? text : text.slice(skip)
       // A full value at the start is replaced whole by the pattern; only a longer piece
       // (a suffix of another value) may swallow it, or the rest of it would leak.
       let whole = 0
       for (const [form] of pairs) if (form.length > whole && text.startsWith(form)) whole = form.length
-      const first = text.charAt(0)
+      const first = rest.charAt(0)
       for (const [form, label, short] of pairs) {
         if (!form.includes(first)) continue
-        const size = overlap(text, form, short)
-        if (size > whole && (lead === undefined || size > lead.size)) lead = { size, label }
+        const size = overlap(rest, form, short)
+        if (size > whole && (lead === undefined || size > lead.size)) lead = { size, label, skip }
+      }
+      if (lead !== undefined) {
+        // A whole value that begins inside the piece and runs past it would be split by
+        // replacing the piece; stop the piece before it so the pattern replaces it whole.
+        const end = lead.skip + lead.size
+        let stop = end
+        pattern.lastIndex = 0
+        for (const match of text.matchAll(pattern)) {
+          if (match.index >= end) break
+          if (match.index > 0 && match.index + match[0].length > end) stop = Math.min(stop, match.index)
+        }
+        if (stop - lead.skip < MIN_VALUE) lead = undefined
+        else if (stop < end) lead = { ...lead, size: stop - lead.skip }
       }
     }
     if (!contains && lead === undefined) return text
-    const body = text.slice(lead?.size ?? 0).replace(pattern, match => labels.get(match) ?? match)
+    const body = text.slice(lead === undefined ? 0 : lead.skip + lead.size).replace(pattern, match => labels.get(match) ?? match)
     return lead === undefined ? body : lead.label + body
   }
 }
@@ -153,28 +175,38 @@ export function redactDeep(value, redact) {
     if (name !== key || item !== value[key]) changed = true
     return [key, name, item]
   })
+  // A tool result can arrive deep-frozen. Copying its own descriptors would copy
+  // non-writable, non-configurable properties that cannot then be redacted, so the copy
+  // is built with fresh writable, configurable descriptors. An accessor whose value was
+  // walked (it is enumerable) becomes a data property holding the redacted value; any
+  // other accessor keeps its getter and setter.
+  const copy = (overrides = []) => {
+    const next = Object.create(Object.getPrototypeOf(value))
+    const walked = new Map(entries.map(([key, name, item]) => [key, [name, item]]))
+    const put = (key, item, enumerable) => Object.defineProperty(next, key, { value: item, enumerable, writable: true, configurable: true })
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined) continue
+      const replacement = walked.get(key)
+      if (replacement !== undefined) put(replacement[0], replacement[1], descriptor.enumerable)
+      else if ('value' in descriptor) put(key, descriptor.value, descriptor.enumerable)
+      else Object.defineProperty(next, key, { get: descriptor.get, set: descriptor.set, enumerable: descriptor.enumerable, configurable: true })
+    }
+    for (const [key, item] of overrides) put(key, item, Object.getOwnPropertyDescriptor(value, key)?.enumerable ?? false)
+    return next
+  }
   if (value instanceof Error) {
     const message = typeof value.message === 'string' ? redact(value.message) : value.message
     const stack = typeof value.stack === 'string' ? redact(value.stack) : value.stack
     const cause = Object.hasOwn(value, 'cause') ? redactDeep(value.cause, redact) : value.cause
     if (message === value.message && stack === value.stack && cause === value.cause && !changed) return value
-    const next = Object.create(Object.getPrototypeOf(value), Object.getOwnPropertyDescriptors(value))
-    for (const [key, name, item] of entries) {
-      if (name !== key) delete next[key]
-      Object.defineProperty(next, name, { value: item, enumerable: true, writable: true, configurable: true })
-    }
-    Object.defineProperty(next, 'message', { value: message })
-    if (stack !== undefined) Object.defineProperty(next, 'stack', { value: stack })
-    if (Object.hasOwn(value, 'cause')) Object.defineProperty(next, 'cause', { value: cause })
-    return next
+    return copy([
+      ['message', message],
+      ...(stack !== undefined ? [['stack', stack]] : []),
+      ...(Object.hasOwn(value, 'cause') ? [['cause', cause]] : []),
+    ])
   }
-  if (!changed) return value
-  const next = Object.create(Object.getPrototypeOf(value), Object.getOwnPropertyDescriptors(value))
-  for (const [key, name, item] of entries) {
-    if (name !== key) delete next[key]
-    Object.defineProperty(next, name, { value: item, enumerable: true, writable: true, configurable: true })
-  }
-  return next
+  return changed ? copy() : value
 }
 
 export function install(rt) {
