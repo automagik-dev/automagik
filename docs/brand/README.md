@@ -1,6 +1,6 @@
 # Automagik brand
 
-Automagik is one product family: Automagik, Genie and Omni, with Mykes to come. This folder is how it looks: Automagik's triskle, a flat mark for Genie and for Omni, one lettering, a cream and plum theme, soft clay shapes. Everything here was approved by the owner; nothing was added.
+Automagik is one product family: Automagik, Genie and Omni, with Mykes to come. This folder is how it looks: Automagik's triskle, a flat mark for each other product, one lettering, a cream and plum theme, soft clay shapes. Everything here was approved by the owner; nothing was added.
 
 It is documentation. No build, app or release reads this folder.
 
@@ -14,16 +14,16 @@ It is documentation. No build, app or release reads this folder.
 6. **A drawing made for each size.** The mark has a thin clear line along its seams, and that line is drawn again for small sizes. Pick the file made for the size you show; never scale the large drawing down to an icon.
 7. **The dot on the i is a sparkle, one colour per product.** One four-point star with the same area as the round dot it replaced, in one of the mark's three colours: Automagik's is violet, Genie's is pink and Omni's is cyan. The triangle stands for the three products. Mykes's sparkle is not chosen yet.
 8. **Never redraw it.** Do not move, reshape, slim, recolour or outline the mark's pieces, the letters or Genie. Use the files.
-9. **Every mark that is not Automagik's is flat and one colour.** The sparkle of its word is its only colour (the owner's decision, add. 247). Genie's mark is a flat lamp and Omni's is a tentacle vortex. The owner approved them on 12 November 2026 and confirmed it on 13 November 2026, in his words: "Yes, I approved them". Neither carries the triskle. Each is one shape in ink for light grounds and in cream for dark grounds, with no shading, gradient or outline. The same approval names a mark for Mykes, the clean forks, but the drawing handed over is not confirmed to be that one, so no file for Mykes's mark is here.
-10. **Genie and Omni show as their own mark with their word; Mykes shows as its word.** Genie and Omni each have a lockup: the product's mark beside its name in the brand's lettering. The earlier rule, that each shows as its word alone until the owner approves its mark, ended for the two with the approval in rule 9. Their word alone stays a correct form, as Automagik's name without its mark is. Mykes appears as its name in the brand's lettering, with no mark beside it, until its mark's file is confirmed and in this folder; under Mykes, which is not out yet, the plain words "Coming soon." stand. Beside a product's word goes its own mark from this folder and nothing else: never the triskle, never a pet, never another drawing of a lamp, a vortex or cords.
+9. **Every mark that is not Automagik's is flat and one colour.** The sparkle of its word is its only colour (the owner's decision, add. 247). Genie's mark is a flat lamp, Omni's is a tentacle vortex and Mykes's is the cords: threads that run out from one knot. The owner approved the lamp and the vortex on 12 November 2026 and confirmed it on 13 November 2026, in his words: "Yes, I approved them". For Mykes there were two drawings of the cords, and the owner picked the redrawn Mykes drawing on 13 November 2026. None carries the triskle. Each is one shape in ink for light grounds and in cream for dark grounds, with no shading, gradient or outline.
+10. **A product shows as its own mark with its word.** Genie, Omni and Mykes each have a lockup: the product's mark beside its name in the brand's lettering. The earlier rule, that each shows as its word alone until the owner approves its mark, ended for the three with the approval in rule 9. The word alone stays a correct form, as Automagik's name without its mark is. Under Mykes, which is not out yet, the plain words "Coming soon." stand. Beside a product's word goes its own mark from this folder and nothing else: never the triskle, never a pet, never another drawing of a lamp, a vortex or cords.
 
 ## What is here
 
 | Folder | What it holds |
 | --- | --- |
-| `logo/svg/` | The triskle, in three colours (the mark) and in ink and cream (the fallback), with a drawing for each size. Genie's lamp and Omni's vortex, in ink and cream |
+| `logo/svg/` | The triskle, in three colours (the mark) and in ink and cream (the fallback), with a drawing for each size. Genie's lamp, Omni's vortex and Mykes's cords, in ink and cream |
 | `logo/png/` | The mark at 1024 and 512px, clear ground |
-| `logo/lockups/` | The mark with the wordmark: the triskle for automagik, and their own mark for genie and omni. The older `genie-lockup-*` and `omni-lockup-*` files there are RETIRED |
+| `logo/lockups/` | The mark with the wordmark: the triskle for automagik, and each product's own mark for genie, omni and mykes. The older `genie-lockup-*` and `omni-lockup-*` files there are RETIRED |
 | `logo/wordmark/` | The name alone, for automagik, genie and omni |
 | `favicon/` | The browser tab and home screen set |
 | `genie/` | The one Genie |
@@ -42,7 +42,8 @@ It is documentation. No build, app or release reads this folder.
 | Genie | `logo/lockups/genie-lamp-lockup-ink.svg` on a light ground, `-cream.svg` on a dark ground |
 | Omni, in a header or anywhere under about 56px high | `logo/lockups/omni-mark-lockup-ink-header.svg` or `-cream-header.svg` |
 | Omni, 56px high or more | `logo/lockups/omni-mark-lockup-ink.svg` or `-cream.svg` |
-| Genie's or Omni's mark alone | `logo/svg/genie-lamp-ink.svg`, `logo/svg/omni-mark-ink.svg`, or the same with `-cream` |
+| Mykes | `logo/lockups/mykes-clean-lockup-ink.svg` or `-cream.svg` |
+| Genie's, Omni's or Mykes's mark alone | `logo/svg/genie-lamp-ink.svg`, `logo/svg/omni-mark-ink.svg`, `logo/svg/mykes-clean-ink.svg`, or the same with `-cream` |
 | Omni's mark alone under about 56px | `logo/svg/omni-mark-ink-32.svg` or `-cream-32.svg` |
 | Genie's or Omni's name without the mark | `logo/wordmark/genie-wordmark-ink.svg` or `-cream.svg`, `logo/wordmark/omni-wordmark-ink.svg` or `-cream.svg` |
 | RETIRED, do not use | `logo/lockups/genie-lockup-*` and `logo/lockups/omni-lockup-*`: they carry the triskle (rule 1). The files stay for older work that points at them |
@@ -57,8 +58,8 @@ It is documentation. No build, app or release reads this folder.
 - Keep clear space around the lockup of at least the height of its small letters.
 - Do not set the lockup under 28px high. From about 36px the dot reads as a sparkle; under that it is a soft plus, which is fine.
 - The grounds the logo was drawn for are `bt-main` in its light and its dark value. On a photo or a strong colour, put it on one of those first.
-- The SVGs that carry the triskle use masks and blur. Every current browser draws them. For a tool that does not (some slide and print tools), use a PNG. Genie's and Omni's marks are plain filled shapes, which any tool draws.
-- Genie's and Omni's marks have no drawing for 16px, so rule 6 keeps them out of a favicon or a 16px icon: at that size Omni's vortex closes into a blot. Omni is the one with two drawings: under about 56px its large drawing's suckers turn to specks, and the small drawing (`-32`, and the lockup's `-header`) is the one to use. The lamp has one drawing. (Every file was looked at on 13 November 2026 at 16, 32, 64 and 256px and at the site header's sizes, on both grounds.)
+- The SVGs that carry the triskle use masks and blur. Every current browser draws them. For a tool that does not (some slide and print tools), use a PNG. Genie's, Omni's and Mykes's marks are plain filled shapes, which any tool draws.
+- Genie's, Omni's and Mykes's marks have no drawing for 16px, so rule 6 keeps them out of a favicon or a 16px icon: at that size Omni's vortex closes into a blot and the thin ends of Mykes's cords fade. Omni is the one with two drawings: under about 56px its large drawing's suckers turn to specks, and the small drawing (`-32`, and the lockup's `-header`) is the one to use. The lamp and the cords have one drawing each, and the cords are the lightest of the three: at a header's size their thin ends are about one pixel wide. (Every file was looked at on 13 November 2026 at 16, 32, 64 and 256px and at the site header's sizes, on both grounds.)
 - **The wordmark is one file per name and letter colour.** The lettering is drawn there and in the lockups built from it, and nowhere else. Components point at a file and never carry the letters themselves, so a change to the wordmark is a change of files under the same names.
 
 ## PNG files
@@ -153,8 +154,8 @@ These are on the site but are not part of this folder:
 - **The site's own copies of the logo.** The site carries a few files of this set under `apps/landing/assets/brand/`; the full set is here. Its `lamp.webp` and its lockup with the Open Intelligence tag are not part of the set.
 - **The Open Intelligence tag** and the IBM Plex Mono face it is set in. They are we unfold's.
 - **Omni's art and the pet art.** No approved file for them is in this set, and pets are never marks.
-- **Any other drawing of a lamp, a vortex or cords.** The approved marks of Genie and Omni are the files in `logo/svg/` and `logo/lockups/` (rule 9), and nothing else. The site's `lamp.webp` is not Genie's mark.
-- **A mark or a wordmark file for Mykes.** Its mark is not here until its drawing is confirmed (rules 9 and 10), and no file holds its word yet.
+- **Any other drawing of a lamp, a vortex or cords.** The approved marks of Genie, Omni and Mykes are the files in `logo/svg/` and `logo/lockups/` (rule 9), and nothing else. The site's `lamp.webp` is not Genie's mark.
+- **A wordmark file for Mykes.** Its letters are in its lockup only.
 - **Other projects' marks** in the "made possible by" row, and Arca's logo.
 - **The home page's layouts**: the hero with the cast, the grid's arrangement, the phone menu.
 - **Motion.** The site's motion rules are in the component stylesheet; there are no motion tokens.
