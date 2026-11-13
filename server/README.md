@@ -74,12 +74,12 @@ Four preparation/runtime stages, every base digest-pinned (plus the distroless b
 
 | Stage | What it does |
 |---|---|
-| `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, verifies the release tarballs, installs/prunes the profile, prepares its inspected offline dependency store, writes version/revision metadata |
+| `builder` | `node:24.22.3-trixie-slim`: installs the pinned harness and pnpm, verifies the release tarballs, installs/prunes the profile, prepares its inspected offline dependency store, writes version/revision metadata |
 | `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, git core, `ripgrep`, `flock`, `tar`, `gzip`, `find`, their `ldd` closure, and the empty `/data` tree owned by uid 1000. No perl: git's perl subcommands are not shipped |
 | `gate-deps` | Bun 1.4.4 installs the exact WebAuthn dependency and `server/bun.lock`, with lifecycle scripts disabled, then prunes development files. Bun stays in this stage |
 | `runtime` | `scratch` holding the distroless nodejs24 rootfs (node and glibc), cleaned in the `tools` stage (man pages and changelogs stripped there with coreutils), plus the tools above, the code, nothing else — no apt, npm, curl or build toolchain |
 
-The distroless tag ships Node 24.14.0 (above dsh's 24.9 floor); the builder is 24.22.2. The
+The distroless tag ships Node 24.14.0 (above dsh's 24.9 floor); the builder is 24.22.3. The
 pruned payload keeps everything the composed tree names — office-to-pdf and its
 `libreoffice-kit-wasm` included — and drops the inspector, the voice engine, the musl sharp
 variants, the win32/darwin node-pty prebuilds and the experimental bundles the profile never
