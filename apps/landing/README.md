@@ -174,7 +174,8 @@ copied unchanged, and `LICENSES.md` pins each one's SHA-256 (`landing.test.mjs` 
   (ink letters) on the light page and `-cream-header.svg` (cream letters) on the dark one.
   `styles.css` sizes it by the triskle's height (`--mark`): the file is 264 tall where the
   triskle is 222, and the g's tail hangs under the triskle. The triskle is 32 px tall in the
-  header (26 on a phone, 23 under 360 px) and 40 px in the footer (34 on a phone).
+  header (26 on a phone, 24 at 360 px wide and under) and 40 px in the footer (34 on a phone),
+  so the lockup is never under the brand's 28 px floor (24 × 264 / 222 is 28.5).
   The browser gate reads the name's drawn colour in both themes, not only the file's name:
   it must stand clear of the ground the logo itself stands on, the header's or the footer's
   (a contrast of 7 or more), so the two files cannot be swapped unseen. No colour is named
@@ -257,12 +258,15 @@ Edit public page copy in `scripts/build-pages.mjs`; shared Cloud form/response c
 three weights (`--weight-title`, `--weight-strong`, `--weight-label`) and the font file come
 from `docs/brand/tokens/tokens.json` and `docs/brand/fonts/`. In `styles.css`, set anything in
 the title face with one of those three weights, never a number: a heavier Fredoka is heavier
-than the logo. Regenerate and commit the HTML and CSS:
+than the logo. `docs/brand/components/bundle.css` is made from `styles.css`, so after a change
+there make it again (`scripts/brand-bundle.mjs`; the brand tests fail until the two agree).
+Regenerate and commit the HTML and CSS:
 
 ```sh
 node apps/landing/scripts/sync-theme.mjs
 node apps/landing/scripts/build-art.mjs   # only after an art or capture change; needs ffmpeg with libwebp
 node apps/landing/scripts/build-pages.mjs
+node scripts/brand-bundle.mjs              # after a change to styles.css
 bun install --frozen-lockfile --ignore-scripts
 node --test apps/landing/landing.test.mjs apps/landing/waitlist.test.mjs
 LANDING_CHROME=/path/to/chrome node apps/landing/verify-browser.mjs

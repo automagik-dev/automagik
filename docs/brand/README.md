@@ -131,7 +131,7 @@ Setting `data-theme="light"` or `data-theme="dark"` on the root picks a theme. W
 
 ## Components
 
-The components are the site's own, in its own stylesheet with the token declarations taken out (`components/bundle.css`). They are plain HTML and CSS; there is no script. Each folder holds a note (when to use it, what it needs) and `preview.html`, a page that shows it; open the page in a browser from a checkout.
+The components are the site's own, in its own stylesheet with the token declarations taken out (`components/bundle.css`). `scripts/brand-bundle.mjs` makes that file from the site's `apps/landing/styles.css`; run it after a change there (the brand tests fail until the two agree). They are plain HTML and CSS; there is no script. Each folder holds a note (when to use it, what it needs) and `preview.html`, a page that shows it; open the page in a browser from a checkout.
 
 - `components/Header/`: The site's top bar: the logo, the three menus and one small primary button. It stays at the top of every page, on a see-through `bg` with a `line` under it.
 - `components/Footer/`: The site's footer: the logo with one line about the product, three columns of links, and the licence line. It sits on `raised` with a `line` on top.
