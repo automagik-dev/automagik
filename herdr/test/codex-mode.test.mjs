@@ -92,6 +92,51 @@ test("codexCleanNote names flags only, never a value", () => {
   assert.equal(codexCleanNote(["codex", "-m", "x"]), null);
 });
 
+// Config keys written in another valid TOML spelling were kept (#1125): a key is read by its
+// meaning. `text` is a config word whose key is `name`; its value is a harmless placeholder.
+function sameConfigKey(text, name, value) {
+  for (const words of [["-c", text], ["--config", text], [`--config=${text}`], [`-c${text}`]]) {
+    const { argv, dropped } = codexClean(["codex", ...words, "-m", "gpt-6"], "/home/u");
+    assert.deepEqual(argv, ["codex", "-m", "gpt-6"], `${words.join(" ")} is left out`);
+    assert.deepEqual(dropped, [`-c ${name}`], `${words.join(" ")} is named -c ${name}`);
+  }
+  const note = codexCleanNote(["codex", "-c", text]);
+  assert.match(note, new RegExp(`names -c ${name}: left out`));
+  assert.equal(note.includes(value), false, "the note never names the value");
+}
+
+test("codexClean reads a config key with spaces around its dot as the same key (the network word so spelled too)", () => {
+  sameConfigKey('sandbox_workspace_write . writable_roots=["/tmp/placeholder"]', "sandbox_workspace_write", "/tmp/placeholder");
+  sameConfigKey("sandbox_workspace_write\t.  writable_roots = []", "sandbox_workspace_write", "[]");
+  // The pack's network word goes quietly only as written; spelled so it is named, and launchRun adds the exact one.
+  const spaced = "sandbox_workspace_write . network_access=true";
+  assert.deepEqual(codexClean(["codex", "-c", spaced]).dropped, ["-c sandbox_workspace_write"]);
+  const argv = launchRun("codex", ["codex", "-c", spaced], {});
+  assert.equal(argv.includes(spaced), false);
+  assert.equal(count(argv, CODEX_NETWORK), 1);
+  assert.deepEqual(argv.slice(-MODE.length), MODE);
+});
+
+test("codexClean reads a double-quoted config key part as the same key", () => {
+  sameConfigKey('"sandbox_workspace_write".writable_roots=["/tmp/placeholder"]', "sandbox_workspace_write", "/tmp/placeholder");
+  sameConfigKey(' "sandbox_workspace_write" . "writable_roots" = []', "sandbox_workspace_write", "[]");
+});
+
+test("codexClean reads a single-quoted (literal) config key part as the same key", () => {
+  sameConfigKey("'sandbox_workspace_write'.writable_roots=[\"/tmp/placeholder\"]", "sandbox_workspace_write", "/tmp/placeholder");
+  sameConfigKey("'approval_policy'=\"on-request\"", "approval_policy", "on-request");
+});
+
+test("codexClean reads a config key written with a basic-string escape as the same key", () => {
+  sameConfigKey('"sandbox\\u005Fmode"="read-only"', "sandbox_mode", "read-only");
+  sameConfigKey('"sandbox\\U0000005fmode"="read-only"', "sandbox_mode", "read-only");
+  sameConfigKey('"default_\\u0070ermissions"="read-only"', "default_permissions", "read-only");
+  // A key whose quotes don't close is read as before: its raw text, one outer quote off.
+  sameConfigKey('"sandbox_mode=read-only', "sandbox_mode", "read-only");
+  // Another key stays as written, escapes and all.
+  assert.deepEqual(codexClean(["codex", "-c", '"mod\\u0065l"="o3"']).argv, ["codex", "-c", '"mod\\u0065l"="o3"']);
+});
+
 test("launchRun: a Codex run always ends in the launch mode, each word once, before a `--`, whatever its source or codexAuto says", () => {
   for (const run of [["codex"], ["codex", "--approve-for-me"], ["codex", "--no-daemon", "--approve-for-me", "-c", CODEX_NETWORK],
     ["codex", "--dangerously-bypass-approvals-and-sandbox"], ["codex", "-a", "never", "-s", "workspace-write"], ["/opt/codex", "--yolo"]]) {
