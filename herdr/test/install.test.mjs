@@ -348,6 +348,9 @@ test("an am link or file that is not the pack's stays the person's, on install a
   assert.equal(file.code, 0, file.err);
   assert.match(file.out, /Left .*\/am alone: it is a file, not a link/);
   assert.equal(readFileSync(am, "utf8"), "mine\n");
+  const goneAgain = s.run("--uninstall");
+  assert.equal(goneAgain.code, 0, goneAgain.err);
+  assert.equal(readFileSync(am, "utf8"), "mine\n", "uninstall leaves the person's file");
 });
 
 test("a newer release replaces the installed one; --version pins one", (t) => {
