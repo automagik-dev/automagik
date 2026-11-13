@@ -44,10 +44,13 @@ test('a theme\'s header button look stops at the island\'s edge', () => {
 // A long goal title in a narrow band (a 390 px window): the title ends in an ellipsis before
 // the stage counter. A start-aligned grid cell is as wide as its text asks, so without the
 // column and cell limits the title ran over the counter.
-test('a long goal title stops before the stage counter', async (t) => {
+test('the swap area holds a long goal title to its own width', () => {
   assert.ok(goal.includes('.bt-pill-swap{flex:1 1 auto;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);justify-items:start;text-align:left}'))
   assert.ok(goal.includes('.bt-pill-swap>*{grid-area:1/1;min-width:0;max-width:100%;'))
+})
 
+// The same, measured: its own test, so the measure fails by itself when the rule is gone.
+test('a long goal title stops before the stage counter', async (t) => {
   // CI must run the browser half (#323, #364): the shared guard fails there, never skips.
   const guard = await browserGuard()
   if (guard.skip) return t.skip(guard.skip)
