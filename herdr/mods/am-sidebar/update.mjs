@@ -73,7 +73,7 @@ import {
 } from "./migrateHome.mjs";
 import { change, removePath } from "./layoutSafe.mjs";
 import { foldAttach, readAttach } from "./attach.js";
-import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks, tightenLedgers } from "./migrateHooks.mjs";
+import { AM_LINK, CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks, tightenLedgers } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
   noticeText, packOfPointer, parseSums, pickUpdate, sumsName, tarballName, updatesOff } from "./release.js";
@@ -1374,18 +1374,37 @@ export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app
  * repointed the link, else null; throws only when the swap itself fails.
  */
 export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir = binDirOf() } = {}) {
+  const first = relinkNamed({ modsDir, name, binDir, linkName: CLI_LINK });
+  // am, the same command under its own name, follows on the same rule; the result is the old link's.
+  const am = relinkNamed({ modsDir, name, binDir, linkName: AM_LINK });
+  return first ?? am;
+}
+
+function relinkNamed({ modsDir, name, binDir, linkName }) {
   if (!binDir) return null;
-  const link = join(binDir, CLI_LINK);
-  if (!isLink(link)) return null;
-  const from = readlinkSync(link);
+  const link = join(binDir, linkName);
   const entries = (m) => ["automagik-herdr", "automagik-herdr.mjs"].map((f) => join(resolve(modsDir), m, "bin", f));
   const [wrapper, mjs] = entries(name);
+  if (!exists(link)) {
+    // am's link, missing on an install from before it: made here, never over a file or a link of
+    // the person's (that is the isLink / readlink rule below), and never for a pack with no command.
+    if (linkName !== AM_LINK || !(isFile(wrapper) || isFile(mjs))) return null;
+    const made = isFile(wrapper) ? wrapper : mjs;
+    mkdirSync(binDir, { recursive: true });
+    const tmp = join(binDir, `.${linkName}.relink-${process.pid}`);
+    removePath(tmp, { force: true });
+    symlinkSync(made, tmp);
+    try { renameSync(tmp, link); } catch (error) { removePath(tmp, { force: true }); throw error; }
+    return null; // quiet: the report is for a link that moved
+  }
+  if (!isLink(link)) return null;
+  const from = readlinkSync(link);
   const now = resolve(dirname(link), from);
   const old = name !== OLD_PACK_NAME && entries(OLD_PACK_NAME).includes(now);
   if (now !== wrapper && now !== mjs && !old) return null;
   const to = isFile(wrapper) ? wrapper : mjs;
   if (now === to || (old && !isFile(to))) return null;
-  const tmp = join(binDir, `.${CLI_LINK}.relink-${process.pid}`);
+  const tmp = join(binDir, `.${linkName}.relink-${process.pid}`);
   // A leftover tmp link (a killed run, the same pid since) may dangle: unlinked, never followed (#550).
   removePath(tmp, { force: true });
   symlinkSync(to, tmp);
