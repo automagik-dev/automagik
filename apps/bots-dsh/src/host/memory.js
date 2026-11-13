@@ -98,6 +98,7 @@ export function install(rt) {
       memoryAdd: async () => { throw new Error('Memory is turned off on this host') },
       memoryNews: () => ({}),
       memoryReviews: () => 0,
+      memoryReviewStatus: () => ({ enabled: false, allowed: false, pending: false, running: false }),
     })
     return
   }
@@ -1731,7 +1732,7 @@ export function install(rt) {
     return await memoryView(panelBody(panel))
   }
 
-  const { memoryReviews } = installReview(rt, { root, reviewOn, mainLimit, TEAM, ownScope, groupScope, keeperOf, writesTeam, labelOf, fileName, today, writeText, settled, loadScope, addEntry, replaceEntry, removeEntry, entryProblem, secretEntry, botShot, languageNow })
+  const { memoryReviews, memoryReviewStatus } = installReview(rt, { root, reviewOn, mainLimit, TEAM, ownScope, groupScope, keeperOf, writesTeam, labelOf, fileName, today, writeText, settled, loadScope, addEntry, replaceEntry, removeEntry, entryProblem, secretEntry, botShot, languageNow })
 
   const { tidyView, undoTidy, tidyNow } = installTidy(rt, { TEAM, ownScope, groupScope, keeperOf, scopeKey, dirOf, today, queued, recoverPending, writable, settled, loadScope, publish, writeStep, removeStep, writeText, botShot, languageNow, allEntries, entryProblem, USER, changedSince })
 
@@ -1757,7 +1758,7 @@ export function install(rt) {
   }
 
   Object.assign(rt, {
-    memoryEnabled: true, renewMemory, archiveBotMemory, archiveGroupMemory, memoryEndpoint, memoryEdit, memoryAdd, memoryReviews,
+    memoryEnabled: true, renewMemory, archiveBotMemory, archiveGroupMemory, memoryEndpoint, memoryEdit, memoryAdd, memoryReviews, memoryReviewStatus,
     memoryNews: () => Object.fromEntries(news), botShot, tidyMemoryNow: tidyNow,
   })
 }

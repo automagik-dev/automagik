@@ -4,7 +4,7 @@ import { markOf } from '../shared/permission-levels.js'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { refusal } from './refusal.js'
-import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, inUnfoldInstance } from './constants.js'
+import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, SECTION_COLORS, SECTION_NAME_MAX, inUnfoldInstance } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 import { contextPatch } from '../shared/context-policy.js'
@@ -115,15 +115,17 @@ export function install(rt) {
   }
 
   // `dir` is a working folder outside the team workspace. Such a Session is made by cwd
-  // alone, so it joins no DSH workspace and the user's own project lists stay as they are.
+  // alone, so it joins no DSH workspace and the user's own project lists stay as they are —
+  // unless the folder is already registered as a workspace, which it then joins (#710).
   async function createSession(title, { dir, profile } = {}) {
     // A Bot's tools run here too; while another dsh holds the team, a new Session would
     // belong to no saved Bot.
     const readOnly = rt.readOnly()
     if (readOnly !== undefined) throw refusal(readOnly)
     const usable = dir !== undefined && await rt.isFolder(dir)
-    if (dir !== undefined && !usable) rt.warn('omni-ui: the working folder %s is gone; %s starts in the team workspace', dir, title)
-    const place = usable ? { cwd: dir } : { workspaceId: await ensureWorkspace() }
+    if (dir !== undefined && !usable) rt.warn('ds-bot: the working folder %s is gone; %s starts in the team workspace', dir, title)
+    const known = usable ? await ctx.workspaceRegistry.resolveByPath(dir) : undefined
+    const place = known !== undefined ? { workspaceId: known.id } : usable ? { cwd: dir } : { workspaceId: await ensureWorkspace() }
     const { sessionId } = await ctx.sessionController.create({ ...place, ...await botPreset(profile) })
     const agent = await rt.resolveAgent(sessionId)
     await ctx.sessionTitle.rename(agent.session, title)
@@ -135,7 +137,7 @@ export function install(rt) {
     const avatar = {}
     if (typeof input.shape === 'string' && /^[a-z][\w-]{0,31}$/.test(input.shape)) avatar.shape = input.shape
     if (typeof input.image === 'string') {
-      if (!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(input.image)) throw refusal('Avatar images must be PNG, JPEG, WebP, or GIF')
+      if (!/^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(input.image)) throw refusal('Avatar images must be PNG, JPEG, WebP, GIF, or SVG')
       if (input.image.length > MAX_AVATAR_IMAGE) throw refusal('Avatar image is too large')
       avatar.image = input.image
     }
@@ -189,9 +191,9 @@ export function install(rt) {
 
   function cleanSectionName(text, selfId) {
     const next = unquote(text).replace(/\s+/g, ' ').slice(0, SECTION_NAME_MAX)
-    if (next === '') throw new Error('Enter a section name')
+    if (next === '') throw refusal('Enter a section name')
     if ((state.sections ?? []).some(sec => sec.id !== selfId && normalize(sec.name) === normalize(next))) {
-      throw new Error(`Another section is already called "${next}"`)
+      throw refusal(`Another section is already called "${next}"`)
     }
     return next
   }
@@ -214,7 +216,7 @@ export function install(rt) {
     const list = (state.sections ??= [])
     const byId = list.find(sec => sec.id === raw)
     if (byId !== undefined) return byId.id
-    if (section === undefined) throw new Error('Unknown section')
+    if (section === undefined) throw refusal('Unknown section')
     const byName = list.find(sec => normalize(sec.name) === normalize(raw))
     if (byName !== undefined) return byName.id
     const clean = cleanSectionName(raw)
@@ -246,7 +248,7 @@ export function install(rt) {
     }
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, inheritAuto, denyTools: denyToolsInput }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, inheritAuto, denyTools: denyToolsInput, section, sectionId }) {
     const opener = createdBy === undefined ? undefined : { level: rt.callerLevel?.(), roomId: rt.callerGroup?.() }
     const cleanAvatarValue = cleanAvatar(avatar)
     const roleText = cleanRole(role)
@@ -255,7 +257,7 @@ export function install(rt) {
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     // A model that cannot run now (an agent whose CLI is signed out) refuses the Bot before
     // its Session exists.
-    const modelRef = model ? await rt.resolveModel(model, { checkAccess: true, remember: false }) : pickModel ? undefined : await rt.defaultModel()
+    const modelRef = model ? await rt.resolveModel(model, { checkAccess: true, remember: false }) : pickModel ? undefined : await rt.defaultBotModel()
     // A thinking level needs a model to resolve against; with none it would be dropped
     // silently, so the create fails before a Session is made.
     if (effort && modelRef === undefined) throw refusal('Pick a model before choosing a thinking level')
@@ -265,6 +267,9 @@ export function install(rt) {
       : effort === null || effort === '' ? undefined
       : (await rt.resolveEffort(modelRef, effort)) ?? await rt.defaultEffort(modelRef)
     const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
+    const clash = dir === undefined ? undefined : await rt.privateClash(dir)
+    if (clash) throw refusal(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${cleanName} cannot work there`)
+    if (!main && (section !== undefined || sectionId !== undefined)) resolveSectionInput({ section, sectionId }, { allowCreate: false })
     // A Bot made by another Bot takes its creator's level, before its Session is made; else
     // the team default. A Session adopted from a host keeps its own.
     const creator = rt.botOf(createdBy)
@@ -304,6 +309,7 @@ export function install(rt) {
         ...(BOT_KINDS.includes(kind) ? { kind } : {}),
         // The tools this Bot never gets, enforced on every Session it speaks from.
         ...(denied ? { denyTools: denied } : {}),
+        ...(resolvedSecId ? { sectionId: resolvedSecId } : {}),
         instructions: String(instructions).trim(),
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
@@ -323,13 +329,18 @@ export function install(rt) {
             : brief
               ? `The user just created you and sent this first message:\n\n${brief}\n\nIntroduce yourself in one short line, then help with it.`
               : 'The user just created you. Greet the user in one short message, then ask in one short question what you should focus on.'
-      const opener = `${kickoff}\n${OWN_RULES}`
-      const text = !main && language ? `${opener}\nWrite in ${language}.` : opener
+      const opening = `${kickoff}\n${OWN_RULES}`
+      const text = !main && language ? `${opening}\nWrite in ${language}.` : opening
       const bot = state.bots[id]
+      const greeting = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
+      // The Bot is saved by now; a failure here must not archive it in the catch below.
+      const scopeTools = () => rt.resolveAgent(id)
+        .catch(error => rt.warn('omni-ui: scoped tools for %s not applied: %s', cleanName, error))
       // A host-owned conversation already has its own history and turn source. Adoption
       // adds only its team identity, never a greeting or a deferred model turn.
       if (existingSessionId !== undefined) {
         await rt.save()
+        await scopeTools()
         return bot
       }
       // A Bot about to greet whose level did not hold is not kept: the catch below takes
@@ -339,13 +350,13 @@ export function install(rt) {
       // greeting is let go.
       if (modelRef === undefined) {
         await rt.applyPermission(bot, id)
-          .catch(error => rt.warn('omni-ui: permission for %s not applied: %s', cleanName, error))
+          .catch(error => rt.warn('ds-bot: permission for %s not applied: %s', cleanName, error))
       } else {
         await rt.applyPermission(bot, id, undefined, undefined, { start: true })
       }
       if (denied) {
         await rt.applyToolDeny(bot)
-          .catch(error => rt.warn('omni-ui: the denied tools of %s not applied: %s', cleanName, error))
+          .catch(error => rt.warn('ds-bot: the denied tools of %s not applied: %s', cleanName, error))
       }
       if (modelRef === undefined) {
         bot.kickoff = greeting
@@ -356,16 +367,17 @@ export function install(rt) {
       }
       await rt.save()
       if (inheritAuto !== undefined && existingSessionId === undefined) await rt.markInherited?.(bot, inheritAuto.route)
+      await scopeTools()
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
         .then(() => rt.applyModel(bot).then(() => false, (error) => {
-          rt.warn('omni-ui: model for %s not applied: %s', cleanName, error)
+          rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)
           return true
         }))
         // At Full access with its coding CLI model not served, or not selected just above: no
         // greeting on another model.
         .then(unselected => rt.assertNotOffCli(bot, rt.chatOf(bot.id), undefined, { unselected }))
-        .then(() => sendKickoff(bot, { text, from: createdBy }), error => rt.warn('omni-ui: %s does not greet: %s', cleanName, error?.message ?? error))
+        .then(() => sendKickoff(bot, greeting), error => rt.warn('ds-bot: %s does not greet: %s', cleanName, error?.message ?? error))
       return bot
     } catch (error) {
       // The Bot's Session was already made: archive it instead of leaving an orphan.
@@ -376,7 +388,7 @@ export function install(rt) {
       // one writes the team without it.
       void rt.save().catch(() => {})
       if (existingSessionId === undefined) await ctx.workspaceRegistry.archiveSession(id)
-        .catch(archiveError => rt.warn('omni-ui: archiving the Session for %s failed: %s', cleanName, archiveError))
+        .catch(archiveError => rt.warn('ds-bot: archiving the Session for %s failed: %s', cleanName, archiveError))
       throw error
     }
   }
@@ -447,6 +459,7 @@ export function install(rt) {
   async function duplicateBot(id) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw refusal('Unknown Bot')
+    if (bot.private === true) throw refusal(`${bot.name} is private, so it cannot be copied`)
     const served = (await rt.catalog()).some(entry => entry.ref === bot.model)
     // A folder that went away since leaves the copy in the team workspace.
     const workDir = bot.workDir !== undefined && await rt.isFolder(bot.workDir) ? bot.workDir : undefined
@@ -491,10 +504,10 @@ export function install(rt) {
       throw refusal(`Only the user can set what ${bot.name} may use`)
     }
     if (patch.private !== undefined && actorId !== undefined) {
-      throw new Error(`Only the user can make ${bot.name} private or open`)
+      throw refusal(`Only the user can make ${bot.name} private or open`)
     }
     if ((patch.section !== undefined || patch.sectionId !== undefined) && actorId !== undefined && !rt.isMain(actorId)) {
-      throw new Error(`Only the user or a Main Bot can move ${bot.name} between sidebar sections`)
+      throw refusal(`Only the user or a Main Bot can move ${bot.name} between sidebar sections`)
     }
     if (patch.section !== undefined || patch.sectionId !== undefined) {
       resolveSectionInput({ section: patch.section, sectionId: patch.sectionId }, { allowCreate: false })
@@ -513,6 +526,8 @@ export function install(rt) {
     if (moving && workDir !== bot.workDir && bot.sessionPinned === true) {
       throw refusal(`${bot.name} works in the folder its host gave its conversation, so its folder cannot change here`)
     }
+    const flag = patch.private === undefined ? undefined : patch.private === true
+    await rt.checkPrivacyChange(bot, { flag, moving, workDir })
     const modelRef = patch.model === undefined ? undefined
       : patch.model === null || patch.model === '' ? null
       : await rt.resolveModel(patch.model, { checkAccess: true, remember: false, keep: bot.model })
@@ -611,6 +626,13 @@ export function install(rt) {
       if (denyTools === null) delete bot.denyTools
       else bot.denyTools = denyTools
     }
+    if (flag === true) bot.private = true
+    else if (flag === false) delete bot.private
+    if (patch.section !== undefined || patch.sectionId !== undefined) {
+      const nextSecId = id === state.mainBotIds[0] ? null : resolveSectionInput({ section: patch.section, sectionId: patch.sectionId })
+      if (nextSecId === null || nextSecId === undefined) delete bot.sectionId
+      else bot.sectionId = nextSecId
+    }
     const moved = moving && workDir !== bot.workDir
     if (moving) {
       if (workDir === undefined) delete bot.workDir
@@ -632,7 +654,7 @@ export function install(rt) {
       try {
         await rt.revokeNewSchedules?.(bot.id)
       } catch (error) {
-        rt.warn('omni-ui: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
+        rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
       }
     }
     // The system prompt reads the live profile every turn, but a Session with
@@ -652,21 +674,17 @@ export function install(rt) {
       void rt.deliver({ toId: bot.id, text: notes.join('\n'), role: 'update' })
         .catch(error => rt.warn('omni-ui: profile update for %s not delivered: %s', bot.name, error?.message ?? error))
     }
-    if (moved) void rt.followFolder(bot.id)
-    if (!policyOnly && bot.model && bot.kickoff !== undefined) {
+    if (moved) void rt.followFolder({ botId: bot.id })
+    // A Bot that a key, a sign-in or a balance still blocks keeps its greeting held (turns.js).
+    if (!policyOnly && bot.model && bot.kickoff !== undefined && bot.blocked === undefined) {
       // The held greeting is the Bot's first turn: not sent on a level that did not hold.
       // It stays held then, and the next change to the Bot tries again.
       const ready = await rt.applyPermission(bot, rt.chatOf(bot.id), undefined, undefined, { start: true })
         .then(() => true, (error) => {
-          rt.warn('omni-ui: the greeting of %s stays held: %s', bot.name, error?.message ?? error)
+          rt.warn('ds-bot: the greeting of %s stays held: %s', bot.name, error?.message ?? error)
           return false
         })
-      const held = bot.kickoff
-      if (ready && held !== undefined) {
-        delete bot.kickoff
-        await rt.save()
-        sendKickoff(bot, held)
-      }
+      if (ready) await releaseKickoff(bot)
     }
     if (unapplied !== undefined) throw unapplied
     return bot
@@ -691,15 +709,18 @@ export function install(rt) {
     try {
       await rt.applyModel(bot, { force: true })
     } catch (error) {
-      rt.warn('omni-ui: the model of %s was not selected again: %s', bot.name, error?.message ?? error)
+      rt.warn('ds-bot: the model of %s was not selected again: %s', bot.name, error?.message ?? error)
     }
     putModelFields(bot, before)
   }
 
   async function switchModel(bot, patch, modelRef, effortId) {
     const before = modelFields(bot)
+    const blockedBefore = bot.blocked
     if (patch.model !== undefined) {
       rt.noteModelChoice?.(bot, modelRef ?? undefined)
+      // A failure that blocked the Bot was its old model's (turns.js).
+      if ((modelRef ?? undefined) !== bot.model) delete bot.blocked
       if (modelRef === null) delete bot.model
       else bot.model = modelRef
     }
@@ -711,14 +732,15 @@ export function install(rt) {
       await rt.applyModel(bot, { force: true })
     } catch (error) {
       putModelFields(bot, before)
-      rt.warn('omni-ui: the model of %s was not changed: %s', bot.name, error?.message ?? error)
+      if (blockedBefore !== undefined) bot.blocked = blockedBefore
+      rt.warn('ds-bot: the model of %s was not changed: %s', bot.name, error?.message ?? error)
       if (typeof error?.code === 'string' && error.code.startsWith('bot/')) throw error
       const wanted = patch.model === undefined ? 'this thinking level' : modelRef ?? 'no model'
       throw refusal(`${bot.name} could not switch to ${wanted}. It stays on ${before.model ?? 'its current model'}.`, { cause: error })
     }
   }
 
-  async function setFlags(id, { pinned, hidden }) {
+  async function setFlags(id, { pinned, hidden, sectionId }) {
     const entry = rt.botOf(id) ?? rt.roomOf(id) ?? rt.own(state.agents, id)
     if (entry === undefined) throw refusal('Unknown conversation')
     if (typeof pinned === 'boolean') entry.pinned = pinned
@@ -726,7 +748,7 @@ export function install(rt) {
     if (sectionId !== undefined) {
       if (sectionId === null || sectionId === '' || id === state.mainBotIds[0]) delete entry.sectionId
       else if (typeof sectionId === 'string' && (state.sections ?? []).some(sec => sec.id === sectionId)) entry.sectionId = sectionId
-      else throw new Error('Unknown section')
+      else throw refusal('Unknown section')
     }
     await rt.save()
     return entry
@@ -734,13 +756,13 @@ export function install(rt) {
 
   async function saveSection({ id, name, collapsed, color, items, add, remove } = {}) {
     if (color !== undefined && color !== null && color !== '' && !SECTION_COLORS.includes(color)) {
-      throw new Error('Unknown section color')
+      throw refusal('Unknown section color')
     }
     const list = (state.sections ??= [])
     let sec
     if (id !== undefined && id !== null && id !== '') {
       sec = list.find(entry => entry.id === id)
-      if (sec === undefined) throw new Error('Unknown section')
+      if (sec === undefined) throw refusal('Unknown section')
       if (name !== undefined) sec.name = cleanSectionName(name, sec.id)
       if (typeof collapsed === 'boolean') {
         if (collapsed) sec.collapsed = true
@@ -784,7 +806,7 @@ export function install(rt) {
   }
 
   async function reorderSections(ids) {
-    if (!Array.isArray(ids)) throw new Error('Section order must be an array of section ids')
+    if (!Array.isArray(ids)) throw refusal('Section order must be an array of section ids')
     const list = (state.sections ??= [])
     const byId = new Map(list.map(sec => [sec.id, sec]))
     const next = []
@@ -803,7 +825,7 @@ export function install(rt) {
 
   async function deleteSection(id) {
     const list = (state.sections ??= [])
-    if (!list.some(sec => sec.id === id)) throw new Error('Unknown section')
+    if (!list.some(sec => sec.id === id)) throw refusal('Unknown section')
     state.sections = list.filter(sec => sec.id !== id)
     for (const entry of [...Object.values(state.bots), ...Object.values(state.rooms), ...Object.values(state.agents)]) {
       if (entry.sectionId === id) delete entry.sectionId
@@ -820,7 +842,7 @@ export function install(rt) {
   // A notice past the limit is refused rather than silently cut (#710).
   const cleanNotice = (text) => {
     const notice = String(text ?? '').trim()
-    if (notice.length > ROOM_NOTICE_MAX) throw new Error(`A group's notice can hold at most ${ROOM_NOTICE_MAX} characters; this one has ${notice.length}`)
+    if (notice.length > ROOM_NOTICE_MAX) throw refusal(`A group's notice can hold at most ${ROOM_NOTICE_MAX} characters; this one has ${notice.length}`)
     return notice
   }
 
@@ -853,20 +875,22 @@ export function install(rt) {
   function checkMembers(members) {
     if (members.length < 2) throw refusal('A group chat needs at least two Bots')
     if (members.length > ROOM_MAX_MEMBERS) throw refusal(`A group chat holds at most ${ROOM_MAX_MEMBERS} Bots`)
+    rt.checkNoPrivate(members)
   }
 
   // A Main Bot leads the groups it makes; a group the user makes is led by a Main Bot
   // member when it has one.
   const defaultAdmin = (members, createdBy) => (members.includes(createdBy) ? createdBy : members.find(rt.isMain) ?? null)
 
-  async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy } = {}) {
+  async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy, section, sectionId } = {}) {
     const members = [...new Set(memberIds)].filter(isLive)
     checkMembers(members)
     const custom = cleanRoomName(roomName ?? '')
     const adminId = admin !== undefined ? admin : defaultAdmin(members, createdBy)
     if (adminId !== null && !members.includes(adminId)) throw refusal('The admin must be a member of the group')
     if (mode !== undefined && !ROOM_MODES.includes(mode)) throw refusal(`Reply mode must be one of ${ROOM_MODES.join(', ')}`)
-    return holdName('room', custom, () => buildRoom({ members, custom, notice, mode, adminId, createdBy }))
+    if (section !== undefined || sectionId !== undefined) resolveSectionInput({ section, sectionId }, { allowCreate: false })
+    return holdName('room', custom, () => buildRoom({ members, custom, notice, mode, adminId, createdBy, section, sectionId }))
   }
 
   async function buildRoom({ members, custom, notice, mode, adminId, createdBy, section, sectionId }) {
@@ -937,18 +961,15 @@ export function install(rt) {
     if (patch.mode !== undefined && !ROOM_MODES.includes(patch.mode)) throw refusal(`Reply mode must be one of ${ROOM_MODES.join(', ')}`)
     const notice = patch.notice === undefined ? undefined : cleanNotice(patch.notice)
     if (patch.workDir !== undefined && byAdmin) throw refusal(`Only the user or a Main Bot can set the folder of "${room.name}"`)
+    if ((patch.section !== undefined || patch.sectionId !== undefined) && byAdmin) {
+      throw refusal(`Only the user or a Main Bot can move "${room.name}" between sidebar sections`)
+    }
+    if (patch.section !== undefined || patch.sectionId !== undefined) {
+      resolveSectionInput({ section: patch.section, sectionId: patch.sectionId }, { allowCreate: false })
+    }
     // A Bot's own permissions are the user's to set, so a group's are too.
     if (patch.permission !== undefined && actorId !== undefined) throw refusal(`Only the user can set the permissions of "${room.name}"`)
     const permission = patch.permission === undefined ? undefined : rt.cleanRoomPermission(patch.permission)
-    // The relay limit is the user's guard against a group that never stops; it is
-    // not a member's to move, whatever its role.
-    if (patch.relayLimit !== undefined && actorId !== undefined) throw refusal(`Only the user can set the relay limit of "${room.name}"`)
-    let relayLimit
-    if (patch.relayLimit === null) relayLimit = null
-    else if (patch.relayLimit !== undefined) {
-      if (!Number.isInteger(patch.relayLimit) || patch.relayLimit < 1 || patch.relayLimit > 200) throw refusal('Relay limit must be a whole number from 1 to 200')
-      relayLimit = patch.relayLimit
-    }
     // The second run is the last check before the change is written, so no other change
     // can take the name in between.
     const name = patch.name === undefined ? undefined : cleanRoomName(patch.name, room.id)
@@ -963,11 +984,11 @@ export function install(rt) {
     const moving = patch.workDir !== undefined
     const workDir = moving ? await rt.cleanWorkDir(patch.workDir ?? '') : undefined
     const clash = workDir === undefined ? undefined : await rt.privateClash(workDir)
-    if (clash) throw new Error(`${workDir} is in or around the folder of ${clash.name}, a private Bot, so a group cannot work there`)
+    if (clash) throw refusal(`${workDir} is in or around the folder of ${clash.name}, a private Bot, so a group cannot work there`)
     // No await from here until every change is written.
     const room = rt.roomOf(id)
     if (room === undefined) throw refusal('Unknown group chat')
-    const { members, admin, name, notice, permission, relayLimit } = planRoomChange(room, patch, actorId)
+    const { members, admin, name, notice, permission } = planRoomChange(room, patch, actorId)
 
     const changes = []
     const names = ids => ids.map(member => rt.botOf(member)?.name).filter(Boolean).join(', ')
@@ -987,7 +1008,7 @@ export function install(rt) {
       const lost = [room.sessions?.[member], ...parts].filter(Boolean)
       if (lost.length > 0) {
         void rt.revokeNewSchedules?.(member, lost)
-          .catch(error => rt.warn('omni-ui: the fresh-Session tasks of %s were not paused: %s',
+          .catch(error => rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s',
             member, error))
       }
       rt.dropGroupSession(room, member)
@@ -1075,12 +1096,14 @@ export function install(rt) {
       try {
         await rt.revokeNewSchedules?.(botId, lost)
       } catch (error) {
-        rt.warn('omni-ui: the fresh-Session tasks of %s were not paused: %s', botId, error)
+        rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', botId, error)
       }
     }
     for (const botId of Object.keys(room.sessions ?? {})) rt.dropGroupSession(room, botId)
     // Its tasks keep the level they run at as a cap, then take their Bot's own or lower.
     rt.capTasks(task => rt.taskOfRoom(task, id))
+    for (const segment of room.parts ?? []) delete state.switching[segment.sessionId]
+    delete state.switching[rt.sessionOfRoom(room)]
     delete state.rooms[id]
     rt.roomInbox.delete(id)
     rt.dropGroupLines(id)
@@ -1100,6 +1123,7 @@ export function install(rt) {
   async function setMain(id, main, { primary = false, replace } = {}) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw refusal('Unknown Bot')
+    if (main && bot.private === true) throw refusal(`${bot.name} is private, so it cannot be a Main Bot`)
     const others = state.mainBotIds.filter(other => other !== id)
     let next
     if (!main) {
@@ -1170,11 +1194,21 @@ export function install(rt) {
     try {
       await rt.revokeNewSchedules?.(id, sessions, { any: true })
     } catch (error) {
-      rt.warn('omni-ui: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
+      rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
     }
+    // `archiving` stands until the archive's path is known: the memory may already be
+    // there, and no region of its own closes it yet.
+    const closedArchive = bot.private === true ? {
+      id: bot.id,
+      name: bot.name,
+      ...(bot.workDir === undefined ? {} : { workDir: bot.workDir }),
+      sessionIds: sessions,
+      archiving: true,
+    } : undefined
     let archived
     try {
       await rt.releaseBot(id, sessions)
+      if (closedArchive !== undefined) state.privateArchives = [...(state.privateArchives ?? []).filter(entry => entry.id !== id), closedArchive]
       // #376: only once its Sessions are released, so a failed release keeps its memory.
       // Before the Bot and its group Sessions leave the state, which the archive reads.
       archived = rt.archiveBotMemory(id)
@@ -1190,7 +1224,7 @@ export function install(rt) {
       try {
         await step(id)
       } catch (error) {
-        rt.warn('omni-ui: clearing Bot %s failed: %s', bot.name, error)
+        rt.warn('ds-bot: clearing Bot %s failed: %s', bot.name, error)
       }
     }
     deleting.delete(id)
@@ -1198,7 +1232,8 @@ export function install(rt) {
     rt.capTasks(task => task.from === id)
     if (bot.permissionAuto) rt.endAuto?.(bot)
     delete state.bots[id]
-    // Only a still-unapproved local MCP this Bot alone asked for leaves with it.
+    // The shared capability list is the user's and keeps its items; only a
+    // still-unapproved local MCP this Bot alone asked for leaves with it.
     rt.dropOrphanCapabilities?.(bot)
     for (const part of parts) {
       delete state.questions[part]
@@ -1255,7 +1290,7 @@ export function install(rt) {
     try {
       await rt.save()
     } catch (error) {
-      rt.warn('omni-ui: Bot %s is back in its groups, but that was not saved: %s', id, error)
+      rt.warn('ds-bot: Bot %s is back in its groups, but that was not saved: %s', id, error)
     }
   }
 
@@ -1303,7 +1338,7 @@ export function install(rt) {
     const ms = rt.mainBotMakerMs ?? MAIN_BOT_MAKER_MS
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        rt.warn('omni-ui: the Main Bot maker gave no answer in %d ms; the team makes its own', ms)
+        rt.warn('ds-bot: the Main Bot maker gave no answer in %d ms; the team makes its own', ms)
         resolve(NO_ANSWER)
       }, ms)
       Promise.resolve().then(maker).then((bot) => {
@@ -1311,7 +1346,7 @@ export function install(rt) {
         resolve(bot)
       }, (error) => {
         clearTimeout(timer)
-        rt.warn('omni-ui: the Main Bot maker failed; the team makes its own: %s', error?.message ?? error)
+        rt.warn('ds-bot: the Main Bot maker failed; the team makes its own: %s', error?.message ?? error)
         resolve(NO_ANSWER)
       })
     })
@@ -1321,6 +1356,6 @@ export function install(rt) {
     ensureWorkspace, keepTeamFolder, createSession, createBot, duplicateBot, updateBot, setFlags,
     saveSection, reorderSections, deleteSection,
     roomBusy, autoRoomName, retitleRoom, createRoom, updateRoom, deleteRoom,
-    setMain, deleteBot, beforeBotDelete, bootstrap, dropKickoff,
+    setMain, deleteBot, beforeBotDelete, bootstrap, releaseKickoff, greetingOut, holdKickoffAgain, userWrote, userAnswered,
   })
 }

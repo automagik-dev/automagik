@@ -128,7 +128,7 @@ export function install(rt) {
     // `sessionId` is the group's own Session's current part, `ownParts` its earlier
     // ones; `parts` the members' hidden group Sessions and their earlier segments,
     // for usage. `lateRounds` and `relays` are what an older team's rooms may still hold.
-    rooms: Object.values(state.rooms).map(({ log, seen, lateRounds, relays, paused, sessions, segments, parts: ownParts, ...room }) => {
+    rooms: Object.values(state.rooms).map(({ log, seen, paused, sessions, segments, parts: ownParts, ...room }) => {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId), ...(ownParts ?? []).map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
       // The row's one line: the start of the last message, without its markdown marks (#1155).
@@ -170,8 +170,6 @@ export function install(rt) {
     prefs: state.prefs,
     // Whether a Desktop window should serve Bot browser reads (see browser.js).
     browser: rt.browserEnabled,
-    // Who holds each Bot's own browser (browser-plugins.js), for windows without the panel.
-    browserHolds: rt.browserChannel?.holdSnapshot() ?? {},
     // Each Bot's saved tabs (browser/tabs.js): the panel lists them in the Automagik app.
     browserTabs: rt.browserTabsView?.() ?? {},
     // False when config.memory turns memory off: no Memory row or panel.

@@ -13,7 +13,7 @@ const LEGACY_VERSION = 0
 const COMPATIBLE_VERSIONS = [LEGACY_VERSION, 1, STATE_VERSION]
 import { join } from 'node:path'
 import { piAiClaudeOf } from './claude-models.js'
-import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, TEXT_KEPT } from './constants.js'
+import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, SECTION_COLORS, SECTION_NAME_MAX, TEXT_KEPT } from './constants.js'
 import { replaceFile } from './files.js'
 import { homeLock } from './home-lock.js'
 import { GENIE_CLAY, shippedPet, shipsPet } from './pets.js'
@@ -28,8 +28,8 @@ export const own = (table, key) => (table != null && Object.hasOwn(table, key) ?
 export function install(rt) {
   const { ctx, home, statePath } = rt
 
-  /** @type {{version:2, workspaceId?:string, mainBotIds:string[], bots:Record<string,any>, rooms:Record<string,any>, agents:Record<string,any>, capabilities:{items:Record<string,any>}, exchanges:any[], exchangeTurns:Record<string,number[]>, revision:number}} */
-  const state = { version: STATE_VERSION, mainBotIds: [], bots: {}, rooms: {}, agents: {}, capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, prefs: {}, switching: {}, revision: 0 }
+  /** @type {{version:2, workspaceId?:string, mainBotIds:string[], bots:Record<string,any>, privateArchives:any[], rooms:Record<string,any>, agents:Record<string,any>, sections:any[], capabilities:{items:Record<string,any>}, exchanges:any[], exchangeTurns:Record<string,number[]>, revision:number}} */
+  const state = { version: STATE_VERSION, mainBotIds: [], bots: {}, privateArchives: [], rooms: {}, agents: {}, sections: [], capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, closedCards: {}, prefs: {}, switching: {}, revision: 0 }
   let loaded = null
   // Whether `state` is the team as its file has it (teamLoaded).
   let teamRead = false
@@ -104,7 +104,7 @@ export function install(rt) {
       // A copy that failed for another reason keeps the team read-only, as before.
       if (copyError?.code !== 'EEXIST') {
         stuck = copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
-        warn('omni-ui: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
+        warn('ds-bot: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
         return undefined
       }
       // Reuse only a complete copy of exactly these bytes. A torn or foreign copy is the
@@ -114,12 +114,12 @@ export function install(rt) {
         stuck = existing.case === 'torn'
           ? 'the set-aside backup is incomplete'
           : `the set-aside backup is unreadable: ${existing.reason}`
-        warn('omni-ui: unreadable state %s: %s; %s', statePath, error, stuck)
+        warn('ds-bot: unreadable state %s: %s; %s', statePath, error, stuck)
         return undefined
       }
     }
     stuck = undefined
-    warn('omni-ui: unreadable state %s: %s; backed up as %s', statePath, error, backup)
+    warn('ds-bot: unreadable state %s: %s; backed up as %s', statePath, error, backup)
     return undefined
   }
 
@@ -189,7 +189,9 @@ export function install(rt) {
     state.prefs ??= {}
     // Teams saved before the DSH Agent existed carry no `agents`; corrupt values reset.
     if (state.agents === null || typeof state.agents !== 'object' || Array.isArray(state.agents)) state.agents = {}
-    let migrated = !hadCapabilities
+    // `computer` is the computer-use switch; absent or corrupt means off.
+    if (state.computer === null || typeof state.computer !== 'object' || Array.isArray(state.computer)) state.computer = {}
+    let migrated = !hadCapabilities || parsed?.version !== STATE_VERSION
     if (state.autoStamp !== state.revision && rt.dropAutoMarks()) migrated = true
     if (holder !== undefined) rt.dropAutoMarks()
     // The single DSH Agent of older teams splits into a DSH bot and the tasks record (agents.js).
@@ -627,9 +629,12 @@ export function install(rt) {
   const groupOwners = new Map()
   // Single-run task Sessions a subscription started for a Bot (subscriptions.js).
   const taskOwners = new Map()
-  /** @type {Map<string, {botId:string, roomId?:string}>} */
+  /** @type {Map<string, string>} */
+  const roomOwners = new Map()
+  /** @type {Map<string, {botId?:string, roomId?:string}>} */
   const pastOwners = new Map()
   const chatOf = botId => botOf(botId)?.sessionId ?? botId
+  const sessionOfRoom = room => (room === undefined ? undefined : room.sessionId ?? room.id)
   // DSH turns away every step of an archived Session and every task aimed at it, so a
   // Session the team speaks from now leaves the archive: an earlier open of an old part
   // could leave one there, and DSH's own Session list can archive one. Earlier parts
@@ -644,13 +649,13 @@ export function install(rt) {
     } catch {
       return
     }
-    const held = [...chatOwners.keys(), ...groupOwners.keys(), ...Object.keys(state.rooms)].filter(id => archived.has(id))
+    const held = [...chatOwners.keys(), ...groupOwners.keys(), ...roomOwners.keys()].filter(id => archived.has(id))
     if (held.length === 0) return
     restoring = (async () => {
       for (const sessionId of held) {
         await registry.unarchiveSession(sessionId)
-          .then(() => warn('ds-bot: current Session %s was archived in DSH; taken back out', sessionId))
-          .catch(error => warn('ds-bot: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
+          .then(() => warn('omni-ui: current Session %s was archived in DSH; taken back out', sessionId))
+          .catch(error => warn('omni-ui: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
       }
     })().finally(() => { restoring = undefined })
   }
@@ -678,6 +683,7 @@ export function install(rt) {
     // the scoped tools with this ownership (drops Sessions that left, scopes
     // live Agents that joined); both install after this.
     rt.indexAgents?.()
+    rt.syncScopedTools?.()
     restoreCurrent()
   }
   // The Bot a Session speaks for: its own chat, one of its group Sessions, or an
@@ -732,10 +738,26 @@ export function install(rt) {
   // read or was set aside as corrupt. It reads memory only.
   const teamLoaded = () => teamRead
 
+  const savedListeners = new Set()
+  const onSaved = (listener) => {
+    savedListeners.add(listener)
+    return () => savedListeners.delete(listener)
+  }
+
+  // A question or view card closed without an answer on the card (dismissed, or
+  // answered by a message) stays in the chat, read-only: by the Session where it
+  // was asked, its call id and how it closed. A card answered on the card shows
+  // on its reply message.
+  const closeCard = (sessionId, card, outcome) => {
+    if (typeof card?.callId !== 'string') return
+    const target = typeof card.callSessionId === 'string' ? card.callSessionId : sessionId
+    state.closedCards[target] = { ...own(state.closedCards, target), [card.callId]: outcome }
+  }
+
   Object.assign(rt, {
-    state, load, save, refresh, readOnly, teamLoaded, own,
-    botOf, roomOf, isMain, chatOf, selfOf, isBotSession,
-    chatOwners, groupOwners, pastOwners, taskOwners, indexSessions,
+    state, load, save, refresh, readOnly, teamLoaded, own, onSaved, closeCard,
+    botOf, roomOf, isMain, chatOf, sessionOfRoom, selfOf, isBotSession,
+    chatOwners, groupOwners, roomOwners, pastOwners, taskOwners, indexSessions,
     groupSessionsOf, dropGroupSession, retireGroupSession, findBot, findRooms, isAdminOf,
   })
 }

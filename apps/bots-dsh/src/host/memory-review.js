@@ -230,16 +230,20 @@ export function installReview(rt, memory) {
 
   // A Bot's own chat, kept in its own memory. A context switch during the wait leaves
   // the Session an earlier part, still the Bot's.
+  // Each Bot's own switch (Advanced settings) turns the review of its own chat off; a
+  // group's review follows the team's setting alone.
+  const chatReviewEnabled = botId => reviewOn && rt.botOf(botId) !== undefined && rt.botOf(botId).memoryReview !== false
+  const reviewEnabled = seen => seen?.roomId !== undefined ? reviewOn : seen !== undefined && chatReviewEnabled(seen.botId)
   async function reviewChat(seen) {
     const bot = rt.botOf(reviewOf(seen.sessionId)?.botId ?? seen.botId)
-    if (bot === undefined) return
+    if (bot === undefined || !chatReviewEnabled(bot.id)) return
     const since = cursorsNow()[seen.key]
     await reviewBatch({
       key: seen.key, since, batch: await chatBatch(seen.sessionId, bot, since),
       keeper: bot, name: bot.name, home: ownScope(bot.id), teamWrites: () => writesTeam(bot.id),
       who: `The Bot: ${bot.name}${bot.role ? `, ${bot.role}` : ''}.`,
       tag: { sessionId: rt.chatOf(bot.id), kind: 'memory' },
-      alive: () => rt.botOf(bot.id) !== undefined,
+      alive: () => chatReviewEnabled(bot.id),
       next: () => queueReview(seen),
     })
   }
@@ -345,10 +349,21 @@ export function installReview(rt, memory) {
   const reviewQueue = new Map()
   let reviewChain = Promise.resolve()
   let reviewsRunning = 0
+  const runningReviews = new Map()
   const memoryReviews = () => reviewTimers.size + reviewQueue.size + reviewsRunning
+  const memoryReviewStatus = (botId) => {
+    if (rt.botOf(botId) === undefined) throw Object.assign(new Error('Unknown Bot'), { code: 'bot/not-found' })
+    // Own-chat state only: a group review belongs to the group, not its keeper.
+    const owns = seen => seen?.roomId === undefined && seen?.botId === botId
+    return { enabled: chatReviewEnabled(botId), allowed: reviewOn,
+      pending: [...reviewTimers.keys()].some(id => owns(reviewOf(id))) || [...reviewQueue.values()].some(owns),
+      running: [...runningReviews.values()].some(owns),
+    }
+  }
   // A conversation waits in the line once: a later turn's copy of a group log joins
   // the one that already waits.
   function queueReview(seen) {
+    if (!reviewEnabled(seen)) return
     const prior = reviewQueue.get(seen.key)
     if (prior !== undefined) {
       if (seen.room !== undefined) reviewQueue.set(seen.key, { ...seen, room: joinLogs(prior.room, seen.room) })
@@ -359,11 +374,13 @@ export function installReview(rt, memory) {
       const waited = reviewQueue.get(seen.key)
       reviewQueue.delete(seen.key)
       reviewsRunning += 1
+      runningReviews.set(waited.key, waited)
       try {
-        if (rt.readOnly() === undefined) await (waited.roomId === undefined ? reviewChat(waited) : reviewGroup(waited))
+        if (rt.readOnly() === undefined && reviewEnabled(waited)) await (waited.roomId === undefined ? reviewChat(waited) : reviewGroup(waited))
       } catch (error) {
         rt.warn('omni-ui: memory review of %s failed: %s', waited.key, failureCode(error))
       } finally {
+        runningReviews.delete(waited.key)
         reviewsRunning -= 1
       }
     })
@@ -388,7 +405,7 @@ export function installReview(rt, memory) {
       const started = turnOwners.get(id)
       turnOwners.delete(id)
       const seen = reviewOf(id) ?? started
-      if (seen === undefined) return
+      if (seen === undefined || !reviewEnabled(seen)) return
       const timer = setTimeout(() => {
         reviewTimers.delete(id)
         queueReview(seen)
@@ -403,5 +420,5 @@ export function installReview(rt, memory) {
     }, 'omni-ui: memory review')
   }
 
-  return { memoryReviews }
+  return { memoryReviews, memoryReviewStatus }
 }
