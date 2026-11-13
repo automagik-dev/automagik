@@ -33,7 +33,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE, hookDoctorLine } from "./briefingText.mjs";
-import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
+import { AM_LINK, CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
@@ -219,9 +219,11 @@ function linkCommand(ctx, name, entries, ours) {
 }
 /** The pack's automagik-herdr link removed where it is ours; another is reported. */
 function unlinkCommands(ctx) {
-  const link = join(ctx.binDir, CLI_LINK);
-  if (linkOurs(link, [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)])) { unlinkSync(link); return [`removed ${link}`]; }
-  return exists(link) ? [`left ${link}: it is not this install's`] : [];
+  return [CLI_LINK, AM_LINK].flatMap((name) => {
+    const link = join(ctx.binDir, name);
+    if (linkOurs(link, [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)])) { unlinkSync(link); return [`removed ${link}`]; }
+    return exists(link) ? [`left ${link}: it is not this install's`] : [];
+  });
 }
 
 /**
@@ -262,6 +264,14 @@ export function install(ctx, part, source) {
     const cli = linkCommand(ctx, CLI_LINK, cliEntries(ctx), [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)]);
     if (cli.changed) { ctx.log(`linked ${cli.link}`); changed = true; }
     if (!cli.done) ctx.log(cli.why === "not shipped" ? `${join(ctx.modsDir, PACK_NAME, "bin")} has no automagik-herdr command: not linked` : cli.why);
+    // am, the same command under its own name (install.sh links both): the same rule. A link into
+    // am's own store is am's and stays.
+    const amLink = join(ctx.binDir, AM_LINK);
+    if (!(isLink(amLink) && within(amLink, amStoreOf(ctx.env)))) {
+      const am = linkCommand(ctx, AM_LINK, cliEntries(ctx), [...cliEntries(ctx), ...cliEntries(ctx, OLD_PACK_NAME)]);
+      if (am.changed) { ctx.log(`linked ${am.link}`); changed = true; }
+      if (!am.done && am.why !== "not shipped") ctx.log(am.why);
+    }
     if (!(ctx.env.PATH ?? "").split(":").includes(ctx.binDir)) ctx.log(`add ${ctx.binDir} to your PATH: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
     return { ok: true, changed, detail: `the pack ${record.version} is installed (${record.mods.join(", ")})` };
   } finally {
@@ -481,10 +491,10 @@ const within = (p, dir) => { const r = realOf(p), d = realOf(dir); return Boolea
 export function sidebarCarries(ctx) {
   const reasons = [];
   const folder = join(ctx.modsDir, PACK_NAME);
-  const link = join(ctx.binDir, CLI_LINK);
-  if (isLink(link) && (within(link, folder) || resolve(dirname(link), readlinkSync(link)).startsWith(folder + sep))) {
-    reasons.push(`the command (${link} runs mods/${PACK_NAME}/bin)`);
-  }
+  // Either name (the pack links both): one reason, naming the first that still runs from the folder.
+  const carrying = [CLI_LINK, AM_LINK].map((name) => join(ctx.binDir, name))
+    .find((link) => isLink(link) && (within(link, folder) || resolve(dirname(link), readlinkSync(link)).startsWith(folder + sep)));
+  if (carrying) reasons.push(`the command (${carrying} runs mods/${PACK_NAME}/bin)`);
   const entry = stableBriefingPath(ctx.appHome);
   if (!within(entry, amStoreOf(ctx.env))) reasons.push(`every bot's briefing (${entry} is not am's: it ${isFile(entry) ? "runs the sidebar's briefing.mjs" : "is missing"})`);
   const direct = hooksRunning(knownProjects(ctx.appHome), { scripts: [join(folder, "briefing.mjs")], also: ledgerFolders(ctx.appHome) });
@@ -606,6 +616,12 @@ export function doctor(ctx, part) {
     else if (!to) note("command", `${link} is a file of yours, not the pack's link: left alone`, `rm ${link} && ${reinstall}`);
     else if (!cliEntries(ctx).includes(to)) note("command", `${link} points at ${to}, not this install: left alone`, `rm ${link} && ${reinstall}`);
     else add("command", isFile(to), isFile(to) ? `${link} → ${to}` : `${link} points at ${to}, which is gone`, reinstall);
+    // am's link, the same command under its own name: a missing one is a notice (an install from
+    // before it), never a failure; one of the person's, or am's own, stays.
+    const amLink = join(ctx.binDir, AM_LINK);
+    const amTo = isLink(amLink) ? resolve(dirname(amLink), readlinkSync(amLink)) : null;
+    if (!exists(amLink)) note("am command", `${amLink} is missing`, reinstall);
+    else if (amTo && cliEntries(ctx).includes(amTo)) add("am command", isFile(amTo), isFile(amTo) ? `${amLink} → ${amTo}` : `${amLink} points at ${amTo}, which is gone`, reinstall);
     const onPath = (ctx.env.PATH ?? "").split(":").includes(ctx.binDir);
     if (onPath) add("path", true, `${ctx.binDir} is on PATH`);
     else note("path", `${ctx.binDir} is not on PATH: run automagik-herdr by its full path, or add it`, `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);

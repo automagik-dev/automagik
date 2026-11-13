@@ -81,9 +81,22 @@ const lineOf = (r) => ({
 
 /** The pack's own update switches (its kept set, its automatic updates): the pack CLI's, as given. */
 const PACK_SWITCH = /^--(?:rollback|auto)(?:=|$)/;
+/** What may stand beside them: their own switches and the pack update's --check and --json. Any other word is a target. */
+const PACK_FLAG = /^--(?:(?:rollback|auto)(?:=.*)?|check|json)$/;
 
 async function update(args) {
-  if (args.some((a) => PACK_SWITCH.test(a))) return cli(["update", ...args]).code;
+  if (args.some((a) => PACK_SWITCH.test(a))) {
+    // The pack's own switches act on the pack only: a named other part (am itself) is refused.
+    // The only word allowed besides the switches is the pack's own id (--auto's value, as in
+    // --auto status, is no word of this kind).
+    const named = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--auto") i++;
+      else if (!args[i].startsWith("-") || !PACK_FLAG.test(args[i])) named.push(args[i]);
+    }
+    if (named.some((a) => a !== PACK)) throw new Usage(`--rollback and --auto are ${PACK}'s own update, not ${named.filter((a) => a !== PACK).join(" ")}'s (am update ${PACK} --rollback)`);
+    return cli(["update", ...args]).code;
+  }
   const { words, flags } = parse(args, ["--check", "--json"]);
   const [id, extra] = words;
   if (extra || (id && id !== PART && id !== PACK)) throw new Usage(`am update takes ${PART} or ${PACK}, not ${words.join(" ")}`);
