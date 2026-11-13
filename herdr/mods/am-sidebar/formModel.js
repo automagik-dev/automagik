@@ -267,13 +267,15 @@ export function entryOf(state, file) {
   // A16: a member's rank, "" clearing it; the main bot's entry leaves rank out, so a stored
   // one stays (the form picks ranks for members only).
   const rank = member ? { rank: state.rank ?? "" } : {};
+  // Keep an explicit setting when editing, including true; new defaults stay implicit.
+  const hadCode = file?.bots.find((b) => b.id === state.id)?.code !== undefined;
   return {
     entry: {
       ...rank,
       id: state.id, name: state.name.trim(), kind: state.kind,
       look: { character: state.character, colour: state.colour },
       role: state.role.trim(), instructions: state.instructions,
-      code: state.code === false ? false : undefined,
+      code: state.code === false ? false : hadCode ? true : undefined,
       agent: state.agent || undefined, model: state.pin || undefined,
       hermes: state.hermesHome || state.hermesProfile ? { home: state.hermesHome, profile: state.hermesProfile } : undefined,
       // Antigravity's launch mode: the default is applied at launch, so only another one is stored.

@@ -768,7 +768,7 @@ var ZH = {
   "Sign in to DeepSeek": "登录 DeepSeek 账号",
   "Enter a DeepSeek API key": "填入 DeepSeek API key",
   "Open settings to set up a custom model": "打开设置配置自定义模型",
-  "Omni": "Omni",
+  "Back to Automagik": "返回 Automagik",
   // Header
   "Message {name}": "给 {name} 发消息",
   Message: "发消息",
@@ -3104,6 +3104,48 @@ function mentionSpans(text2, bots, { references = [] } = {}) {
   return spans;
 }
 
+// src/shared/plain-text.js
+var HELD = /\uE000(\d+)\uE001/;
+var HELD_ALL = new RegExp(HELD, "g");
+function plainText(markdown) {
+  if (typeof markdown !== "string" || markdown === "") return "";
+  const held = [];
+  const hold = (value) => {
+    held.push(value);
+    return `${held.length - 1}`;
+  };
+  let text2 = markdown.replace(/[\uE000\uE001]/g, "");
+  text2 = text2.replace(/(^|\n)[ \t]*(`{3,}|~{3,})[^\n]*((?:\n(?![ \t]*\2)[^\n]*)*)(?:\n[ \t]*\2[`~]*[ \t]*(?=\n|$))?/g, (_all, start2, _fence, code) => `${start2}${hold(code.slice(1))}`);
+  text2 = text2.replace(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g, (_all, _ticks, code) => hold(code.replace(/^ ([\s\S]*) $/, "$1")));
+  text2 = text2.replace(/\\([!-/:-@[-`{-~])/g, (_all, mark) => hold(mark));
+  text2 = text2.replace(/!?\[((?:[^\][]|\[[^\][]*\])*)\]\((?:[^()\s]|\([^()\s]*\))*(?:[ \t]+(?:"[^"]*"|'[^']*'))?\)/g, "$1");
+  text2 = text2.replace(/!?\[((?:[^\][]|\[[^\][]*\])+)\]\[[^\]]*\]/g, "$1");
+  text2 = text2.replace(/<((?:https?:\/\/|mailto:)[^<>\s]+)>/g, (_all, address) => hold(address));
+  text2 = text2.replace(/\bhttps?:\/\/[^\s<>)\]]+/g, (address) => hold(address));
+  text2 = text2.replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, "");
+  text2 = text2.replace(/^[ \t]*={3,}[ \t]*$/gm, "");
+  text2 = text2.replace(/^[ \t]*(?:>[ \t]?)+/gm, "");
+  text2 = text2.replace(/^[ \t]*#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/gm, "$1");
+  text2 = text2.replace(/^[ \t]*[-*+][ \t]+(?:\[[ xX]\][ \t]+)?/gm, "");
+  text2 = text2.replace(/^([ \t]*\d+[.)][ \t]+)\[[ xX]\][ \t]+/gm, "$1");
+  for (let round = 0; round < 4; round += 1) {
+    const before = text2;
+    text2 = text2.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "$1");
+    text2 = text2.replace(/(?<!\w)__(?=\S)([\s\S]*?\S)__(?!\w)/g, "$1");
+    text2 = text2.replace(/~~(?=\S)([\s\S]*?\S)~~/g, "$1");
+    text2 = text2.replace(/(?<!\*)\*(?![*\s])([^*\n]*?[^*\s])\*(?!\*)/g, "$1");
+    text2 = text2.replace(/(?<![\w_])_(?![_\s])([^_\n]*?[^_\s])_(?![\w_])/g, "$1");
+    if (text2 === before) break;
+  }
+  while (HELD.test(text2)) text2 = text2.replace(HELD_ALL, (_all, index) => held[Number(index)]);
+  return text2;
+}
+var PREVIEW_SOURCE = 400;
+function previewText(text2) {
+  if (typeof text2 !== "string") return "";
+  return plainText(text2.slice(0, PREVIEW_SOURCE)).replace(/\s+/g, " ").trim();
+}
+
 // src/client/text.js
 var MENTION_ORIGIN = "https://bots.local/";
 function linkMentions(text2, bots, selfId) {
@@ -3283,7 +3325,7 @@ function previewOf(list, id, hiddenTurns = []) {
     const entry = outline[index];
     if (hiddenTurns.includes(entry.turn)) continue;
     const text2 = entry.response || entry.prompt || "";
-    if (text2 !== "") return stripHeader(text2).replace(/\s+/g, " ").trim();
+    if (text2 !== "") return previewText(stripHeader(text2));
   }
   return "";
 }
@@ -6577,13 +6619,28 @@ function ModelLineTail({ turn, sessionId, useRoster, useSessions, actions }) {
     error ? (0, import_react16.createElement)("div", { className: "bt-secret-error", role: "alert" }, error) : null
   );
 }
-function ModelChoiceDock({ sessionId, useRoster, actions }) {
+var lastTurnOf = (outline) => Array.isArray(outline) && outline.length > 0 ? outline.at(-1)?.turn ?? null : null;
+function ModelChoiceDock({ sessionId, useRoster, useSessions, actions }) {
+  const seated = useSessions ? useSessions((list) => lastTurnOf(outlineOf(list, sessionId)) !== null) : false;
+  const card = useModelChoice({ sessionId, useRoster, actions }, seated);
+  return seated ? null : card;
+}
+function ModelChoiceTail({ turn, sessionId, useRoster, useSessions, actions }) {
+  const last = useSessions((list) => lastTurnOf(outlineOf(list, sessionId)));
+  if (last === null || last !== turn?.turn) return null;
+  return (0, import_react16.createElement)(ModelChoiceSeat, { sessionId, useRoster, actions });
+}
+function ModelChoiceSeat(props) {
+  const card = useModelChoice(props, false);
+  return card ? (0, import_react16.createElement)("div", { className: "bt-model-seat" }, card) : null;
+}
+function useModelChoice({ sessionId, useRoster, actions }, idle) {
   const roster = useRoster((value) => value);
   const bot = roster.byId[sessionId];
   const [busy, setBusy] = (0, import_react16.useState)("");
   const [error, setError] = (0, import_react16.useState)("");
   const hosted = roster.hostModels?.[bot?.id] !== void 0;
-  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready && !hosted;
+  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready && !hosted && !idle;
   (0, import_react16.useEffect)(() => {
     if (shown) void actions.refreshModels?.();
   }, [shown, sessionId]);
@@ -6770,6 +6827,10 @@ var MODEL_CSS = `${HERMES_MARK_CSS}
 .bt-host-model-status{padding:2px 8px 6px;font-size:12px;line-height:16px;color:var(--bt-ink-2)}
 .bt-host-model-confirm{flex:none;color:var(--bt-accent);font-size:12px;font-weight:600}
 .bt-model-dock{width:100%;max-width:var(--dsh-chat-content-width,748px);margin:0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:0 0 10px;box-sizing:border-box;animation:bt-model-in ${SPRING_POP.duration}ms ${SPRING_POP.easing} backwards}
+/* After the last turn of a transcript the card is one more message: the column's width, and
+   the room a message has above it. */
+.bt-model-seat{margin:6px 0 4px}
+.bt-model-seat>.bt-model-dock{max-width:none;margin:0;padding:0}
 .bt-model-chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:30px;max-width:min(560px,calc(100% - 30px));max-height:min(240px,36vh);max-height:min(240px,36dvh);overflow-y:auto;scrollbar-width:thin}
 .bt-model-choice-group{display:flex;flex-direction:column;gap:6px;width:100%;min-width:0}
 .bt-model-choice-provider{padding-top:4px;font-size:12px;line-height:16px;font-weight:500;color:var(--bt-ink-2);overflow-wrap:anywhere}
@@ -6929,8 +6990,8 @@ var agentRowSessions = (agent, roster, now) => {
     return now !== void 0 && task.status !== "working" && !inRail.has(id);
   });
 };
-var waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== void 0;
-var approvalFor = (work, sessionId) => (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
+var waitsForUser = (status, sessionId) => sessionId != null && status?.get(sessionId)?.pendingInteraction !== void 0;
+var approvalFor = (work, sessionId) => sessionId != null && (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
 var taskState = (task, waiting) => {
   const status = task?.status ?? "working";
   return status === "working" && waiting ? "waiting" : status;
@@ -6943,12 +7004,13 @@ var endLabel = (task) => {
   return task?.status === "stopped" ? t("Stopped") : t("Task finished");
 };
 function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork }) {
-  const asked2 = useSessionStatus && sessionId ? useSessionStatus((map) => waitsForUser(map, sessionId)) : false;
-  const pending = useSessionStatus && sessionId ? useSessionStatus((map) => map.get(sessionId)?.pendingInteraction) : void 0;
+  const taskId = sessionId ?? null;
+  const asked2 = useSessionStatus ? useSessionStatus((map) => waitsForUser(map, taskId)) : false;
+  const pending = useSessionStatus ? useSessionStatus((map) => map.get(taskId)?.pendingInteraction) : void 0;
   const ask = pending?.kind === "approval" && typeof pending.answer === "function" ? pending : void 0;
-  const approval = useWork && sessionId ? useWork((work) => approvalFor(work, sessionId)) : false;
-  const stop3 = useWork && sessionId ? useWork((work) => {
-    const entry = openStops(work).filter((item) => item.taskId === sessionId).sort((a, b) => b.at - a.at)[0];
+  const approval = useWork ? useWork((work) => approvalFor(work, taskId)) : false;
+  const stop3 = useWork ? useWork((work) => {
+    const entry = taskId === null ? void 0 : openStops(work).filter((item) => item.taskId === taskId).sort((a, b) => b.at - a.at)[0];
     return entry ? stopLine(entry) : "";
   }) : "";
   const waiting = asked2 || approval;
@@ -12826,11 +12888,12 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* A Bot's capability pills (capability-pills.js). In a sidebar row they have a line of their
-   own, and a pill that does not fit wraps out of sight whole rather than cut mid-word. */
+   own, and a pill that does not fit beside the others goes on to a line below, whole: the row
+   grows by that line, so no pill is cut or left out of sight (issue 1157). */
 .bt-caps{display:flex;align-items:center;gap:4px;min-width:0}
 .bt-cap{cursor:default}
-.bt-row-caps{flex-wrap:wrap;height:16px;overflow:hidden;margin-top:2px}
-.bt-row-caps>.bt-cap{font-size:11px;line-height:14px;padding:1px 5px}
+.bt-row-caps{flex-wrap:wrap;row-gap:2px;margin-top:2px}
+.bt-row-caps>.bt-cap{font-size:11px;line-height:14px;padding:1px 4px}
 .bt-drawer-caps{flex-wrap:wrap;justify-content:center;max-width:100%;margin-top:8px}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview-ask{color:var(--st-warn,var(--bt-ink-2));font-weight:500}
@@ -13850,6 +13913,14 @@ div:has(> nav [class*="_marks"]){display:none!important}
 [class*="_toBottomSlot"]>button svg{display:none}
 [class*="_toBottomSlot"]>button::before{content:"";width:20px;height:20px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4v12M5 11l5 5 5-5'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4v12M5 11l5 5 5-5'/%3E%3C/svg%3E") center/contain no-repeat}
 @keyframes bt-tobottom-in{from{translate:0 8px;scale:.8}}
+/* The arrow (and the "new messages" pill that takes its place) stands over the transcript. A
+   band of the page's own colour comes with it, from above the arrow down to the end of the
+   composer's seat, fading out at its top: the messages pass under the band, so the arrow is
+   never on a message's text, and none shows through the open parts of the seat below it (the
+   suggestion chips, the gaps of the stack) (issue 1138). The seat is drawn over the band, and the
+   band is there only while the arrow is: at the latest message nothing is under it. It ends
+   where the transcript's own box ends, so it adds nothing to the chat's scroll range. */
+[class*="_toBottomSlot"]::before{content:"";position:absolute;z-index:-1;left:0;right:0;bottom:calc(0px - var(--dsh-composer-height,152px));height:calc(var(--dsh-composer-height,152px) + 64px);background:linear-gradient(to bottom,transparent,var(--bt-main) 24px);pointer-events:none;animation:bt-veil-in .16s ease-out}
 [data-bt-news] [class*="_toBottomSlot"]>button{visibility:hidden!important;pointer-events:none!important}
 .bt-news{position:fixed;z-index:30;transform:translateX(-50%);display:inline-flex;align-items:center;overflow:hidden;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink);box-shadow:inset 0 0 0 1px rgba(20,20,20,.05),0 1px 3px 0 rgba(0,0,0,.12);font-family:var(--bt-font);animation:bt-news-in ${SPRING_TAP.duration}ms ${SPRING_TAP.easing},bt-veil-in .16s ease-out}
 @keyframes bt-news-in{from{translate:0 8px;scale:.9}}
@@ -13861,7 +13932,7 @@ div:has(> nav [class*="_marks"]){display:none!important}
 .bt-news-x{position:absolute;right:4px;top:50%;z-index:1;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:999px;background:transparent;color:inherit;opacity:.75;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .bt-news-x svg{width:12px;height:12px}
 .bt-news-x:hover{opacity:1;background:rgba(20,20,20,.5)}
-@media (prefers-reduced-motion:reduce){.bt-news,[class*="_toBottomSlot"]>button{animation:none}}
+@media (prefers-reduced-motion:reduce){.bt-news,[class*="_toBottomSlot"]>button,[class*="_toBottomSlot"]::before{animation:none}}
 .bt-new-sep{display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:2px 0;font-size:11px;line-height:14px;font-weight:500;letter-spacing:.02em;text-transform:uppercase;color:var(--bt-accent);font-family:var(--bt-font)}
 .bt-new-sep::before,.bt-new-sep::after{content:"";flex:1;height:1px;background:color-mix(in srgb,var(--bt-accent) 20%,transparent)}
 .bt-open-new{display:flex;flex-direction:column}
@@ -15268,9 +15339,9 @@ function BotReturn({ wide, useSurface, actions }) {
   if (mode !== "agent") return null;
   return (0, import_react34.createElement)(
     "button",
-    { type: "button", className: "bt-return", "aria-label": t("Omni"), title: t("Omni"), onClick: () => actions.setSurface("bot") },
+    { type: "button", className: "bt-return", "aria-label": t("Back to Automagik"), title: t("Back to Automagik"), onClick: () => actions.setSurface("bot") },
     (0, import_react34.createElement)(OmniMark, { size: 20 }),
-    wide ? (0, import_react34.createElement)("span", { className: "bt-return-name" }, t("Omni")) : null
+    wide ? (0, import_react34.createElement)("span", { className: "bt-return-name" }, t("Automagik")) : null
   );
 }
 var RETURN_CSS = `
@@ -23637,7 +23708,8 @@ function entrySummary(entry) {
   if (entry.source === "turn") return failureLabel(entry.code, entry.text);
   return entry.text;
 }
-var SOURCES = { turn: "Model call", host: "Omni", api: "Omni", browser: "This window" };
+var SOURCES = { turn: "Model call", host: "Automagik", api: "Automagik", browser: "This window" };
+var sourceName = (source) => SOURCES[source] ?? "Automagik";
 function issueWindow() {
   if (window.dshDesktop !== void 0) return { go: (url) => {
     window.open(url, "_blank");
@@ -23742,7 +23814,7 @@ function FeedbackPage({ actions, run: run2, Section: Section2, Row: Row3, roster
           "div",
           { className: "bt-set-copy" },
           (0, import_react65.createElement)("span", { className: "bt-fb-text" }, entrySummary(entry)),
-          (0, import_react65.createElement)("span", { className: "bt-set-hint" }, [whenText(entry.time), entry.bot, entry.where, t(SOURCES[entry.source] ?? "Omni")].filter(Boolean).join(" · "))
+          (0, import_react65.createElement)("span", { className: "bt-set-hint" }, [whenText(entry.time), entry.bot, entry.where, t(sourceName(entry.source))].filter(Boolean).join(" · "))
         ),
         entry.code ? (0, import_react65.createElement)("span", { className: "bt-tag bt-fb-code" }, entry.status ? `${entry.code} ${entry.status}` : entry.code) : null
       )),
@@ -30076,6 +30148,9 @@ function apply(ctx) {
     () => shadow("conversation.chat.turnTail", { id: "bot-btw", order: 800, priority: BOT_PRIORITY, inject: face }, BtwTurnTail),
     // While a Bot's chat holds only its greeting, the line under it names its model.
     () => shadow("conversation.chat.turnTail", { id: "bot-model-line", order: 900, priority: BOT_PRIORITY, inject: face }, ModelLineTail),
+    // A Bot with no model in a chat that already holds turns asks for one after the last
+    // of them, below that turn's time; a chat with no turn yet asks in the dock (bot-model).
+    () => shadow("conversation.chat.turnTail", { id: "bot-model-choice", order: 1100, priority: BOT_PRIORITY, inject: face }, ModelChoiceTail),
     // A Bot condenses its conversation without telling anyone; the chat keeps showing
     // every message.
     () => shadow("conversation.chat.node", { key: "question-reply", priority: BOT_PRIORITY, locale: "chat" }, AnsweredReply),

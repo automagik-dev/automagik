@@ -220,7 +220,7 @@ test("agyMode: the form defaults to auto, opens a stored mode, writes only a cho
   assert.equal(editChanged(initial, initial), false);
 });
 
-test("code: the form defaults to true, opens a stored false, writes only false and its CLI line sets/clears it", () => {
+test("code: the form defaults to true, opens a stored false and its CLI line sets/clears it", () => {
   assert.equal(formFrom({ mode: "create", file: FILE, id: "b-newaaaaaaa", agent: "claude" }).code, true);
   assert.equal(edit("b-devaaaaaaa").code, true);
   const stored = { ...FILE.bots[0], code: false };
@@ -228,14 +228,27 @@ test("code: the form defaults to true, opens a stored false, writes only false a
   assert.equal(initial.code, false);
   const file = { ...FILE, bots: [stored, ...FILE.bots.slice(1)] };
   assert.equal(entryOf(initial, file).entry.code, false);
-  assert.equal(entryOf({ ...initial, code: true }, file).entry.code, undefined, "true is the default, never stored by the form");
-  assert.equal("code" in applyBotEdit(file, entryOf({ ...initial, code: true }, file).entry).bots[0], false);
+  assert.equal(entryOf({ ...initial, code: true }, file).entry.code, true);
+  assert.equal(applyBotEdit(file, entryOf({ ...initial, code: true }, file).entry).bots[0].code, true);
   assert.match(commandOf(create({ code: false }), { key: KEY, file: FILE }), /--code=false/);
   assert.doesNotMatch(commandOf(create(), { key: KEY, file: FILE }), /--code/);
   assert.match(commandOf({ ...initial, code: true }, { key: KEY, file, initial }), /--code=true/);
   assert.match(commandOf({ ...edit("b-devaaaaaaa"), code: false }, { key: KEY, file: FILE, initial: edit("b-devaaaaaaa") }), /--code=false/);
   assert.equal(editChanged({ ...initial, code: true }, initial), true);
   assert.equal(editChanged(initial, initial), false);
+});
+
+test("code #848: unrelated sidebar edits preserve explicit true, false and an absent default", () => {
+  for (const code of [true, false, undefined]) {
+    const stored = { ...FILE.bots[0], ...(code === undefined ? {} : { code }) };
+    const file = { ...FILE, bots: [stored, ...FILE.bots.slice(1)] };
+    const initial = formFrom({ mode: "edit", bot: stored });
+    const entry = entryOf({ ...initial, role: "New role" }, file).entry;
+    const saved = applyBotEdit(file, entry).bots[0];
+    assert.equal(saved.code, code);
+    assert.equal(Object.hasOwn(saved, "code"), code !== undefined);
+    assert.equal(saved.role, "New role");
+  }
 });
 
 test("shellQuote: a leading = is quoted (zsh expands a bare =word)", () => {

@@ -737,7 +737,7 @@ const ZH = {
   'Sign in to DeepSeek': '登录 DeepSeek 账号',
   'Enter a DeepSeek API key': '填入 DeepSeek API key',
   'Open settings to set up a custom model': '打开设置配置自定义模型',
-  'Omni': 'Omni',
+  'Back to Automagik': '返回 Automagik',
 
   // Header
   'Message {name}': '给 {name} 发消息',

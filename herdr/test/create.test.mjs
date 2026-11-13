@@ -371,7 +371,29 @@ test("Code bot toggle (#774): defaults on, toggles into the copied line and save
   await edited.click("bot-copy");
   assert.match(edited.cx.clip, / --code=true /);
   await edited.click("bot-save");
-  assert.equal("code" in stored().bots.find((b) => b.id === writer.id), false);
+  assert.equal(stored().bots.find((b) => b.id === writer.id).code, true);
+});
+
+test("toggles #848: code and planned change independently and keep their accessible labels", async () => {
+  seed([MAIN]);
+  const { form, draw, click } = await open({ form: "create" });
+  draw();
+  const label = (id) => nodes.get(id)?.calls.find(([call]) => call === "accessibility_label")?.[1];
+  assert.equal(label("bot-code"), "Code bot (worker instruction in Git projects)");
+  assert.equal(label("bot-planned"), "Planned for a later wave");
+  assert.equal(form.s.code, true);
+  assert.equal(form.s.planned, false);
+  await click("bot-planned");
+  assert.equal(form.s.planned, true);
+  assert.equal(form.s.code, true);
+  draw();
+  await click("bot-code");
+  assert.equal(form.s.code, false);
+  assert.equal(form.s.planned, true);
+  draw();
+  await click("bot-planned");
+  assert.equal(form.s.planned, false);
+  assert.equal(form.s.code, false);
 });
 
 test("Bot settings (pick) with no bot: one New bot line that opens the Create form and closes the list", async () => {
