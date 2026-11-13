@@ -18,7 +18,8 @@ export const LEVELS = [
   ['background', 'Background'],
   ['foreground', 'Foreground'],
 ]
-const levelId = bot => LEVELS.some(([id]) => id === bot?.computer?.level) ? bot.computer.level : 'background'
+// A Bot with no level of its own is off, as the host reads it (computer/index.js levelOf).
+const levelId = bot => LEVELS.some(([id]) => id === bot?.computer?.level) ? bot.computer.level : 'off'
 
 export function LevelPicker({ bot, actions, run, disabled }) {
   const level = levelId(bot)

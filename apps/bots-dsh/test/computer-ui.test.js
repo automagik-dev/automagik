@@ -7,7 +7,7 @@ import { build } from 'esbuild'
 const { outputFiles } = await build({
   stdin: {
     contents: [
-      "export { ComputerPage, BotComputerCard, ComputerView, PendingAppAccess, ComputerIndicator, ComputerCallRow } from './src/client/computer.js'",
+      "export { ComputerPage, BotComputerCard, ComputerView, PendingAppAccess, ComputerIndicator, ComputerCallRow, LevelPicker } from './src/client/computer.js'",
     ].join('\n'),
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
   },
@@ -120,6 +120,13 @@ test('the control card shows the level picker and the Always apps with Revoke', 
   function h3(children) { return { type: 'row', props: { children } } }
   assert.ok(texts(tree).includes('Revoke'))
   assert.ok(texts(tree).includes('Notes'))
+})
+
+test('the level picker shows Off for a Bot with no level of its own, and the level a Bot holds', () => {
+  const picked = bot => render('LevelPicker', { bot, actions: {}, run: p => p }).props.value
+  assert.equal(picked({ id: 'w1', name: 'Writer' }), 'off')
+  assert.equal(picked({ id: 'w1', name: 'Writer', computer: { apps: {} } }), 'off')
+  assert.equal(picked({ id: 'w1', name: 'Writer', computer: { level: 'background' } }), 'background')
 })
 
 test('the computer view shows the state, steps and the action buttons', () => {

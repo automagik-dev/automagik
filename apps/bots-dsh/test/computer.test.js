@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -13,9 +13,11 @@ const TEAM = {
   version: 1,
   mainBotIds: ['m1'],
   revision: 1,
+  // A Bot with no level of its own is off here (computer use is turned on per Bot), so
+  // the Bots of these tests hold upstream's default, background, as their own level.
   bots: {
-    m1: { id: 'm1', sessionId: 'm1', name: 'Chief', role: 'Chief of Staff', instructions: '', createdAt: 1 },
-    w1: { id: 'w1', sessionId: 'w1', name: 'Writer', role: '', instructions: '', createdAt: 2 },
+    m1: { id: 'm1', sessionId: 'm1', name: 'Omni', role: 'Channel orchestrator', instructions: '', createdAt: 1, computer: { level: 'background' } },
+    w1: { id: 'w1', sessionId: 'w1', name: 'Writer', role: '', instructions: '', createdAt: 2, computer: { level: 'background' } },
   },
   rooms: {},
   exchanges: [],
@@ -107,6 +109,12 @@ test('leases: one Bot per app, release on turn end, idle and release', async () 
 
 test('protected apps match by id, name and executable', () => {
   for (const app of [
+    // Automagik's own desktop app: a Bot must not click its own approval cards.
+    { id: 'ai.namastex.automagik' },
+    { name: 'Automagik' },
+    { path: '/Applications/Automagik.app' },
+    { path: 'C:\\Program Files\\Automagik\\Automagik.exe' },
+    { path: '/opt/Automagik/automagik' },
     { id: 'io.github.fei2411.dsbot' },
     { id: 'com.deepseek.harness.computer-use.dev' },
     { id: 'com.apple.systempreferences' },
@@ -123,6 +131,33 @@ test('protected apps match by id, name and executable', () => {
   assert.equal(isProtectedApp({ name: 'Notes' }), false)
   assert.equal(isProtectedApp({ id: 'com.apple.Notes' }), false)
   assert.equal(isProtectedApp({ name: 'Mail', path: '/Applications/Mail.app' }), false)
+})
+
+// Computer use is turned on Bot by Bot: a Bot with no level of its own is off.
+test('a Bot with no level of its own is off, and the level the user picks is kept', async (t) => {
+  const team = { ...TEAM, bots: Object.fromEntries(Object.entries(TEAM.bots).map(([id, { computer: _level, ...bot }]) => [id, bot])) }
+  const { ctx, home, rt } = setup({ team })
+  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  await rt.load()
+  await rt.computerEndpoint('set-enabled', { enabled: true })
+  const gate = ctx.listeners.get('tools/pre-execute').find(fn => fn.name === 'computerGate')
+  const call = method => gate({ name: 'cua', arguments: { method, params: {} }, agent: { id: 'w1' }, callId: `c-${method}` }, async () => 'allowed')
+  assert.deepEqual(Object.values(rt.computerView().bots).map(bot => bot.level), ['off', 'off'])
+  const refused = await call('getState')
+  assert.equal(refused.kind, 'deny')
+  assert.match(refused.reason, /^Writer is set to "off" for computer use/)
+  // Every level the user picks is the Bot's own from then on, background included.
+  const saved = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.w1.computer?.level
+  for (const level of ['view', 'background', 'foreground']) {
+    await rt.computerEndpoint('set-level', { botId: 'w1', level })
+    assert.equal(rt.computerView().bots.w1.level, level)
+    assert.equal(saved(), level)
+    assert.equal(await call('getState'), 'allowed')
+  }
+  await rt.computerEndpoint('set-level', { botId: 'w1', level: 'off' })
+  assert.equal(rt.computerView().bots.w1.level, 'off')
+  assert.equal(saved(), undefined)
+  assert.equal(rt.computerView().bots.m1.level, 'off')
 })
 
 test('the guard refuses in order: switch, Bot, level, control, protected, consent, lease, user idle', async (t) => {
@@ -516,7 +551,7 @@ test("one Bot's revoke leaves another Bot's handle working", async (t) => {
   const track = ctx.listeners.get('tools/execute').find(fn => fn.name === 'computerTrack')
   const allow = async () => 'allowed'
   for (const botId of ['w1', 'm1']) {
-    rt.botOf(botId).computer = { apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
+    rt.botOf(botId).computer = { level: 'background', apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
   }
   await track({ name: 'cua', arguments: { method: 'getApp', params: { selector: 'Notes' } }, agent: { id: 'w1' }, callId: 'g1' },
     async () => ({ isError: false, value: { appHandle: 'hA', pid: 1, authorization: { id: 'com.apple.Notes', name: 'Notes' } } }))
@@ -959,7 +994,7 @@ test('same-named apps do not share an approval; a name-only consent still matche
   const w1 = rt.botOf('w1')
   const question = { questions: [{ id: 'cua-app-access', intent: { subject: { name: 'Notes' } } }], agent: { id: 'w1', session: { id: 'w1' } }, signal: new AbortController().signal }
   // drop the path-keyed grants and keep a name-only Always grant
-  w1.computer = { apps: { notes: { name: 'Notes', grantedAt: 0 } } }
+  w1.computer = { level: 'background', apps: { notes: { name: 'Notes', grantedAt: 0 } } }
   const answer = await consent(question, async () => 'next')
   assert.deepEqual(answer.answers[0].selected, ['Allow for this session'])
 })
@@ -1032,7 +1067,7 @@ test('the Bot cursor: relative, pixel and index calls publish a point', async (t
   const gate = ctx.listeners.get('tools/pre-execute').find(fn => fn.name === 'computerGate')
   const track = ctx.listeners.get('tools/execute').find(fn => fn.name === 'computerTrack')
   const allow = async () => 'allowed'
-  rt.botOf('w1').computer = { apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
+  rt.botOf('w1').computer = { level: 'background', apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
   const cua = (method, params, callId = 'c') => ({ name: 'cua', arguments: { method, params }, agent: { id: 'w1' }, callId })
   // getState records window bounds; a screenshot records that window's pixels
   await track(cua('getState', { appHandle: 'h1' }, 'g1'), async () => ({ isError: false, value: { appHandle: 'h1', focusedWindowId: 7, windows: [{ windowId: 7, pid: 42, bounds: { x: 100, y: 200, width: 300, height: 400 } }] } }))
@@ -1081,7 +1116,7 @@ test('driver cursors: session injection, refused cursor tools, one disable per s
       return { inputSchema: { properties: { session: {}, pid: {} } } }
     },
   }
-  rt.botOf('w1').computer = { apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
+  rt.botOf('w1').computer = { level: 'background', apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
   await track({ name: 'cua_driver_native__list_windows', arguments: {}, agent: { id: 'w1' }, callId: 'list-1' }, async () => ({ windows: [{ pid: 42, name: 'Notes', path: '/Applications/Notes.app', bundleId: 'com.apple.Notes' }] }))
   // a call whose schema carries session gets a stable per-Bot session injected
   const exec = { name: 'cua_driver_native__click', arguments: { pid: 42 }, agent: { id: 'w1' }, callId: 'c1' }
@@ -1110,7 +1145,7 @@ test('cursor-wait returns fresh events, wakes on publish, and times out empty', 
   await rt.load()
   await rt.computerEndpoint('set-enabled', { enabled: true })
   await rt.computerEndpoint('set-level', { botId: 'w1', level: 'background' })
-  rt.botOf('w1').computer = { apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
+  rt.botOf('w1').computer = { level: 'background', apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
   const gate = ctx.listeners.get('tools/pre-execute').find(fn => fn.name === 'computerGate')
   const track = ctx.listeners.get('tools/execute').find(fn => fn.name === 'computerTrack')
   const allow = async () => 'allowed'
@@ -1148,7 +1183,7 @@ test('computer-shot serves a real screenshot attachment by its mediaType', async
   await rt.load()
   await rt.computerEndpoint('set-enabled', { enabled: true })
   await rt.computerEndpoint('set-level', { botId: 'w1', level: 'view' })
-  rt.botOf('w1').computer = { apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
+  rt.botOf('w1').computer = { level: 'background', apps: { 'com.apple.Notes': { name: 'Notes', id: 'com.apple.Notes', grantedAt: 0 } } }
   const track = ctx.listeners.get('tools/execute').find(fn => fn.name === 'computerTrack')
   // the real provider's attachment carries mediaType, not mimeType
   await track(

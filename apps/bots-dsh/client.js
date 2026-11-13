@@ -8648,7 +8648,7 @@ var LEVELS = [
   ["background", "Background"],
   ["foreground", "Foreground"]
 ];
-var levelId = (bot) => LEVELS.some(([id]) => id === bot?.computer?.level) ? bot.computer.level : "background";
+var levelId = (bot) => LEVELS.some(([id]) => id === bot?.computer?.level) ? bot.computer.level : "off";
 function LevelPicker({ bot, actions, run: run2, disabled }) {
   const level = levelId(bot);
   return (0, import_react22.createElement)("select", {
