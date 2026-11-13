@@ -10,6 +10,7 @@ const ENSURE_TIMEOUT_MS = 15_000
 // One initialize request, as the mount sends it. The SDK's reconnect budget is not a probe:
 // a save that retried would leave the user waiting on a server that already refused.
 const PROBE_TIMEOUT_MS = 10_000
+const SAVED_BY_BOT = name => `${name} was last saved by a Bot, not in Settings → Capabilities. A Session mount takes only a capability the person saved there; save it there to use it.`
 const PROBE_EXCERPT_CHARS = 200
 const PROBE_REASON_CHARS = 300
 const PROBE_BODY = JSON.stringify({
@@ -143,6 +144,13 @@ export function install(rt) {
         } catch { throw refusal('Enter a valid HTTP or HTTPS URL.') }
         Object.assign(item, { transport, url, headers: stringMap(body.headers, 'Headers'), approved: true })
       }
+      // A Bot may name only keys saved for it: a key it may not use never goes where it says.
+      if (!ui) {
+        const others = [...referencedSecrets(item)].filter(secret => !rt.canUseSecret(secret, botId))
+        if (others.length > 0) throw refusal(`Not saved: ${item.name} uses ${others.join(', ')}, which ${others.length === 1 ? 'is' : 'are'} not saved for you. A capability you save may use only keys saved for you; ask for one with request_secret.`)
+      }
+      // Only the person's own save in Settings marks it as theirs; a Session mount takes no other.
+      if (ui) item.fromSettings = true
     } else if (kind === 'skill') {
       item.content = String(body.content ?? '').trim()
     } else {
@@ -156,7 +164,7 @@ export function install(rt) {
     return item
   }
   const capabilitySave = async (body, options = {}) => {
-    await rt.load()
+    await loadInputs()
     writeCheck()
     const item = itemInput(body ?? {}, options)
     if (item.kind === 'mcp' && item.transport === 'streamable-http') {
@@ -442,6 +450,13 @@ export function install(rt) {
       setStatus(owner, name, sessionId, { state: 'needs-approval' })
       return
     }
+    // A Session mount runs only what the person saved: once a Bot changes it, it stops until
+    // the person saves it again in Settings.
+    if (owner.botId === undefined && item.fromSettings !== true) {
+      await drop()
+      setStatus(owner, name, sessionId, { state: 'error', error: SAVED_BY_BOT(name) })
+      return
+    }
     let config
     try {
       config = configFor(item, owner)
@@ -641,6 +656,7 @@ export function install(rt) {
     const item = own(library(), String(name ?? ''))
     if (!item) throw refusal(`No capability named ${name}.`)
     if (item.kind !== 'mcp') throw refusal(`${item.name} is not an MCP server. Only an MCP server mounts into one Session.`)
+    if (item.fromSettings !== true) throw refusal(SAVED_BY_BOT(item.name))
     const secrets = grantSecretsOf(grant)
     const used = referencedSecrets(item)
     const missing = [...used].filter(secret => !secrets.has(secret))
@@ -675,9 +691,9 @@ export function install(rt) {
   }
   // Withdraws a Session mount: nothing resolves its secrets from then on, its mount goes, and
   // the Session scope of its secrets ends. The saved scope ends also with no live mount (after
-  // a restart there is none): the secrets the capability uses, or, when it is gone, every
-  // secret scoped to the Session that no live mount there still uses. True when a mount or a
-  // scope ended.
+  // a restart there is none): the secrets the capability uses, or, when it is gone, each
+  // secret scoped to the Session that no saved capability and no live mount there still use.
+  // True when a mount or a scope ended.
   async function unmountCapability(sessionId, name) {
     if (typeof sessionId !== 'string' || sessionId === '') throw refusal('Name the Session to unmount the capability from.')
     const key = String(name ?? '')
@@ -692,8 +708,15 @@ export function install(rt) {
     await rt.load()
     const item = own(library(), key)
     const live = new Set([...(grants.get(sessionId)?.values() ?? [])].flatMap(other => [...other.secrets]))
-    const scoped = item?.kind === 'mcp' ? [...referencedSecrets(item)] : rt.sessionSecretNames(sessionId)
-    const free = (await scoped).filter(secret => !live.has(secret))
+    let scoped
+    if (item?.kind === 'mcp') {
+      scoped = [...referencedSecrets(item)]
+    } else {
+      // The capability is gone: only the Session's keys that no saved MCP capability still uses.
+      const used = new Set(Object.values(library()).filter(other => other.kind === 'mcp').flatMap(other => [...referencedSecrets(other)]))
+      scoped = (await rt.sessionSecretNames(sessionId)).filter(secret => !used.has(secret))
+    }
+    const free = scoped.filter(secret => !live.has(secret))
     const released = free.length > 0 && await rt.releaseSessionSecrets(free, sessionId)
     return ended || released
   }

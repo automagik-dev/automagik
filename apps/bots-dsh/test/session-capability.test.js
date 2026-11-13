@@ -3,6 +3,7 @@
 // MCP client are DSH's own from the pinned harness; the MCP server is a real stdio process.
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -68,7 +69,15 @@ async function realDsh(t) {
 async function setup(t, { home = makeHome(), dsh } = {}) {
   dsh ??= await realDsh(t)
   const shellEnv = { registered: [], register(contribution) { this.registered.push(contribution); return () => {} } }
-  const loader = { import: () => import('@deepseek-ai/dsh-mcp-client'), unwrapExports: exports => exports }
+  // DSH's own MCP client, with a record of every config it is started with.
+  const started = []
+  const loader = {
+    import: async () => {
+      const client = await import('@deepseek-ai/dsh-mcp-client')
+      return { ...client, apply: (ctx, config) => { started.push(config); return client.apply(ctx, config) } }
+    },
+    unwrapExports: exports => exports,
+  }
   const ctx = fakeContext({ services: { loader, shellEnv } })
   const rt = createRuntime(ctx, { home, github: false, diagnosticsFile: false })
   ctx.sessionTitle = { rename: async () => {} }
@@ -90,6 +99,7 @@ async function setup(t, { home = makeHome(), dsh } = {}) {
     ctx,
     rt,
     shellEnv,
+    started,
     // A new Agent for a Session, as DSH makes one on load, a clear or a compaction.
     async open(sessionId) {
       const agent = { id: sessionId, session: dsh.get('sessions').get(sessionId) ?? dsh.get('sessions').create(sessionId) }
@@ -323,4 +333,137 @@ test('mountCapability refuses what it cannot hold to one Session', async (t) => 
   env.rt.readOnly = () => 'The Bot team is open in another dsh.'
   await assert.rejects(env.rt.mountCapability('person-a', 'person-space', grant), /open in another dsh/)
   assert.equal(savedSecret(home, 'PERSON_KEY').session, undefined)
+})
+
+// A Bot's save, from the capability tool or a Main Bot, may name only keys saved for that Bot.
+const botSave = (env, botId, name, key, args = [SERVER, '--bot']) => env.rt.capabilitySave({
+  name, kind: 'mcp', description: '', transport: 'stdio', command: process.execPath, args,
+  env: key === undefined ? {} : { PERSON_KEY: `$DSH_SECRET_${key}` },
+}, { botId })
+
+test('a capability a Bot saves may use only keys saved for that Bot', async (t) => {
+  const home = makeHome([secret('PERSON_KEY', KEY, []), secret('SUPPORT_KEY', 'support-key-90b3-value', ['support'])])
+  const env = await setup(t, { home })
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const a = await env.open('person-a')
+  await env.rt.mountCapability('person-a', 'person-space', grant)
+  const before = structuredClone(env.rt.state.capabilities.items['person-space'])
+  const notYours = /Not saved: .* not saved for you/
+  // A Main Bot changing the person's capability, and a Bot making its own, around a Session's key.
+  await assert.rejects(botSave(env, 'chief', 'person-space', 'PERSON_KEY'), notYours)
+  await assert.rejects(botSave(env, 'support', 'made-by-support', 'PERSON_KEY'), notYours)
+  // Another Bot's key, and a key that is not saved at all.
+  await assert.rejects(botSave(env, 'chief', 'chief-space', 'SUPPORT_KEY'), notYours)
+  await assert.rejects(botSave(env, 'chief', 'chief-space', 'NO_SUCH_KEY'), notYours)
+  assert.deepEqual(env.rt.state.capabilities.items['person-space'], before)
+  for (const name of ['made-by-support', 'chief-space']) assert.equal(env.rt.state.capabilities.items[name], undefined)
+  await env.rt.reconcileCapabilities()
+  assert.equal(textOf(await env.call(a)), 'key: [secret:PERSON_KEY]', 'the mount still runs what the person saved')
+  // Deleted and saved again under its name: still not with the Session's key.
+  await env.rt.capabilityDelete('person-space', { botId: 'chief' })
+  await assert.rejects(botSave(env, 'chief', 'person-space', 'PERSON_KEY'), notYours)
+  // A Bot's own key stays usable in its own capability.
+  assert.equal((await botSave(env, 'support', 'support-space', 'SUPPORT_KEY')).name, 'support-space')
+})
+
+// A Streamable HTTP MCP server with one tool, answering in JSON; it counts what reaches it.
+async function httpMcp(t) {
+  const server = createServer((request, response) => {
+    let body = ''
+    request.on('data', chunk => { body += chunk })
+    request.on('end', () => {
+      server.hits += 1
+      if (request.method !== 'POST') { response.writeHead(405).end(); return }
+      let message
+      try { message = JSON.parse(body) } catch { response.writeHead(400).end(); return }
+      if (message.id === undefined) { response.writeHead(202).end(); return }
+      const result = message.method === 'initialize'
+        ? { protocolVersion: message.params?.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'ds-bot-http', version: '1.0.0' } }
+        : message.method === 'tools/list' ? { tools: [{ name: 'read_key', description: 'Read the key', inputSchema: { type: 'object', properties: {} } }] } : {}
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }))
+    })
+  })
+  server.hits = 0
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+  server.url = `http://127.0.0.1:${server.address().port}/mcp`
+  return server
+}
+
+test('a Session mount takes only a capability the person saved in Settings, and stops when a Bot changes it', async (t) => {
+  const env = await setup(t)
+  t.after(() => rmSync(env.home, { recursive: true, force: true }))
+  const a = await env.open('person-a')
+  await botSave(env, 'support', 'support-space')
+  await assert.rejects(env.rt.mountCapability('person-a', 'support-space'), /last saved by a Bot/)
+  const first = await httpMcp(t)
+  const second = await httpMcp(t)
+  const web = url => ({ name: 'public-web', kind: 'mcp', transport: 'streamable-http', url, headers: {} })
+  const WEB_TOOL = 'mcp__public-web__read_key'
+  await env.rt.capabilitySave(web(first.url), { ui: true })
+  assert.equal((await env.rt.mountCapability('person-a', 'public-web')).state, 'ready')
+  assert.ok(env.tools(a).includes(WEB_TOOL))
+  // A Main Bot may change a capability that uses no key, and an HTTP one needs no approval;
+  // the Session's mount stops instead of following it.
+  await env.rt.capabilitySave(web(second.url), { botId: 'chief' })
+  const afterSave = second.hits
+  await env.rt.reconcileCapabilities()
+  assert.equal(env.tools(a).includes(WEB_TOOL), false)
+  assert.equal(second.hits, afterSave, 'the Session\'s mount never reached what the Bot saved')
+  assert.equal(env.started.some(config => config.url === second.url), false)
+  await assert.rejects(env.rt.mountCapability('person-a', 'public-web'), /last saved by a Bot/)
+  // Saved again by the person, it runs again.
+  await env.rt.capabilitySave(web(first.url), { ui: true })
+  await env.rt.reconcileCapabilities()
+  assert.ok(env.tools(a).includes(WEB_TOOL))
+})
+
+test('unmountCapability for a capability that is gone frees only keys no saved capability uses', async (t) => {
+  const home = makeHome()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const first = await setup(t, { home })
+  await first.rt.capabilitySave({ name: 'other-space', kind: 'mcp', transport: 'stdio', command: process.execPath, args: [SERVER], env: { PERSON_KEY: '$DSH_SECRET_OTHER_KEY' } }, { ui: true })
+  await first.open('person-a')
+  await first.rt.mountCapability('person-a', 'person-space', grant)
+  await first.rt.mountCapability('person-a', 'other-space', { secrets: ['OTHER_KEY'] })
+  await first.stop()
+
+  const env = await setup(t, { home })
+  assert.equal(await env.rt.unmountCapability('person-a', 'no-such-space'), false)
+  assert.equal(savedSecret(home, 'PERSON_KEY').session, 'person-a')
+  assert.equal(savedSecret(home, 'OTHER_KEY').session, 'person-a')
+  await env.rt.capabilityDelete('other-space', { ui: true })
+  assert.equal(await env.rt.unmountCapability('person-a', 'other-space'), true)
+  assert.equal(savedSecret(home, 'OTHER_KEY').session, undefined)
+  assert.equal(savedSecret(home, 'PERSON_KEY').session, 'person-a', 'the key a saved capability still uses stays')
+})
+
+test('the Session scope ends only by the person\'s choice or for its own Session, and no card hands it out', async (t) => {
+  const home = makeHome()
+  const env = await setup(t, { home })
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  await env.rt.capabilitySave({ name: 'other-space', kind: 'mcp', transport: 'stdio', command: process.execPath, args: [SERVER], env: { PERSON_KEY: '$DSH_SECRET_OTHER_KEY' } }, { ui: true })
+  await env.open('person-a')
+  await env.open('person-b')
+  await env.rt.mountCapability('person-a', 'person-space', grant)
+  await env.rt.mountCapability('person-b', 'other-space', { secrets: ['OTHER_KEY'] })
+  // Releasing for one Session leaves another Session's key alone.
+  await env.rt.releaseSessionSecrets(['PERSON_KEY', 'OTHER_KEY'], 'person-a')
+  assert.equal(savedSecret(home, 'OTHER_KEY').session, 'person-b')
+  assert.equal(savedSecret(home, 'PERSON_KEY').session, undefined)
+  await env.rt.mountCapability('person-a', 'person-space', grant)
+  // A Bot's pending card for a Session's key can neither allow nor fill it.
+  env.rt.state.secretRequests = { support: [
+    { id: 'allow-card', name: 'PERSON_KEY', purpose: 'x', kind: 'allow', status: 'pending', askedAt: 1 },
+    { id: 'fill-card', name: 'PERSON_KEY', purpose: 'x', kind: 'fill', status: 'pending', askedAt: 1 },
+  ] }
+  await assert.rejects(env.rt.secretEndpoint('secret-allow', { requestId: 'allow-card' }), /scoped to one Session/)
+  await assert.rejects(env.rt.secretEndpoint('secret-set', { requestId: 'fill-card', value: 'another-value-1234', scope: 'bot' }), /scoped to one Session/)
+  assert.deepEqual(savedSecret(home, 'PERSON_KEY').scope, [])
+  assert.equal(savedSecret(home, 'PERSON_KEY').value, KEY)
+  assert.equal(env.rt.canUseSecret('PERSON_KEY', 'support'), false)
+  // Giving it to Bots under Who may use it ends the Session scope.
+  await env.rt.secretEndpoint('secret-update', { name: 'PERSON_KEY', scope: ['support'] })
+  assert.equal(savedSecret(home, 'PERSON_KEY').session, undefined)
+  assert.equal(env.rt.canUseSecret('PERSON_KEY', 'support'), true)
 })

@@ -620,7 +620,8 @@ export function install(rt) {
       await loadSecrets()
       const self = callerOf(exec)
       if (rt.botOf(self) === undefined) return 'Only Bots on the team can use list_secrets.'
-      // A Session's secret is not listed: its name and purpose are that Session's alone.
+      // A Session's secret is never offered to a Bot: not listed here, and a Bot that names it
+      // in request_secret is only told it cannot have it.
       const listed = secretsView().filter(secret => secret.session === undefined)
       if (listed.length === 0) return 'No keys are saved yet. Ask for one with request_secret.'
       return [
