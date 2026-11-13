@@ -103,6 +103,28 @@ describe("docs/brand's marks", () => {
     }
   })
 
+  test("Omni's files are the vortex on curves: the same count of shapes, one outline in the marks and their lockups", () => {
+    const outline = (path: string) => / d="([^"]+)"/.exec(read(path))?.[1] ?? ''
+    for (const [size, lockup, shapes] of [['', '', 48], ['-32', '-header', 8]] as const) {
+      const ink = outline(`docs/brand/logo/svg/omni-mark-ink${size}.svg`)
+      expect([size, ink.match(/M/g)?.length, ink.match(/Z/g)?.length, /c/.test(ink), /L/.test(ink)]).toEqual([size, shapes, shapes, true, false])
+      for (const tone of ['ink', 'cream']) {
+        for (const file of [`svg/omni-mark-${tone}${size}.svg`, `lockups/omni-mark-lockup-${tone}${lockup}.svg`]) {
+          expect([file, outline(`docs/brand/logo/${file}`) === ink]).toEqual([file, true])
+        }
+      }
+    }
+    const note = section(read(LOGO), "Omni's vortex on curves")
+    expect(note).toContain('the same drawing as the one first handed over, with its outline written on curves')
+    expect(note).toContain('0.9996 (the large drawing) and 0.9977 (the small drawing)')
+  })
+
+  test("the lockup's 28px floor has one exception: 24px in the family drawer's phone layout", () => {
+    const notes = section(read(README), 'Which logo file')
+    expect(notes).toContain('- Do not set the lockup under 28px high.')
+    expect(notes).toContain("One exception: lockups may be set at 24px in the family drawer's phone layout (480px wide and under), as in the drawer the owner approved. The 28px floor stands everywhere else.")
+  })
+
   test("Mykes's mark is the redrawn drawing the owner picked: its frame is 219.93 wide and its outline has straight lines", () => {
     for (const tone of ['ink', 'cream']) {
       const svg = read(`docs/brand/logo/svg/mykes-clean-${tone}.svg`)
