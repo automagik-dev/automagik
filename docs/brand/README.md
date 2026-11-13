@@ -164,7 +164,7 @@ node scripts/brand-sync.mjs --check
 ```
 
 - `--write` copies the files as they are committed at that commit, removes the files the source no longer has, and writes `SOURCE.json`. A repository with no copy yet runs the tool from an Automagik checkout, from its own folder: `node <checkout>/scripts/brand-sync.mjs --write --from <checkout>`.
-- `--into <folder>` names the brand's folder in that repository, from its root. It is given once: later runs, and the skill, read the folder from `SOURCE.json`. Given again with another folder, it moves the copy there. A folder named for the first time must not hold other files.
+- `--into <folder>` names the brand's folder in that repository, from its root. It is given once: later runs, and the skill, read the folder from `SOURCE.json`. Given again with another folder, it moves the copy there. A folder named this way holds the copy alone: when it holds a file that no copy recorded, `--write` stops, names the file and changes nothing, on the first run and on every later one. In `docs/brand/`, the default, `--write` removes such a file.
 - A copy made before the folder could be chosen has its `SOURCE.json` in `docs/brand/`. It is still read, and the next `--write` moves it beside the skill.
 - A copy made from `6ba09b59` holds `docs/brand/fonts/rebuild/`, which the next `--write` removes. If `npm ci` was run there, as that commit's notes said, its `node_modules/` holds symbolic links (`.bin`), and `--write` refuses on them: remove that `node_modules/` folder first, then run `--write`.
 - `--check` is for that repository's CI. It exits 1 and names each file that differs from `SOURCE.json`, is missing, or is not recorded.
