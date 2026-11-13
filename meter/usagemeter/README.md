@@ -718,3 +718,37 @@ Some names still say "meter" because existing installs and readers depend on the
 files `meter.db` and `meter.lock`, the variables `METER_STATE_DIR`, `METER_HC` and `METER_TRACE`,
 the doc name `herdr-meter` (also its `kind`), the doc key `meter_version`, the `meter:` prefix of
 the log lines, and the library crate name `meter`.
+
+## `usagemeter repair` (issue 1126)
+
+Tops up rollup totals a store lost, from an oracle: a second state directory the operator built
+from the frozen logs with the existing commands (`METER_STATE_DIR` on a scratch folder, then
+`usagemeter sync --force --days N --no-publish`, one harness at a time). The repair never reads
+a log.
+
+```
+usagemeter repair --against ORACLE_DIR [--from DAY] [--until DAY] [--json]
+usagemeter repair --against ORACLE_DIR --apply --copy FILE --confirm-copy SHA256
+```
+
+- The range is 2026-11-07..2026-11-10 unless `--from` / `--until` narrow it. A short cell outside
+  it is reported, never repaired.
+- The default is a dry run over two read-only opens: nothing is written. It prints, per harness,
+  day and column, the tokens before, after and the change, with events; a TOTAL; `unresolved`
+  (hours with rows and no oracle rows, left alone); `kept` (cells where the store holds more than
+  the oracle: never subtracted); and `conservation: PASS` or `FAIL` with its reasons. `--json`
+  prints the same as one record.
+- Per group (hour, model, machine, repo, branch, precision, summed over actor state),
+  `after = max(before, oracle)` per column. Events never change: a group whose events differ
+  fails the run. The top-up goes to the group's evidence-free row, so no hour's evidence sum
+  passes its rollup. Codex and Antigravity must change by 0.
+- Exit: 0 a plan (or applied), 1 conservation failed, 2 usage or unreadable store, 3 nothing to
+  repair, 12 the store is from a newer meter.
+- `--apply` is refused without a copy. Take the sync lock's quiet moment, make the copy with
+  `sqlite3 meter.db "VACUUM INTO 'copy.db'"` (or any consistent copy), `sha256sum` it, and pass
+  `--copy copy.db --confirm-copy <that sha256>`. The command checks the file's sha256, its
+  `quick_check`, and that it holds as many rollup rows and tokens as the store (after a partly
+  done run, the store may hold more). It then takes the sync lock, refuses a newer schema, and
+  writes one transaction per day. Each day checks its own conservation inside the transaction and
+  rolls back and stops on a failure; the `meta` key `repair_1126_done` records the last day done.
+  A rerun skips done days, and a second run with nothing left exits 3 and writes nothing.
