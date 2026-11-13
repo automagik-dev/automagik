@@ -258,8 +258,9 @@ Edit public page copy in `scripts/build-pages.mjs`; shared Cloud form/response c
 three weights (`--weight-title`, `--weight-strong`, `--weight-label`) and the font file come
 from `docs/brand/tokens/tokens.json` and `docs/brand/fonts/`. In `styles.css`, set anything in
 the title face with one of those three weights, never a number: a heavier Fredoka is heavier
-than the logo. `docs/brand/components/bundle.css` is made from `styles.css`, so after a change
-there make it again (`scripts/brand-bundle.mjs`; the brand tests fail until the two agree).
+than the logo. `docs/brand/components/bundle.css` is made from `styles.css`: every change to
+`styles.css` must be followed by `node scripts/brand-bundle.mjs`, committed with it (the brand
+tests fail until the two agree).
 Regenerate and commit the HTML and CSS:
 
 ```sh
