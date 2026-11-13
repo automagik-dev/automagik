@@ -71,7 +71,7 @@ export function install(rt) {
     bot.model = bot.previousModel
     const code = typeof failure?.code === 'string' && failure.code !== '' ? failure.code : 'UNKNOWN'
     stateOf(bot.id).lastFailure = { code, text: failureText(code, failed, bot.model, failure), ref: failed, kept: bot.model, at: Date.now() }
-    rt.warn('omni-ui: %s could not move to %s (%s); it stays on %s', bot.name, failed, code, bot.model)
+    rt.warn('ds-bot: %s could not move to %s (%s); it stays on %s', bot.name, failed, code, bot.model)
     return true
   }
 
@@ -91,7 +91,7 @@ export function install(rt) {
       await rt.save()
       await rt.applyModel(bot, { force: true })
     } catch (error) {
-      rt.warn('omni-ui: %s was not put back on %s: %s', bot.name, bot.model, error?.message ?? error)
+      rt.warn('ds-bot: %s was not put back on %s: %s', bot.name, bot.model, error?.message ?? error)
     }
   }
 
@@ -116,7 +116,7 @@ export function install(rt) {
         if (ref === bot.model) delete entry.lastFailure
         if (ref === bot.model && (switchPending(bot) || bot.previousModel === undefined)) {
           bot.previousModel = ref
-          void rt.save().catch(error => rt.warn('omni-ui: the model %s answered on was not saved: %s', bot.name, error?.message ?? error))
+          void rt.save().catch(error => rt.warn('ds-bot: the model %s answered on was not saved: %s', bot.name, error?.message ?? error))
         }
         break
       }

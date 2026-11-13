@@ -275,14 +275,14 @@ for (const role of ['reply', 'report', 'resume']) {
   })
 }
 
-test('an answer a turn produced while Omni was not watching goes to the Bot that waits for it, once', async (t) => {
+test('an answer a turn produced while DS Bot was not watching goes to the Bot that waits for it, once', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const home = freshHome(t)
   const logs = new Map()
   const first = await start(home, logs)
   const request = await askWriter(first, home)
   const exchangeId = request.source.exchangeId
-  // Writer answers, and Omni restarts before it sees the end of that turn.
+  // Writer answers, and DS Bot restarts before it sees the end of that turn.
   logs.set('b', writerLog(request, 'The plan is ready.'))
   await first.stop()
 

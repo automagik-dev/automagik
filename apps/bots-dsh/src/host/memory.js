@@ -373,7 +373,7 @@ export function install(rt) {
   // A change that was interrupted is finished when the host starts.
   ctx.effect(() => {
     void rt.load().then(() => recover()).catch(error => rt.warn('omni-ui: memory recovery failed: %s', failureCode(error)))
-  }, 'omni-ui: memory recovery')
+  }, 'ds-bot: memory recovery')
 
   // Checked when the write runs: a Bot or group chat deleted after the write was
   // queued has its memory archived already, and writing would bring the folder back;
@@ -820,7 +820,7 @@ export function install(rt) {
     order: 645,
     interpolate: false,
     text: context => sectionFor(context?.agent?.id),
-  }), 'omni-ui: memory section')
+  }), 'ds-bot: memory section')
 
   // A group Session reads its group's memory from a snapshot message, put in before
   // its first step and again once a checkpoint has condensed it away, so the memory

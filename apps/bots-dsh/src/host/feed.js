@@ -122,7 +122,7 @@ export function install(rt) {
       request.signal.addEventListener('abort', () => leave(controller), { once: true })
       return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' } })
     },
-  }), 'omni-ui: live feed route')
+  }), 'ds-bot: live feed route')
 
   ctx.effect(() => {
     const keepalive = setInterval(() => {
@@ -135,5 +135,5 @@ export function install(rt) {
       offSaved()
       for (const controller of clients) leave(controller)
     }
-  }, 'omni-ui: live feed')
+  }, 'ds-bot: live feed')
 }

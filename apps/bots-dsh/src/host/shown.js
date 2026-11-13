@@ -75,7 +75,7 @@ export function shownReader({ path = homeRegistryPathOf(), warn = () => {} } = {
     // Once per new error, not on every 2 s check of every watched chat.
     if (message !== lastError) {
       lastError = message
-      warn(lastGood ? 'omni-ui: %s unreadable (%s); Pocket chat keeps its last good read' : 'omni-ui: %s unreadable (%s); no project Bot is shown in Pocket chat', path, message)
+      warn(lastGood ? 'ds-bot: %s unreadable (%s); Pocket chat keeps its last good read' : 'ds-bot: %s unreadable (%s); no project Bot is shown in Pocket chat', path, message)
     }
     return lastGood ?? UNKNOWN
   }

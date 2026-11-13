@@ -107,7 +107,7 @@ export function install(rt) {
         service.set(target, AUTO)
         return true
       } catch (error) {
-        rt.warn('omni-ui: Auto for %s not set: %s', sessionId, error)
+        rt.warn('ds-bot: Auto for %s not set: %s', sessionId, error)
       }
     }
     service.set(target, level === AUTO ? AUTO_FALLBACK : level)
@@ -538,7 +538,7 @@ export function install(rt) {
       // Compared with its parent and found no wider: nothing to set, and nothing holds it.
       else if (task?.from === undefined && task?.levelTaskId !== undefined) unapplied.delete(sessionId)
       // No level could be ranked: the task keeps its own, not a default that may be wider.
-      else if (task?.from !== undefined) rt.warn('omni-ui: no permission level for the task %s can be ranked; it keeps its own', sessionId)
+      else if (task?.from !== undefined) rt.warn('ds-bot: no permission level for the task %s can be ranked; it keeps its own', sessionId)
     })
     return true
   }
@@ -566,7 +566,7 @@ export function install(rt) {
     try {
       await applyPermission(bot, sessionId, room, session, { starts: true })
     } catch (error) {
-      rt.warn('omni-ui: permission for %s not applied on %s: %s', bot.name, sessionId, error)
+      rt.warn('ds-bot: permission for %s not applied on %s: %s', bot.name, sessionId, error)
       throw startRefusal(room?.permission ?? bot.permission, error)
     }
   }
@@ -575,7 +575,7 @@ export function install(rt) {
     try {
       return await applyTaskPermission(sessionId, session, { starts: true })
     } catch (error) {
-      rt.warn('omni-ui: permission for the task %s not applied: %s', sessionId, error)
+      rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error)
       const task = taskOf(sessionId)
       const service = presets()
       throw startRefusal(task === undefined || service === undefined ? undefined : taskLevel(task, service), error)
@@ -602,7 +602,7 @@ export function install(rt) {
       if (!loaded.has(sessionId) && task.status !== 'working') continue
       await applyTaskPermission(sessionId, loaded.get(sessionId))
         .catch((error) => {
-          rt.warn('omni-ui: permission for the task %s not applied: %s', sessionId, error)
+          rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error)
           if (keptLevel(error)) left.push(sessionId)
         })
     }
@@ -616,7 +616,7 @@ export function install(rt) {
   const NOT_EVERYWHERE = 'The permission level was saved, but some conversations could not take it and keep the level they had until DeepSeek Harness opens them again.'
   const keptLevel = error => error?.autoClosed !== true
   function notEverywhere(what, left) {
-    rt.warn('omni-ui: the permission level of %s was not applied on %s', what, left.join(', '))
+    rt.warn('ds-bot: the permission level of %s was not applied on %s', what, left.join(', '))
     return Object.assign(refusal(NOT_EVERYWHERE), { levelNotApplied: true, sessions: left })
   }
   // A task startTask no longer remembers (past TASKS_KEPT) goes now to the narrower of the
@@ -631,7 +631,7 @@ export function install(rt) {
     const fallback = service.catalog().defaultPreset
     const level = ranAt === undefined ? fallback : fallback === undefined ? ranAt : narrowerLevel(service, fallback, ranAt)
     if (!level) {
-      rt.warn('omni-ui: no permission level for the forgotten task %s can be ranked; it keeps its own', sessionId)
+      rt.warn('ds-bot: no permission level for the forgotten task %s can be ranked; it keeps its own', sessionId)
       return
     }
     const loaded = (ctx.sessions?.list?.() ?? []).find(session => session.id === sessionId)
@@ -649,7 +649,7 @@ export function install(rt) {
     if (bot === undefined) return
     await applyPermission(bot, session.id, group && rt.roomOf(group.roomId), session)
   }
-  const warnNotApplied = sessionId => error => rt.warn('omni-ui: permission for %s not applied: %s', sessionId, error)
+  const warnNotApplied = sessionId => error => rt.warn('ds-bot: permission for %s not applied: %s', sessionId, error)
 
   // The Session of a tool call, or the nearest parent of a subagent child, that is marked.
   // A child is in none of the team's maps and works under its parent's level. Only asked
@@ -664,7 +664,7 @@ export function install(rt) {
       try {
         header ??= ctx.sessions?.get?.(current)?.header
       } catch (error) {
-        rt.warn('omni-ui: the Session %s could not be read while a permission level is not set: %s', current, error)
+        rt.warn('ds-bot: the Session %s could not be read while a permission level is not set: %s', current, error)
         throw Object.assign(refusal(UNREAD, { cause: error }), { held: HELD_UNREAD })
       }
       if (header?.origin !== 'subagent') return undefined
@@ -772,7 +772,7 @@ export function install(rt) {
       }
       return undefined
     })
-    if (typeof off === 'function') sub.effect(() => off, 'omni-ui: level gate on agents')
+    if (typeof off === 'function') sub.effect(() => off, 'ds-bot: level gate on agents')
   }
   if (typeof ctx.inject === 'function') ctx.inject(['acpAgents'], holdAgents)
   else if (acpAgents() !== undefined) holdAgents({ acpAgents: acpAgents(), effect: (execute, label) => ctx.effect(execute, label) })
@@ -850,7 +850,7 @@ export function install(rt) {
           else bot.permission = before
           throw error
         }
-        rt.warn('omni-ui: permission for %s not applied: %s', bot.name, error)
+        rt.warn('ds-bot: permission for %s not applied: %s', bot.name, error)
         left.push(rt.chatOf(bot.id))
       }
     }
@@ -858,7 +858,7 @@ export function install(rt) {
       if (roomOfSession(sessionId)?.permission) continue
       await applyPermission(bot, sessionId)
         .catch((error) => {
-          rt.warn('omni-ui: permission for %s in a group not applied: %s', bot.name, error)
+          rt.warn('ds-bot: permission for %s in a group not applied: %s', bot.name, error)
           if (keptLevel(error)) left.push(sessionId)
         })
     }
@@ -908,7 +908,7 @@ export function install(rt) {
       // A member without a level of its own goes back to the default its Session started on.
       await applyPermission({ ...bot, permission: bot.permission ?? service.catalog().defaultPreset }, sessionId, room)
         .catch((error) => {
-          rt.warn('omni-ui: permission for %s in %s not applied: %s', bot.name, room.name, error)
+          rt.warn('ds-bot: permission for %s in %s not applied: %s', bot.name, room.name, error)
           if (keptLevel(error)) left.push(sessionId)
         })
     }

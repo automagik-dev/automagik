@@ -424,7 +424,7 @@ export function install(rt) {
             reasons.set(spec.from, signedOut ? 'sign-in' : 'cli')
           }
         } else if (back.length > 0) {
-          say(`source:${spec.from}`, 'kept', 'omni-ui: Bots moved to %s stay there: %s no longer answers here (its route or its sign-in is gone)', spec.to, spec.from)
+          say(`source:${spec.from}`, 'kept', 'ds-bot: Bots moved to %s stay there: %s no longer answers here (its route or its sign-in is gone)', spec.to, spec.from)
         } else if (route.state === 'ready') {
           // A sign-in read newer than the move: these never need the repair above.
           for (const bot of recorded) {
@@ -505,7 +505,7 @@ export function install(rt) {
     for (const spec of SUBSCRIPTION_MOVES) {
       const reason = bots.some(bot => onRoute(spec, bot)) ? reasons.get(spec.from) : undefined
       if (reason !== undefined) waitingBy.set(spec.from, { to: spec.to, cli: spec.cli, reason })
-      say(`wait:${spec.from}`, reason, 'omni-ui: Bots on %s stay there: %s %s', spec.from, spec.cli, WHY[reason])
+      say(`wait:${spec.from}`, reason, 'ds-bot: Bots on %s stay there: %s %s', spec.from, spec.cli, WHY[reason])
     }
     if (!changed) return
     state.subscriptionCliMoved = done
@@ -517,16 +517,16 @@ export function install(rt) {
     for (const { bot, from, to } of restored) {
       // A model picked during the save is the person's: their own switch selects it.
       if (bot.model !== to) continue
-      rt.warn?.('omni-ui: %s moved back from %s to %s (its CLI cannot answer now)', bot.name, from, bot.model)
+      rt.warn?.('ds-bot: %s moved back from %s to %s (its CLI cannot answer now)', bot.name, from, bot.model)
       if (typeof apply !== 'function') continue
       await apply(bot, { force: true })
-        .catch(error => rt.warn('omni-ui: model for %s not restored: %s', bot.name, error))
+        .catch(error => rt.warn('ds-bot: model for %s not restored: %s', bot.name, error))
     }
     for (const bot of moved) {
-      rt.warn?.('omni-ui: %s moved from %s to %s (one sign-in per subscription)', bot.name, bot.subscriptionMoved.from.model, bot.model)
+      rt.warn?.('ds-bot: %s moved from %s to %s (one sign-in per subscription)', bot.name, bot.subscriptionMoved.from.model, bot.model)
       if (typeof apply !== 'function') continue
       await apply(bot, { force: true })
-        .catch(error => rt.warn('omni-ui: model for %s not applied: %s', bot.name, error))
+        .catch(error => rt.warn('ds-bot: model for %s not applied: %s', bot.name, error))
     }
   }
 
@@ -551,7 +551,7 @@ export function install(rt) {
     stopped = true
     clearTimeout(retryTimer)
     retryTimer = undefined
-  }, 'omni-ui: subscription move retry')
+  }, 'ds-bot: subscription move retry')
 
   // One pass at a time; an event during a pass gets a pass of its own after it. An event that
   // arrives while this pass asks acp-dsh (its `inspect` may publish its routes) gets one more
@@ -576,7 +576,7 @@ export function install(rt) {
         echoPass = !again
       }
     })()
-      .catch(error => rt.warn('omni-ui: the subscription Bots were not moved to their CLI: %s', error))
+      .catch(error => rt.warn('ds-bot: the subscription Bots were not moved to their CLI: %s', error))
       .finally(() => {
         running = undefined
         echoPass = false

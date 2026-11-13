@@ -71,7 +71,7 @@ export function install(rt) {
     try {
       ocrCache = new Map(Object.entries(JSON.parse(await readFile(ocrPath, 'utf8'))))
     } catch (error) {
-      if (error?.code !== 'ENOENT') rt.warn('omni-ui: unreadable OCR cache %s: %s', ocrPath, error)
+      if (error?.code !== 'ENOENT') rt.warn('ds-bot: unreadable OCR cache %s: %s', ocrPath, error)
       ocrCache = new Map()
     }
   }
@@ -84,7 +84,7 @@ export function install(rt) {
       const temp = `${ocrPath}.${process.pid}.tmp`
       await writeFile(temp, snapshot, 'utf8')
       await replaceFile(temp, ocrPath)
-    }).catch(error => rt.warn('omni-ui: OCR cache write failed: %s', error))
+    }).catch(error => rt.warn('ds-bot: OCR cache write failed: %s', error))
   }
 
   // `sessionId` is the Session the reading is for; its usage counts there.
@@ -121,7 +121,7 @@ export function install(rt) {
         saveOcr()
         return reading
       }, (error) => {
-        rt.warn('omni-ui: could not read image %s: %s', id, error)
+        rt.warn('ds-bot: could not read image %s: %s', id, error)
         ocrFailed.set(id, { at: Date.now() })
         return null
       }).finally(() => ocrPending.delete(id)))
@@ -217,7 +217,7 @@ export function install(rt) {
           agent.session.append('image/offload', { targets })
           await ctx.sessions.flush(agent.session)
         } catch (error) {
-          rt.warn('omni-ui: old images for %s not offloaded: %s', agent.id, error)
+          rt.warn('ds-bot: old images for %s not offloaded: %s', agent.id, error)
         }
       })()
     })

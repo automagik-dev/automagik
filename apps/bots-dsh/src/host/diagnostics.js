@@ -113,7 +113,7 @@ export function install(rt) {
   ctx.effect(() => () => {
     stopped = true
     return writing
-  }, 'omni-ui: diagnostics log')
+  }, 'ds-bot: diagnostics log')
 
   const clean = text => cleanText(text, { redact: rt.redactSecrets })
 
@@ -170,7 +170,7 @@ export function install(rt) {
     note({
       level: 'warn',
       source: 'host',
-      text: line.replace(/^omni-ui: /, ''),
+      text: line.replace(/^ds-bot: /, ''),
       code: typeof error?.code === 'string' ? error.code : undefined,
       stack: error?.stack,
     })

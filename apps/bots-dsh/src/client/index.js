@@ -106,7 +106,7 @@ export const omni = Object.freeze({
 const DSH_SETTINGS = new Set(['general', 'account', 'models', 'agent-presets', 'plugins'])
 
 export function apply(ctx) {
-  ctx.effect(() => installLocale(ctx.get('locale')), 'omni-ui: interface copy')
+  ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   // A Bot's own browser hold, from the team view, where no browser bridge reports holds.
   const hostHolds = createSource({})
   migrateStorage()
@@ -170,7 +170,7 @@ export function apply(ctx) {
     const onPageHide = () => leaveVisits(Object.keys(ui.getSnapshot().visits ?? {}))
     window.addEventListener('pagehide', onPageHide)
     return () => window.removeEventListener('pagehide', onPageHide)
-  }, 'omni-ui: remember visits on page hide')
+  }, 'ds-bot: remember visits on page hide')
   // Unread marks, reactions and visits are shared by every window; one saved elsewhere
   // shows here at once. A `null` key is a cleared storage.
   ctx.effect(() => {
@@ -182,7 +182,7 @@ export function apply(ctx) {
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
-  }, 'omni-ui: follow other windows')
+  }, 'ds-bot: follow other windows')
   const activity = createSource({})
   // Per Bot, the turn it runs and its tool; and the approvals waiting for the user.
   const work = createSource({ bots: {}, approvals: [] })
@@ -320,7 +320,7 @@ export function apply(ctx) {
     document.addEventListener('visibilitychange', wake)
     void loop()
     return () => { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', wake) }
-  }, 'omni-ui: roster poll')
+  }, 'ds-bot: roster poll')
 
   // Plugin updates: every window that opens asks the host once (the host keeps its
   // answer for a while), again each hour, and every two seconds while installing.
@@ -340,7 +340,7 @@ export function apply(ctx) {
     wakeUpdate = loop
     void loop()
     return () => { stopped = true; clearTimeout(timer); wakeUpdate = () => {} }
-  }, 'omni-ui: update check')
+  }, 'ds-bot: update check')
 
   // A packaged DSH updates through its own updater; what that updater found is
   // kept beside the host's answer so the card can match it to the verified DSH.
@@ -352,7 +352,7 @@ export function apply(ctx) {
       void appUpdates.status().then(take, () => {})
       const unsubscribe = appUpdates.subscribe(take)
       return () => { stopped = true; unsubscribe?.() }
-    }, 'omni-ui: app update status')
+    }, 'ds-bot: app update status')
   }
 
   // Bot browsers need a webview bridge: DSH Desktop's, or a desktop app's of the same shape
@@ -378,10 +378,10 @@ export function apply(ctx) {
       sync()
       const offRoster = roster.subscribe(sync)
       return () => { offRoster(); stopReads?.(); browsers.dispose() }
-    }, 'omni-ui: Bot browsers')
+    }, 'ds-bot: Bot browsers')
   }
 
-  ctx.effect(() => () => { markupCache.clear() }, 'omni-ui: character markup')
+  ctx.effect(() => () => { markupCache.clear() }, 'ds-bot: character markup')
 
   // Mentions wear each Bot's color and character silhouette (or its photo). A message
   // DSH still draws itself, while it waits to be sent or to join a running turn, shows
@@ -469,9 +469,9 @@ export function apply(ctx) {
       if (window.dshBot === hub) delete window.dshBot
       delete window.omniUiQueue
     }
-  }, 'omni-ui: registry')
+  }, 'ds-bot: registry')
 
-  ctx.inject(['shortcuts'], scope => { scope.effect(() => holdShellShortcuts(scope.shortcuts), 'omni-ui: settings shortcut') })
+  ctx.inject(['shortcuts'], scope => { scope.effect(() => holdShellShortcuts(scope.shortcuts), 'ds-bot: settings shortcut') })
 
   const after = promise => promise.then(async (value) => { await pull().catch(() => {}); return value })
   // A Bot id or a group chat id, or any part of either's chat, opens the current part.
@@ -746,10 +746,10 @@ export function apply(ctx) {
   cliLogin = createCliLogin({ actions, modelOf: botId => work.getSnapshot().models?.[botId]?.selected })
   actions.cliLogin = cliLogin
   // A sign-in row about a provider its Bot has left closes by itself (cli-login-state.js).
-  ctx.effect(() => work.subscribe(() => cliLogin.followModels()), 'omni-ui: CLI sign-in rows follow the Bots\' models')
+  ctx.effect(() => work.subscribe(() => cliLogin.followModels()), 'ds-bot: CLI sign-in rows follow the Bots\' models')
   // A turn refused because its agent's account waits for the person opens the row's account
   // step in that Bot's chat (#869).
-  ctx.effect(() => work.subscribe(() => cliLogin.followFailures(work.getSnapshot().models)), 'omni-ui: CLI account step follows a refused turn')
+  ctx.effect(() => work.subscribe(() => cliLogin.followFailures(work.getSnapshot().models)), 'ds-bot: CLI account step follows a refused turn')
   // Once per upgrade: which CLI sign-in the Bots already use, shared with the terminal.
   ctx.effect(() => {
     let told = false
@@ -761,10 +761,10 @@ export function apply(ctx) {
     const off = roster.subscribe(tell)
     tell()
     return off
-  }, 'omni-ui: carried CLI sign-in notice')
+  }, 'ds-bot: carried CLI sign-in notice')
   actions.inputActionsOf = sessionId => ctx.sessions.binding?.(sessionId)?.props?.inputActions
-  ctx.effect(() => () => cliLogin.dispose(), 'omni-ui: CLI sign-in rows')
-  ctx.effect(() => installKnownStateGuard({ onRefused: () => actions.showNotice(t('This message contains a sign-in code, so it was not sent. Paste the code only in the sign-in step.')) }), 'omni-ui: sign-in code guard')
+  ctx.effect(() => () => cliLogin.dispose(), 'ds-bot: CLI sign-in rows')
+  ctx.effect(() => installKnownStateGuard({ onRefused: () => actions.showNotice(t('This message contains a sign-in code, so it was not sent. Paste the code only in the sign-in step.')) }), 'ds-bot: sign-in code guard')
   ctx.effect(() => installCliLoginBridge({
     selectedBot: () => cliLoginBotOf(roster.getSnapshot(), mainView()),
     mainBot: () => {
@@ -772,7 +772,7 @@ export function apply(ctx) {
       return [...(snapshot.mainBotIds ?? []), snapshot.mainBotId].map(id => cliLoginBotOf(snapshot, id)).find(Boolean)
     },
     openLogin: (botId, provider) => actions.openCliLogin(botId, provider),
-  }), 'omni-ui: CLI sign-in bridge')
+  }), 'ds-bot: CLI sign-in bridge')
   // Whether AccountLauncher holds the shell's settings seat; FooterAccount steps aside if so.
   actions.signInEntry = () => ctx.slots.entries?.('settings.models.sign-in')?.[0] ?? null
   actions.canSignIn = () => Boolean(actions.signInEntry())
@@ -938,20 +938,20 @@ export function apply(ctx) {
     roster,
     shownSession: () => Object.values(ctx.sessions.list.getSnapshot().byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id,
     openSession: id => actions.openSession(id),
-  }), 'omni-ui: approval notifications')
+  }), 'ds-bot: approval notifications')
   const assistantFace = (sessionId) => {
     const binding = ctx.sessions.binding(sessionId)
-    if (binding === undefined) throw new Error(`omni-ui: unknown session "${sessionId}"`)
+    if (binding === undefined) throw new Error(`ds-bot: unknown session "${sessionId}"`)
     const chat = ctx.uiConversation.binding(binding).target('chat')
     return { ...face(), keyedHooks: {
       turnSteps: (turn) => {
         const snapshot = chat.getSnapshot()
-        if (snapshot === undefined) throw new Error('omni-ui: Chat target is unavailable')
+        if (snapshot === undefined) throw new Error('ds-bot: Chat target is unavailable')
         return snapshot.nodes.turnDataSource(Number(turn), 'assistant-step')
       },
       turnContext: (turn) => {
         const snapshot = chat.getSnapshot()
-        if (snapshot === undefined) throw new Error('omni-ui: Chat target is unavailable')
+        if (snapshot === undefined) throw new Error('ds-bot: Chat target is unavailable')
         return snapshot.nodes.turnDataSource(Number(turn), 'context')
       },
     } }
@@ -1053,7 +1053,7 @@ export function apply(ctx) {
       drawer = next
     })
     return () => { observer.disconnect(); offMounted(); offUi() }
-  }, 'omni-ui: one right panel')
+  }, 'ds-bot: one right panel')
 
   // A Bot surface owns the cells it shadows. It starts far below the -10 that plugins
   // commonly use and goes below whatever already holds the cell, so a plugin that
@@ -1108,7 +1108,7 @@ export function apply(ctx) {
           atMenu = null
           for (const off of offs) off()
         }
-      }, 'omni-ui: @ menu')
+      }, 'ds-bot: @ menu')
     })
     return () => fiber.dispose()
   }
@@ -1175,7 +1175,7 @@ export function apply(ctx) {
     () => installCompiledStyles(LIVE_CSS, 'live'),
     () => {
       const fiber = ctx.inject(['sidebarRightTabs', 'sidebarRight'], scope => {
-        scope.effect(() => installLiveTab({ tabs: scope.sidebarRightTabs, slots: scope.slots, sidebar: scope.sidebarRight, face, Body: LiveTab }), 'omni-ui: native Live tab')
+        scope.effect(() => installLiveTab({ tabs: scope.sidebarRightTabs, slots: scope.slots, sidebar: scope.sidebarRight, face, Body: LiveTab }), 'ds-bot: native Live tab')
       })
       return () => fiber.dispose()
     },
@@ -1346,16 +1346,16 @@ export function apply(ctx) {
     () => shadow('conversation.input.dock', { id: 'queue', order: 20, priority: BOT_PRIORITY, inject: queueFace }, QueueDock),
   ]
   // The return button belongs to neither group: it renders only in Agent mode.
-  ctx.effect(() => installCompiledStyles(RETURN_CSS, 'return'), 'omni-ui: return styles')
+  ctx.effect(() => installCompiledStyles(RETURN_CSS, 'return'), 'ds-bot: return styles')
   ctx.effect(() => installCompiledStyles(COMPUTER_CSS, 'computer'), 'omni-ui: computer styles')
   shadow('sidebar.footer.action', { id: 'bot-return', order: -300, inject: face }, BotReturn)
-  ctx.effect(() => installFavicon(), 'omni-ui: Omni tab icon')
+  ctx.effect(() => installFavicon(), 'ds-bot: Omni tab icon')
   ctx.effect(() => {
     const offs = BUILTIN_PACKS.map(pack => registerComposerPack(pack))
     return () => { for (const off of offs) off() }
-  }, 'omni-ui: composer packs')
+  }, 'ds-bot: composer packs')
   currentFace = face
-  ctx.effect(() => () => { if (currentFace === face) currentFace = null }, 'omni-ui: face for other Omni plugins')
+  ctx.effect(() => () => { if (currentFace === face) currentFace = null }, 'ds-bot: face for other Omni plugins')
 
   // The main view decides `plain`: a DSH Agent Session keeps the Bot shell but
   // withdraws the conversation replacements, so the native dsh page shows. A jump
@@ -1464,7 +1464,7 @@ export function apply(ctx) {
     const offRoster = roster.subscribe(sync)
     sync()
     return () => { offList(); offRoster() }
-  }, 'omni-ui: agent surface')
+  }, 'ds-bot: agent surface')
 
   // The chat on screen, kept for a restart of DSH alone (reopen.js): taken before it is noted
   // again, opened once the team is known, and noted from then on.
@@ -1484,7 +1484,7 @@ export function apply(ctx) {
     if (reopening !== null) reopen()
     note()
     return () => { offList(); offRoster() }
-  }, 'omni-ui: keep the open chat across a DSH restart')
+  }, 'ds-bot: keep the open chat across a DSH restart')
 
   ctx.effect(() => {
     const groups = surfaceGroups({ shell: installShell, conversation: installConversation }, {
@@ -1536,5 +1536,5 @@ export function apply(ctx) {
       clearTimeout(verifyTimer)
       groups.dispose()
     }
-  }, 'omni-ui: surface')
+  }, 'ds-bot: surface')
 }

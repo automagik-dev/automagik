@@ -101,7 +101,7 @@ export function install(rt) {
       await Promise.race([
         Promise.resolve().then(() => source.refresh(bot)),
         new Promise((resolve) => { timer = setTimeout(resolve, REFRESH_MS) }),
-      ]).catch(error => rt.warn?.('omni-ui: the model menu of %s was not read: %s', bot.name, error?.message ?? error))
+      ]).catch(error => rt.warn?.('ds-bot: the model menu of %s was not read: %s', bot.name, error?.message ?? error))
       clearTimeout(timer)
     }))
   }

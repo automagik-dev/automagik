@@ -806,6 +806,6 @@ export function install(rt, { transport = options => new HermesTransport(options
         await disconnect()
       })
     }
-  }, 'omni-ui: remote Hermes')
+  }, 'ds-bot: remote Hermes')
   Object.assign(rt, { hermesRemote: api })
 }

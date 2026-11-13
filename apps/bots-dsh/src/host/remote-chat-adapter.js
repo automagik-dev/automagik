@@ -31,7 +31,7 @@ async function askInChat(ctx, agent, params, signal) {
     // Classify the failure without logging question text, remote output or credentials.
     const code = ['ASK_ABORTED', 'BAD_INTENT', 'CALLER_NOT_LIVE', 'DELEGATED_CALLER', 'EMPTY_QUESTIONS', 'NO_PROVIDER'].includes(error?.code)
       ? error.code : error instanceof TypeError ? 'TypeError' : 'Error'
-    try { ctx.logger?.warn?.('omni-ui: Remote Hermes question failed (%s); the remote tool was denied.', code) } catch {}
+    try { ctx.logger?.warn?.('ds-bot: Remote Hermes question failed (%s); the remote tool was denied.', code) } catch {}
     return 'deny'
   }
 }

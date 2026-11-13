@@ -156,7 +156,7 @@ export function install(rt) {
         heldWarned = ''
       } else {
         blocked = reason(error)
-        rt.warn('omni-ui: unreadable secrets file %s (%s)', path, blocked)
+        rt.warn('ds-bot: unreadable secrets file %s (%s)', path, blocked)
       }
       changed()
       return
@@ -176,10 +176,10 @@ export function install(rt) {
         blocked = undefined
         secrets.clear()
         heldWarned = ''
-        rt.warn('omni-ui: unreadable secrets file %s; backed up as %s', path, backup)
+        rt.warn('ds-bot: unreadable secrets file %s; backed up as %s', path, backup)
       } catch (error) {
         blocked = reason(error)
-        rt.warn('omni-ui: unreadable secrets file %s; backup failed: %s', path, error)
+        rt.warn('ds-bot: unreadable secrets file %s; backup failed: %s', path, error)
       }
       changed()
       return
@@ -207,7 +207,7 @@ export function install(rt) {
     const heldNotice = heldNames.join(',')
     if (heldNotice !== heldWarned) {
       heldWarned = heldNotice
-      for (const name of heldNames) rt.warn('omni-ui: secret %s in %s is held: its saved value is shorter than the %d-character minimum; nothing uses it until a longer value is saved', name, path, MIN_VALUE)
+      for (const name of heldNames) rt.warn('ds-bot: secret %s in %s is held: its saved value is shorter than the %d-character minimum; nothing uses it until a longer value is saved', name, path, MIN_VALUE)
     }
     changed()
   }
@@ -230,7 +230,7 @@ export function install(rt) {
         throw error
       }
     })
-    writing = job.catch(error => rt.warn('omni-ui: secrets write failed (%s)', reason(error)))
+    writing = job.catch(error => rt.warn('ds-bot: secrets write failed (%s)', reason(error)))
     return job
   }
 
@@ -277,7 +277,7 @@ export function install(rt) {
   async function tell(botId, text) {
     if (rt.botOf(botId) === undefined) return
     await rt.deliver({ toId: botId, role: 'secret', text })
-      .catch(error => rt.warn('omni-ui: secret note to %s failed: %s', botId, error))
+      .catch(error => rt.warn('ds-bot: secret note to %s failed: %s', botId, error))
   }
   const savedNote = (name, lead) => [
     `${lead} Use it as ${usage(name)}.`,
@@ -621,7 +621,7 @@ export function install(rt) {
         })
       } catch (error) {
         declared = ''
-        rt.warn('omni-ui: secrets not offered to the shell: %s', error?.message ?? error)
+        rt.warn('ds-bot: secrets not offered to the shell: %s', error?.message ?? error)
       }
     }
     refreshEnv()
@@ -630,7 +630,7 @@ export function install(rt) {
       unregister = null
       declared = ''
       refreshEnv = () => {}
-    }, 'omni-ui: secrets shell env')
+    }, 'ds-bot: secrets shell env')
   }
   if (typeof ctx.inject === 'function') {
     ctx.inject(['shellEnv'], sub => attachShellEnv(sub))
@@ -641,7 +641,7 @@ export function install(rt) {
   ctx.effect(() => {
     void loadSecrets()
     return () => { stopped = true; if (usedTimer !== null) clearTimeout(usedTimer) }
-  }, 'omni-ui: load secrets')
+  }, 'ds-bot: load secrets')
 
   Object.assign(rt, {
     secretsView,

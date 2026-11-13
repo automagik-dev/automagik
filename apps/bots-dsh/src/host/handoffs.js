@@ -51,7 +51,7 @@ export function install(rt) {
       renameSync(temp, path)
       return name
     } catch (error) {
-      rt.warn('omni-ui: result of work %s not kept whole: %s', id, error)
+      rt.warn('ds-bot: result of work %s not kept whole: %s', id, error)
       try {
         rmSync(temp, { force: true })
       } catch {}

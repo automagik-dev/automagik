@@ -244,7 +244,7 @@ const OPEN_MAX = 64
 
 /**
  * The browser panel and `read_browser` are on where the window can show them: DSH Desktop's
- * profile and Omni's app (`DS_BOT_APP=1`). The Automagik app (`appBrowserBridge`) shows the
+ * profile and DS Bot's app (`DS_BOT_APP=1`). The Automagik app (`appBrowserBridge`) shows the
  * panel only: there it is the Bot's own browser, which the Bot drives with its browser tools,
  * so `read_browser` stays off. `config.browser` forces both on or off; Unfold's own instance
  * (inUnfoldInstance) has neither. The choice is fixed for the life of the process, so the tool
@@ -262,11 +262,11 @@ export function install(rt) {
     return
   }
   const channel = createBrowserChannel()
-  ctx.effect(() => () => channel.dispose(), 'omni-ui: browser channel')
+  ctx.effect(() => () => channel.dispose(), 'ds-bot: browser channel')
   // A hold changes what every window shows (the handoff card, take over and give back). The
   // team view carries the holds and a save bumps its revision, so a window without the
   // panel's long poll sees them too.
-  ctx.effect(() => channel.subscribeHolds(() => { void rt.save().catch(() => {}) }), 'omni-ui: browser holds')
+  ctx.effect(() => channel.subscribeHolds(() => { void rt.save().catch(() => {}) }), 'ds-bot: browser holds')
   // What a window reports as open: Bot ids on the team, each with a short address and title.
   const openOf = (value) => {
     const open = {}

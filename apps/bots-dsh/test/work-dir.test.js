@@ -81,7 +81,7 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
       list: () => [...registry.values()],
       resolveByPath: async path => [...registry.values()].find(workspace => workspace.path === path),
       create: async (path) => {
-        const workspace = { id: 'w-new', path, title: 'Omni' }
+        const workspace = { id: 'w-new', path, title: 'DS Bot' }
         registry.set(workspace.id, workspace)
         return workspace
       },

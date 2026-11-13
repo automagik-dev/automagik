@@ -60,9 +60,9 @@ export function install(rt) {
       const before = sandbox.overrideOf(agent.session)
       ctx.get('permissionPresets').set(agent.session, level)
       if (policyOf(agent.session) === 'ask' && sandbox.overrideOf(agent.session) === before) put(switched, id, { level }, 500)
-      else rt.warn('omni-ui: subagent level did not keep approval and sandbox: %s', id)
+      else rt.warn('ds-bot: subagent level did not keep approval and sandbox: %s', id)
     } catch (error) {
-      rt.warn('omni-ui: subagent level on agent/created failed: %s', error)
+      rt.warn('ds-bot: subagent level on agent/created failed: %s', error)
     }
   })
   // Every child at `ask` whose asks approvals.js can hold, also one this instance never switched (the
@@ -77,7 +77,7 @@ export function install(rt) {
     } catch {}
   })
   ctx.effect(() => ctx.systemPrompt.context({
-    name: 'omni-ui:subagent-asks',
+    name: 'ds-bot:subagent-asks',
     order: (ctx.systemPrompt.getContextOrder?.('SUBAGENT_DELEGATION') ?? 120) + 1,
     interpolate: false,
     text: context => {
@@ -88,7 +88,7 @@ export function install(rt) {
           && answerableOwner(rt, rt.teamOwnerOf?.(agent.id ?? session.id, agent)) ? CHILD_ASKS_CONTEXT : ''
       } catch { return '' }
     },
-  }), 'omni-ui: subagent asks context')
+  }), 'ds-bot: subagent asks context')
 
   Object.assign(rt, { asksThroughBot: id => switched.has(id), childCallDetail: (sessionId, callId) => details.get(pairKey(sessionId, callId)) })
 }

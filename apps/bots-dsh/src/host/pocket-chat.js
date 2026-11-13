@@ -888,5 +888,5 @@ export function install(rt) {
       closing?.close()
       await socket?.close()
     }
-  }, 'omni-ui: pocket chat')
+  }, 'ds-bot: pocket chat')
 }

@@ -153,7 +153,7 @@ export function install(rt) {
       delete bot.permissionAuto
       movePermissionRev(bot)
       endAuto(bot)
-      rt.warn('omni-ui: inherited Auto was not saved: %s', error)
+      rt.warn('ds-bot: inherited Auto was not saved: %s', error)
     }
   }
   const register = sub => {
@@ -163,7 +163,7 @@ export function install(rt) {
         return bot !== undefined && autoWhy(bot, { sessionId, session: agent?.session, provider }) === undefined
       } catch { return false }
     })
-    if (typeof off === 'function') sub.effect(() => off, 'omni-ui: own mode on agents')
+    if (typeof off === 'function') sub.effect(() => off, 'ds-bot: own mode on agents')
   }
   Object.assign(rt, { movePermissionRev, autoWhy, autoOffer, autoViewOf, autoFactsOf, endAuto, clearAuto, sweepAuto, setBotAuto, autoOpener, markInherited,
     autoKey: () => Object.values(state.bots).filter(bot => bot.permissionAuto || autoOffer(bot).offered).map(bot => {

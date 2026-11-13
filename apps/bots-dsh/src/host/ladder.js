@@ -98,7 +98,7 @@ export function install(rt) {
         return { kind: 'deny', reason }
       }
       return { kind: 'ask', reason: askText(step) }
-    } catch (error) { rt.warn('omni-ui: hard step could not be checked: %s', error); return decision }
+    } catch (error) { rt.warn('ds-bot: hard step could not be checked: %s', error); return decision }
   }, { prepend: true })
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const decision = await next()
@@ -136,6 +136,6 @@ export function install(rt) {
         return block(text)
       }
       return stop(stopNobody(count), 'unavailable')
-    } catch (error) { rt.warn('omni-ui: refusal ladder could not be checked: %s', error); return decision }
+    } catch (error) { rt.warn('ds-bot: refusal ladder could not be checked: %s', error); return decision }
   }, { prepend: true })
 }

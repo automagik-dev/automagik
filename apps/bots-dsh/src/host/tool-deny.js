@@ -69,7 +69,7 @@ export function install(rt) {
     if (timer !== undefined) clearInterval(timer)
     timer = undefined
   }
-  ctx.effect(() => stop, 'omni-ui: tool deny retry')
+  ctx.effect(() => stop, 'ds-bot: tool deny retry')
 
   const schedule = (sessionId, agent) => {
     const seen = waiting.get(sessionId)
@@ -81,7 +81,7 @@ export function install(rt) {
             // The profile never published what this Session needs; the Bot keeps every tool
             // rather than waiting forever, and the reason is on the record.
             waiting.delete(id)
-            warnOnce(id, `omni-ui: the denied tools of Session ${id} could not be set; they stay available`)
+            warnOnce(id, `ds-bot: the denied tools of Session ${id} could not be set; they stay available`)
             continue
           }
           void apply(id, entry.agent)
@@ -99,7 +99,7 @@ export function install(rt) {
     try {
       entry.lift?.()
     } catch (error) {
-      rt.warn('omni-ui: the denied tools of Session %s stay hidden until DSH restarts: %s', sessionId, error)
+      rt.warn('ds-bot: the denied tools of Session %s stay hidden until DSH restarts: %s', sessionId, error)
     }
   }
 
@@ -220,7 +220,7 @@ export function install(rt) {
     const listed = new Set(Array.isArray(bot?.denyTools) ? bot.denyTools : [])
     const unknown = missing.filter(name => listed.has(name))
     if (unknown.length > 0) {
-      warnOnce(sessionId, `omni-ui: ${bot?.name ?? 'a Bot'} denies ${unknown.join(', ')}, `
+      warnOnce(sessionId, `ds-bot: ${bot?.name ?? 'a Bot'} denies ${unknown.join(', ')}, `
         + 'which this DSH does not serve or cannot restrict; ignored')
     }
     waiting.delete(sessionId)
@@ -230,7 +230,7 @@ export function install(rt) {
       const lift = agent.ctx.tools.restrict({ deny })
       held.set(sessionId, { agent, names: wanted, lift })
     } catch (error) {
-      rt.warn('omni-ui: the tools of %s not denied on Session %s: %s', bot?.name ?? 'a Bot', sessionId, error)
+      rt.warn('ds-bot: the tools of %s not denied on Session %s: %s', bot?.name ?? 'a Bot', sessionId, error)
       schedule(sessionId, agent)
     }
   }
@@ -255,7 +255,7 @@ export function install(rt) {
         // indexes see it; apply the list from this record rather than re-resolving it.
         await apply(sessionId, agent?.agent ?? agent, bot)
       } catch (error) {
-        rt.warn('omni-ui: the tool deny list of %s not applied to Session %s: %s', bot.name, sessionId, error?.message ?? error)
+        rt.warn('ds-bot: the tool deny list of %s not applied to Session %s: %s', bot.name, sessionId, error?.message ?? error)
       }
     }))
   }
@@ -298,7 +298,7 @@ export function install(rt) {
   ctx.on('agent/created', ({ agent } = {}) => {
     void rt.load()
       .then(() => apply(agent?.session?.id, agent))
-      .catch(error => rt.warn('omni-ui: tool deny on agent/created failed: %s', error))
+      .catch(error => rt.warn('ds-bot: tool deny on agent/created failed: %s', error))
   })
 
   // The last line: a call that reaches the executor for a name this Bot denies is refused,

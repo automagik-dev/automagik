@@ -1,4 +1,4 @@
-// DSH updates: a released Omni may name the DSH release it was verified
+// DSH updates: a released DS Bot may name the DSH release it was verified
 // against (`dsBot.verifiedDsh` in package.json); a release that names none
 // offers nothing. The newest released bot wins: offering that version and
 // nothing newer keeps the update path away from DSH releases we have not
@@ -77,7 +77,7 @@ export function install(rt) {
   const installKind = () =>
     typeof ctx.get?.('profileContext')?.packageManager?.command === 'string' ? 'app' : 'npm'
 
-  // The newest released Omni's `dsBot` block, through the same channel the bot
+  // The newest released DS Bot's `dsBot` block, through the same channel the bot
   // itself updates from: its registry, or the public repo's latest release.
   async function releasedDeclaration(source) {
     if (source.kind === 'registry') {
@@ -123,7 +123,7 @@ export function install(rt) {
         : null
       status.error = null
     } catch (error) {
-      rt.warn('omni-ui: dsh update check failed: %s', error?.message ?? error)
+      rt.warn('ds-bot: dsh update check failed: %s', error?.message ?? error)
       status.verified = null
       status.blockedBy = null
       target = null
@@ -162,14 +162,14 @@ export function install(rt) {
     void done
       .then(() => Object.assign(status, { phase: 'installed', installed: chosen.version }))
       .catch((error) => {
-        rt.warn('omni-ui: dsh update to %s failed: %s', chosen.version, error?.message ?? error)
+        rt.warn('ds-bot: dsh update to %s failed: %s', chosen.version, error?.message ?? error)
         Object.assign(status, { phase: 'failed', error: `${error?.message ?? error}${output ? ` — ${output.trim().slice(-400)}` : ''}`.slice(0, 600) })
       })
     return view()
   }
 
   // Whatever npm is still running when the plugin unloads dies with it.
-  ctx.effect(() => () => running?.kill?.(), 'omni-ui: dsh update install')
+  ctx.effect(() => () => running?.kill?.(), 'ds-bot: dsh update install')
 
   Object.assign(rt, { dshUpdateCheck: check, dshUpdateStart: start, dshUpdateView: view })
 }
