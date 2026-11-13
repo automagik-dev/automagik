@@ -263,10 +263,11 @@ test("herdr.pack uninstall removes the am link beside the old one, and leaves a 
   const m = machine(t);
   install(m.ctx(), P("herdr.pack"), packSource);
   const old = join(m.binDir, "automagik-herdr"), am = join(m.binDir, "am");
-  symlinkSync(readlinkSync(old), am);
+  assert.equal(readlinkSync(am), readlinkSync(old), "install made both");
   uninstall(m.ctx(), P("herdr.pack"));
   assert.ok(!existsSync(old) && !lstatSync(am, { throwIfNoEntry: false }), "both links go");
   install(m.ctx(), P("herdr.pack"), packSource);
+  rmSync(am);
   writeFileSync(am, "mine\n");
   const r = uninstall(m.ctx(), P("herdr.pack"));
   assert.ok(!existsSync(old));

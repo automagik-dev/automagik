@@ -109,7 +109,7 @@ test("am update --rollback and --auto are the pack's own update, as its help say
     assert.match(got.stderr, /^am: --rollback and --auto are herdr\.pack's own update, not automagik\.am's/, `am ${args.join(" ")}`);
   }
   // Any word but the pack's own id is refused, whatever its form.
-  for (const word of ["am", "usagemeter", "Automagik.am", "AUTOMAGIK.AM", "herdr.am-quota"]) {
+  for (const word of ["am", "foo", "usagemeter", "Automagik.am", "AUTOMAGIK.AM", "Herdr.Pack", "herdr.am-quota", "", " ", "-x", "--automagik.am", "--herdr.pack"]) {
     for (const args of [["update", word, "--rollback"], ["update", "--rollback", word], ["update", "--auto=status", word], ["update", "--auto", "status", word]]) {
       const got = s.installed(...args);
       assert.equal(got.status, 2, `am ${args.join(" ")}`);
@@ -281,7 +281,7 @@ test("links: am takes the pack's automagik-herdr, leaves a foreign one, and hand
   const gone = s.installed("self", "uninstall");
   assert.equal(gone.status, 0, gone.stderr);
   assert.equal(readlinkSync(join(bin, "automagik-herdr")), packCli, "handed back to the pack's entry");
-  assert.equal(existsSync(join(bin, "am")), false);
+  assert.equal(readlinkSync(join(bin, "am")), packCli, "am goes to the pack's entry too, so the pack is not without it");
   assert.ok(existsSync(join(s.store, "current")), "the store stays without --purge");
 
   // Someone else's automagik-herdr is left alone, and doctor says so.
