@@ -186,7 +186,7 @@ export const LEARNING_CSS = `
 .bt-learning-spacer{flex:1}
 .bt-learning-plus,.bt-learning-minus{flex:none;font-weight:600;font-variant-numeric:tabular-nums}
 .bt-learning-plus{color:var(--bt-green)}
-.bt-learning-minus{color:var(--bt-danger)}
+.bt-learning-minus{color:var(--st-bad-strong,var(--bt-danger))}
 .bt-learning-state{flex:none;height:20px;padding:0 8px;border-radius:999px;font-size:11px;line-height:20px;font-weight:500;background:var(--bt-hover);color:var(--bt-ink-2)}
 .bt-learning-state-added{background:color-mix(in srgb,var(--bt-green) 13%,transparent);color:color-mix(in srgb,var(--bt-green) 70%,var(--bt-ink))}
 .bt-learning-code{padding:6px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:20px;color:var(--bt-ink)}
@@ -198,7 +198,7 @@ export const LEARNING_CSS = `
 .bt-learning-added{background:color-mix(in srgb,var(--bt-green) 9%,transparent)}
 .bt-learning-added .bt-learning-sign{color:var(--bt-green)}
 .bt-learning-removed{background:color-mix(in srgb,var(--bt-danger) 7%,transparent)}
-.bt-learning-removed .bt-learning-sign{color:var(--bt-danger)}
+.bt-learning-removed .bt-learning-sign{color:var(--st-bad-strong,var(--bt-danger))}
 .bt-learning-removed .bt-learning-text{color:var(--bt-ink-2)}
 .bt-learning-gap{height:1px;margin:6px 12px;background:var(--bt-q-rule)}
 .bt-learning-morebar{display:flex;justify-content:center;padding:4px 0 8px}
@@ -224,5 +224,5 @@ export const LEARNING_CSS = `
 .bt-learning-kind{flex:none;font-size:14px;line-height:20px;font-weight:600}
 .bt-learning-sum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:20px;color:var(--bt-ink-2)}
 .bt-learning-fold:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:8px}
-.bt-learning-error{font-size:12px;line-height:16px;color:var(--bt-danger)}
+.bt-learning-error{font-size:12px;line-height:16px;color:var(--st-bad-strong,var(--bt-danger))}
 `

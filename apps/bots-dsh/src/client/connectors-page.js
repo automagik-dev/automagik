@@ -240,7 +240,7 @@ export const CONNECTORS_PAGE_CSS = `
 .bt-app-text{min-width:0;display:flex;flex-direction:column;gap:1px}
 .bt-app-name{display:inline-flex;align-items:center;gap:6px;font-size:14px;line-height:20px;color:var(--bt-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-app-status{font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bt-app[data-state=error] .bt-app-status,.bt-app[data-error] .bt-app-status{color:var(--bt-danger)}
+.bt-app[data-state=error] .bt-app-status,.bt-app[data-error] .bt-app-status{color:var(--st-bad-strong,var(--bt-danger))}
 .bt-app-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:72px;height:28px;padding:0 14px;border:0;border-radius:999px;background:var(--bt-hover);color:var(--bt-ink);font:inherit;font-size:13px;cursor:pointer;transition:background-color .12s ease,color .12s ease}
 .bt-app-btn:hover:not(:disabled){background:var(--bt-active)}
 .bt-app-btn:disabled{opacity:.5;cursor:default}

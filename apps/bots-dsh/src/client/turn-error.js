@@ -248,7 +248,7 @@ export const TURN_ERROR_CSS = `
 .bt-fail-link{display:inline-flex;align-items:center;box-sizing:border-box;text-decoration:none}
 .bt-fail:has(.bt-model-key){width:min(480px,86%)}
 .bt-fail .bt-q.bt-model-key{margin:0 0 0 15px;width:auto;padding:0;background:none;box-shadow:none;border-radius:0;animation:none}
-.bt-fail-error{margin-left:15px;font-size:12px;line-height:17px;color:var(--bt-danger);overflow-wrap:anywhere}
+.bt-fail-error{margin-left:15px;font-size:12px;line-height:17px;color:var(--st-bad-strong,var(--bt-danger));overflow-wrap:anywhere}
 .bt-fail-tech{margin-left:15px;font-size:12px;line-height:17px;color:var(--bt-ink-2)}
 .bt-fail-tech summary{width:max-content;cursor:pointer;color:var(--bt-ink-3)}
 .bt-fail-tech summary:hover{color:var(--bt-ink-2)}

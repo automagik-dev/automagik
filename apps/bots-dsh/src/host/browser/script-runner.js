@@ -22,8 +22,9 @@
 //   withheld  the host's environment: the child gets an empty one
 //             the host itself: the one channel is JSON lines on the child's stdin and
 //             stdout, and a line the host does not accept ends the run
-//             time: at the deadline the host kills the child, it does not ask; a child
-//             whose host is gone or stopped ends its script and leaves a second later
+//             time: at the deadline the host kills the child, it does not ask. The child
+//             keeps the same deadline itself, one second later: the interpreter stops a
+//             script whose own code never yields, and the process leaves
 //
 // What no flag of Node 24 refuses, and so what a script that got out of the interpreter
 // could still do:
@@ -43,6 +44,8 @@
 //
 //   - memory: the two flags below bound the interpreter's WebAssembly memory and the old
 //     space of the child's heap. The rest of the child's memory has no flag bound;
+//   - time: a script that is busy inside one long call of a built-in is stopped by the
+//     host only, so it can outlive a host that is gone or stopped;
 //   - the run's folder stays behind when the host exits before it sees the child exit;
 //   - the path of the child's entry file is in the interpreter's memory. A script has no
 //     way to read it short of a bug in the interpreter.
@@ -71,8 +74,10 @@ const CHILD_FLAGS = ['--permission', '--no-experimental-sqlite', '--wasm-max-mem
 // escaping makes at most six characters of one.
 const MAX_TEXT = 4_000_000
 const MAX_LINE = MAX_TEXT * 6 + 1_000
-// The most reply text that may wait for a child that is not reading it: a script can
-// make calls and then never yield, and each reply is held here until it is read.
+// The most reply text that may wait here for the child to take it, 64 MB: each reply is
+// held until the child reads it. Two kinds of script get there: one that makes calls and
+// then never yields, and one that waits for many large replies at once, which come
+// faster than it can read them.
 const MAX_WAITING = MAX_TEXT * 16
 
 // The child sees none of the host's environment (keys, tokens, DSH_HOME). Windows needs
@@ -164,7 +169,7 @@ export function runIsolatedScript(body, helpers, { timeout = SCRIPT_TIMEOUT, ent
       }
       if (settled) return
       send(reply)
-      if (child.stdin.writableLength > MAX_WAITING) end(reject, new Error('Script stopped: it made helper calls and did not read their replies.'))
+      if (child.stdin.writableLength > MAX_WAITING) end(reject, new Error('Script stopped: more than 64 MB of helper replies were waiting for it. It made calls and did not read their replies, or it waited for too many large replies at once.'))
     }
     // One message a line. What has no line end yet is held, up to the longest line.
     let held = []

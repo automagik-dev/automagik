@@ -103,6 +103,21 @@ describe("docs/brand's marks", () => {
     }
   })
 
+  test("the triskle's two small pictures are the ones the logo note records: 64 and 128 pixels square, by sha256", () => {
+    const listed = [...read(LOGO).matchAll(/^ *\| `(png\/[^`]+\.png)` \| `svg\/triskle-three-colours-32\.svg`, (\d+)px high \| `([0-9a-f]{64})` \|$/gm)]
+    expect(listed.map(([, path, size]) => [path, size])).toEqual([
+      ['png/triskle-three-colours-64.png', '64'],
+      ['png/triskle-three-colours-128.png', '128'],
+    ])
+    for (const [, path, size, sha256] of listed) {
+      const bytes = readFileSync(at(`docs/brand/logo/${path}`))
+      // A PNG's header: its width and height are the two numbers after "IHDR".
+      expect([path, bytes.subarray(12, 16).toString('latin1'), bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([path, 'IHDR', Number(size), Number(size)])
+      expect([path, createHash('sha256').update(bytes).digest('hex')]).toEqual([path, sha256])
+      expect(read(README)).toContain(`\`logo/${path}\``)
+    }
+  })
+
   test("Omni's files are the vortex on curves: the same count of shapes, one outline in the marks and their lockups", () => {
     const outline = (path: string) => / d="([^"]+)"/.exec(read(path))?.[1] ?? ''
     for (const [size, lockup, shapes] of [['', '', 48], ['-32', '-header', 8]] as const) {

@@ -7,6 +7,14 @@ The triskle is Automagik's mark, and Automagik's alone. It is the owner's clay r
 - **`triskle-three-colours` is the mark.** `triskle-ink` (for light grounds) and `triskle-cream` (for dark grounds) are the fallback where colour cannot be used.
 - `svg/triskle-<colour>.svg`: the large drawing, from about 100px up. `-64`, `-32`, `-16`: the drawings for those sizes, with a wider line.
 - `png/triskle-<colour>-1024.png` and `-512.png`: clear ground. Other sizes: `../export-png.mjs`.
+- `png/triskle-three-colours-64.png` and `-128.png`: the 32px drawing as a picture, 64 and 128 pixels square, clear ground. They are for a place that shows the mark at about 32px or less on a sharp screen and cannot use an SVG. The number is the picture's size in pixels, not the size to show it at: the mark shown at 64px is `svg/triskle-three-colours-64.svg`. Made on 13 November 2026 with `../export-png.mjs`:
+
+  | File | Made from | sha256 |
+  | --- | --- | --- |
+  | `png/triskle-three-colours-64.png` | `svg/triskle-three-colours-32.svg`, 64px high | `1d59d678fe7984eb42c9b753a32d4389b4ebe32e86149f77bc7c6c6963c96fb2` |
+  | `png/triskle-three-colours-128.png` | `svg/triskle-three-colours-32.svg`, 128px high | `edebc0dcba66bf93f9fbaaae3a62e9c6fc39fc762d59269e497dc8adbddb5772` |
+
+  Another Chromium may shade the edge pixels differently, so a new export need not have these bytes. The table says which bytes are kept here.
 - All the triskle's files share one square frame, so they line up when swapped.
 - These are pictures, not single-ink shapes: CSS `color` does not change them. Pick the colour by file.
 
@@ -87,7 +95,14 @@ From `omni-marks-light`:
 | `lockups/omni-mark-lockup-ink-header.svg` | `lockups/omni-lockup-small-day.svg` | `cef19f7a34cba707c8995eac9ded832bc6b4ddf6361793ed62ddc6d7d20c387a` |
 | `lockups/omni-mark-lockup-cream-header.svg` | `lockups/omni-lockup-small-night.svg` | `8af9ca4d1c5b075c98913b82ae63ef9b9a9b28e0babea28d6e71f0f95fe08f16` |
 
-A file whose sha256 is not the one in these tables was changed: put its package's file back (`scripts/brand-marks.test.ts` checks it).
+The mykes word, from we unfold's Mykes deck (the `wordmark/` notes above):
+
+| File | In the deck | sha256 |
+| --- | --- | --- |
+| `wordmark/mykes-wordmark-ink.svg` | `mykes-word-day.svg` | `28c80ac26bea923146094869fafe032a9397d85c4fd0ad6432a885ceb24219dc` |
+| `wordmark/mykes-wordmark-cream.svg` | `mykes-word-night.svg` | `9099d9566ebee75e3cc683987f5b69bfc8c1c41873871f5415654a1efbc12752` |
+
+A file whose sha256 is not the one in these tables was changed: put its package's file back (`scripts/brand-marks.test.ts` checks the marks and the lockups; the site's `apps/landing/landing.test.mjs` checks the mykes word).
 
 ## Omni's vortex on curves
 

@@ -7,20 +7,34 @@
 // host can kill a process whose script never returns.
 import { openSandbox } from './sandbox.js'
 
+// The exit code of a process that can no longer speak to its host. Not one Node itself
+// leaves with, so the host's error tells this ending from a crash.
+const SILENT = 70
+
 // A write to a host that is gone fails, and there is no one to tell. An error of this
-// process's stack is not that: the sandbox ends the run on it.
+// process's stack is not that: it can leave the output unable to carry anything written
+// after it, so the run's end could never be said and the host would wait for the
+// deadline. The process leaves at once instead, and the host says that the script's
+// process stopped. Where there is no stack left even to leave, the error goes on to the
+// sandbox, which ends the run and says so again once the stack is back: that send
+// leaves.
+let silent = false
 const send = (message) => {
   try {
-    process.stdout.write(`${JSON.stringify(message)}\n`)
+    if (!silent) process.stdout.write(`${JSON.stringify(message)}\n`)
   } catch (error) {
-    if (error instanceof RangeError) throw error
+    if (!(error instanceof RangeError)) return
+    silent = true
   }
+  if (silent) process.exit(SILENT)
 }
 
 // The host kills this process at the run's deadline. A host that is gone, or stopped,
 // kills nothing, so the process keeps the deadline too, this long after the host's: a
-// script that never yields is stopped by the interpreter (sandbox.js `overdue`), and the
-// process then leaves.
+// script whose own code never yields is stopped by the interpreter (sandbox.js
+// `overdue`), and the process then leaves. A script that is busy inside one long call of
+// a built-in is stopped by the host only, so it can outlive a host that is gone or
+// stopped.
 const GRACE = 1_000
 
 let lastCall = 0

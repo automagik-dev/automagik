@@ -377,7 +377,7 @@ export const IM_CSS = `
 .bt-im-title{font-size:14px;line-height:20px;font-weight:500;color:var(--bt-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-im-name{font-size:13px;line-height:18px;color:var(--bt-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .bt-im-status{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-[data-state=error]>.bt-set-copy>.bt-im-status{color:var(--bt-danger);white-space:normal}
+[data-state=error]>.bt-set-copy>.bt-im-status{color:var(--st-bad-strong,var(--bt-danger));white-space:normal}
 .bt-im-dot{flex:none;width:7px;height:7px;border-radius:50%;corner-shape:round;background:var(--bt-ink-3)}
 .bt-im-dot[data-state=ready]{background:var(--bt-green)}
 .bt-im-dot[data-state=error]{background:var(--bt-danger)}
@@ -409,8 +409,8 @@ export const IM_CSS = `
 .bt-im-room svg{width:12px;height:12px}
 .bt-im-menu button{gap:8px}
 .bt-im-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px}
-.bt-im-error{flex:1;min-width:0;font-size:12px;line-height:16px;color:var(--bt-danger);overflow-wrap:anywhere}
-.bt-im-banner{padding:10px 12px;border-radius:12px;background:var(--bt-danger-soft);color:var(--bt-danger);font-size:12px;line-height:16px}
+.bt-im-error{flex:1;min-width:0;font-size:12px;line-height:16px;color:var(--st-bad-strong,var(--bt-danger));overflow-wrap:anywhere}
+.bt-im-banner{padding:10px 12px;border-radius:12px;background:var(--bt-danger-soft);color:var(--st-bad-strong,var(--bt-danger));font-size:12px;line-height:16px}
 .bt-im-qr-row{display:flex;justify-content:center;padding:20px 12px 24px}
 .bt-im-qr-box{display:flex;flex-direction:column;align-items:center;gap:12px}
 .bt-im-qr-frame{position:relative;width:184px;height:184px;padding:8px;box-sizing:border-box;border-radius:12px;background:var(--bt-qr-paper);box-shadow:inset 0 0 0 1px var(--bt-line)}
@@ -423,12 +423,12 @@ export const IM_CSS = `
 .bt-im-qr-done{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;border-radius:12px;background:color-mix(in srgb,var(--bt-qr-paper) 82%,transparent);color:var(--bt-green)}
 .bt-im-qr-done svg{width:40px;height:40px}
 .bt-im-qr-caption{margin:0;font-size:13px;line-height:18px;color:var(--bt-ink-2);text-align:center}
-.bt-im-qr-box[data-state=error] .bt-im-qr-caption{color:var(--bt-danger);max-width:320px}
+.bt-im-qr-box[data-state=error] .bt-im-qr-caption{color:var(--st-bad-strong,var(--bt-danger));max-width:320px}
 .bt-im-chat-name{flex-direction:row;align-items:center;gap:8px}
 .bt-im-chat .bt-set-control{gap:8px}
-.bt-im-danger:hover{color:var(--bt-danger)}
-.bt-im-danger[data-confirm]{color:var(--bt-danger);background:var(--bt-danger-soft)}
-.bt-im-remove{justify-content:center;color:var(--bt-danger)}
+.bt-im-danger:hover{color:var(--st-bad-strong,var(--bt-danger))}
+.bt-im-danger[data-confirm]{color:var(--st-bad-strong,var(--bt-danger));background:var(--bt-danger-soft)}
+.bt-im-remove{justify-content:center;color:var(--st-bad-strong,var(--bt-danger))}
 .bt-im-remove[data-confirm]{background:var(--bt-danger-soft)}
 @media (prefers-reduced-motion:reduce){.bt-im-dot,.bt-im-qr-blank,.bt-im-qr{animation:none}}
 `
