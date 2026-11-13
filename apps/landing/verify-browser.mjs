@@ -140,7 +140,7 @@ try {
       assert.ok(layout.tag.holds.length === 1 && layout.tag.holds[0] === 'svg' && layout.tag.href === 'https://weunfold.ai/', `The tag's link holds nothing but the tag: ${label} ${JSON.stringify(layout.tag.holds)}`)
       assert.ok(width > 700 ? layout.tag.right === 0 && layout.tag.beside : layout.tag.left === 0 && layout.tag.under, `The tag ends the footer's last row on a wide screen and sits under it, at the left, on a phone: ${label} ${JSON.stringify(layout.tag)}`)
       assert.ok(layout.tag.logo * 1325 / 1632.34 >= layout.tag.width, `The tag is never bigger than the logo's word: ${label} ${layout.tag.logo}`)
-      assert.deepEqual(layout.themed.filter(source => (/(?:-dark(?:-2x)?\.webp|\/automagik-lockup-oi-cream\.svg|\/(?:automagik|genie|omni)-lockup-three-colours-cream(?:-header)?\.svg)$/.test(source) || rowDark.some(file => source.endsWith(file))) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
+      assert.deepEqual(layout.themed.filter(source => (/(?:-dark(?:-2x)?\.webp|\/automagik-lockup-oi-cream\.svg|\/automagik-lockup-three-colours-cream(?:-header)?\.svg|\/(?:genie-lamp|omni-mark|mykes-clean)(?:-lockup)?-cream(?:-32|-header)?\.svg)$/.test(source) || rowDark.some(file => source.endsWith(file))) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
       if (route === '/') {
         assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)
         assert.ok(layout.bubble.bottom <= layout.heroWindow.top && layout.bubble.left >= 0 && layout.bubble.right <= width, `The speech bubble stays off the app window: ${label} ${JSON.stringify([layout.bubble, layout.heroWindow])}`)
@@ -501,6 +501,9 @@ try {
         const walked = [order[0]]
         for (let step = 0; step < round.length; step++) {
           const link = page.locator(`.pager a[rel="${rel}"]`), href = await link.getAttribute('href')
+          // Said before the click: a link that leaves this site's pages would otherwise be
+          // found only by the wait for a page that never loads.
+          assert.ok(round.includes(href), `The pager's ${rel} leads to a product page this site builds: ${href} from ${walked.at(-1)} ${width}px`)
           await link.click()
           await page.waitForURL(origin + href, { waitUntil: 'load' })
           walked.push(new URL(page.url()).pathname)
@@ -588,24 +591,29 @@ try {
       console.log(`PASS logo ${label}: the kit's file for the theme, its name drawn in the theme's colour, at its own proportions, header and footer in place, icons load`)
     } finally { await context.close() }
   }
-  // Genie's and Omni's own lockups: the heading of each one's page (the kit's large drawing)
-  // and the title of each one's card on the home page (the drawing for small sizes). The file
-  // follows the theme, except on Genie's card, which is dark in both themes. As for the logo
-  // above, the file's name is not enough: the name's drawn colour must stand clear of the
-  // ground it sits on. Each is drawn at its file's own proportions inside its column, at
-  // every width, with nothing drawn over it.
+  // Genie's, Omni's and Mykes's own lockups (the brand's rule 10: each product's own flat mark
+  // beside its name, never the triskle): the heading of each one's page and the title of
+  // Genie's and Omni's cards on the home page. Omni has a drawing for small sizes, on its
+  // card; the lamp and the cords have one drawing each. The file follows the theme, except
+  // on Genie's card, which is dark in both themes. As for the logo above, the file's name is
+  // not enough: the colour the mark and the name are drawn in must stand clear of the ground
+  // they sit on (Mykes's heading stands on the stage's gradient: every stop of it is tried).
+  // Each is drawn at its file's own proportions inside its column, at every width, with
+  // nothing drawn over it; and Omni's large drawing is never shown under 56 px high.
   for (const colorScheme of ['light', 'dark']) for (const width of [1440, 1024, 900, 768, 390, 320]) {
     const label = `${colorScheme} ${width}px`, tone = colorScheme === 'dark' ? 'cream' : 'ink'
     const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
     try {
       const outside = await guard(context)
       const page = await context.newPage()
-      const heading = Math.min(128, width * (width > 860 ? 0.118 : 0.23))
-      for (const [route, selector, stop, file, units, height] of [
-        ['/genie/', 'h1 .product-logo', null, `genie-lockup-three-colours-${tone}.svg`, 976.34, heading],
-        ['/omni/', 'h1 .product-logo', null, `omni-lockup-three-colours-${tone}.svg`, 916.53, heading],
-        ['/', '[data-block="omni"] h3 .product-logo', null, `omni-lockup-three-colours-${tone}-header.svg`, 916.53, 44],
-        ['/', '[data-block="genie"] h3 .product-logo', '--plum-2', 'genie-lockup-three-colours-cream-header.svg', 976.34, 44],
+      const heading = Math.min(128, width * (width > 860 ? 0.104 : 0.185))
+      assert.ok(heading >= 56, `Omni's large drawing is for 56 px and up: ${label} ${heading}`)
+      for (const [route, selector, stop, file, units, height, name] of [
+        ['/genie/', 'h1 .product-logo', null, `genie-lamp-lockup-${tone}.svg`, 1114.74, heading, 'Genie'],
+        ['/omni/', 'h1 .product-logo', null, `omni-mark-lockup-${tone}.svg`, 885.24, heading, 'Omni'],
+        ['/mykes/', 'h1 .product-logo', '--st-stage', `mykes-clean-lockup-${tone}.svg`, 1058.16, heading, 'Mykes'],
+        ['/', '[data-block="omni"] h3 .product-logo', null, `omni-mark-lockup-${tone}-header.svg`, 885.24, 44, 'Omni'],
+        ['/', '[data-block="genie"] h3 .product-logo', '--plum-2', 'genie-lamp-lockup-cream.svg', 1114.74, 44, 'Genie'],
       ]) {
         await page.goto(origin + route, { waitUntil: 'load' })
         await page.evaluate(() => Promise.all([...document.images].filter(image => !image.closest('.fam, .fam-world')).map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
@@ -614,16 +622,20 @@ try {
           const canvas = document.createElement('canvas'); canvas.height = 132; canvas.width = Math.round(132 * box.width / box.height)
           const pen = canvas.getContext('2d', { willReadFrequently: true })
           // The ground the lockup stands on, as for the logo above: every background from the
-          // page down, painted one over the other. Genie's card is a gradient, which that
-          // cannot read, so its lightest stop is painted last: the hardest ground for cream letters.
+          // page down, painted one over the other. A gradient is something that cannot read,
+          // so its colours are painted last, one at a time: Genie's card by its lightest stop
+          // (the hardest ground for cream letters), the stage by every stop it names.
           const layers = []; for (let node = image.parentElement; node; node = node.parentElement) layers.unshift(getComputedStyle(node).backgroundColor)
-          if (stop) layers.push(getComputedStyle(card).getPropertyValue(stop))
-          pen.fillStyle = '#fff'; pen.fillRect(0, 0, 1, 1)
-          for (const layer of layers) { pen.fillStyle = layer; pen.fillRect(0, 0, 1, 1) }
-          const under = [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)]
-          // The colour the name is drawn in: the commonest solid pixel to the right of the triskle.
+          const value = stop ? getComputedStyle(card ?? image).getPropertyValue(stop).trim() : '', last = !stop ? [null] : value.includes('gradient') ? value.match(/#[0-9a-f]{6}\b/gi) : [value]
+          const under = last.map(colour => {
+            pen.fillStyle = '#fff'; pen.fillRect(0, 0, 1, 1)
+            for (const layer of colour ? [...layers, colour] : layers) { pen.fillStyle = layer; pen.fillRect(0, 0, 1, 1) }
+            return [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)]
+          })
+          // The colour the mark and the name are drawn in: the commonest solid pixel of the
+          // picture (the sparkle on an i is the only other colour, and it is small).
           pen.clearRect(0, 0, canvas.width, canvas.height); pen.drawImage(image, 0, 0, canvas.width, canvas.height)
-          const from = Math.ceil(132 * 300 / 264), pixels = pen.getImageData(from, 0, canvas.width - from, canvas.height).data, colours = new Map()
+          const pixels = pen.getImageData(0, 0, canvas.width, canvas.height).data, colours = new Map()
           for (let at = 0; at < pixels.length; at += 4) if (pixels[at + 3] === 255) { const colour = `${pixels[at]},${pixels[at + 1]},${pixels[at + 2]}`; colours.set(colour, (colours.get(colour) || 0) + 1) }
           return {
             file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, size: [box.width, box.height], under, name: image.alt, text: holder.textContent.trim(),
@@ -635,23 +647,27 @@ try {
         const spot = `${route} ${selector} ${label}`, near = (value, wanted) => Math.abs(value - wanted) <= 0.6
         assert.equal(seen.file, file, `The lockup's file: ${spot}`)
         const light = colour => colour.map(value => value / 255).map(value => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
-        const against = seen.word && (Math.max(light(seen.word), light(seen.under)) + 0.05) / (Math.min(light(seen.word), light(seen.under)) + 0.05)
-        assert.ok(against >= 7, `The name is drawn clear against its ground: ${spot} ${JSON.stringify([seen.word, seen.under, against])}`)
+        const against = seen.word && seen.under.length ? Math.min(...seen.under.map(under => (Math.max(light(seen.word), light(under)) + 0.05) / (Math.min(light(seen.word), light(under)) + 0.05))) : 0
+        assert.ok(against >= 7, `The mark and the name are drawn clear against their ground: ${spot} ${JSON.stringify([seen.word, seen.under, against])}`)
         assert.ok(seen.drawn && near(seen.size[1], height) && near(seen.size[0], height * units / 264), `The lockup's size, unstretched: ${spot} ${seen.size}`)
         assert.ok(seen.inside && seen.over <= 0, `The lockup stays inside its column: ${spot} ${JSON.stringify([seen.inside, seen.over])}`)
         assert.deepEqual([...new Set(seen.effects)], ['none 1 normal'], `Nothing is drawn over the lockup: ${spot}`)
-        assert.deepEqual([seen.name, seen.text], [file.startsWith('genie') ? 'Genie' : 'Omni', ''], `The lockup's text is the product's name, and the heading holds nothing else: ${spot}`)
+        assert.deepEqual([seen.name, seen.text], [name, ''], `The lockup's text is the product's name, and the heading holds nothing else: ${spot}`)
       }
       assert.deepEqual(outside, [], `No outside request: ${label}`)
-      console.log(`PASS product lockups ${label}: Genie's and Omni's own files for the theme, the name clear against its ground, unstretched inside the column, page heading and home card`)
+      console.log(`PASS product lockups ${label}: Genie's, Omni's and Mykes's own files for the theme, the mark and the name clear against their ground, unstretched inside the column, page heading and home card`)
     } finally { await context.close() }
   }
-  // The triskle alone is the kit's drawing for the size shown, drawn and square: the 32 px
-  // drawing in the Products menu's Mykes entry, the large one in the Cloud and Mykes heroes.
+  // The marks alone. In the Products menu each of Omni, Genie and Mykes stands beside its own
+  // flat mark from the brand folder (Omni's is the vortex drawn for about 32 px), in ink on
+  // the light page and cream on the dark one, drawn clear against the menu's ground: never
+  // the triskle, never a pet. The triskle is Automagik's alone: it stands for Automagik's own
+  // Cloud, the kit's 32 px drawing beside Cloud in the menu and the large one in Cloud's hero,
+  // and no product's own page shows it. No character stands in a menu's picture.
   for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
     try {
-      const outside = await guard(context)
+      const outside = await guard(context), tone = colorScheme === 'dark' ? 'cream' : 'ink'
       const page = await context.newPage()
       const seen = async selector => page.evaluate(async selector => {
         const image = [...document.querySelectorAll(selector)].find(node => node.getClientRects().length)
@@ -662,13 +678,60 @@ try {
       }, selector)
       await page.goto(origin + '/', { waitUntil: 'load' })
       await page.locator('[popovertarget="menu-products"]').click()
-      assert.deepEqual(await seen('.menu-item[href="/mykes/"] .menu-art'), ['triskle-three-colours-32.svg', true, 32, 32], `The Mykes entry's mark: ${colorScheme}`)
-      for (const [route, selector, size] of [['/cloud/', '.hero-mark', 300], ['/mykes/', '.coming-mark', 120]]) {
+      const light = colour => colour.map(value => value / 255).map(value => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+      for (const [slug, file] of [['omni', `omni-mark-${tone}-32.svg`], ['genie', `genie-lamp-${tone}.svg`], ['mykes', `mykes-clean-${tone}.svg`]]) {
+        const entry = `#menu-products .menu-item[href="/${slug}/"]`
+        assert.deepEqual(await seen(`${entry} .menu-art`), [file, true, 32, 32], `The ${slug} entry's mark is its own, for the theme: ${colorScheme}`)
+        const drawn = await page.evaluate(async entry => {
+          const pictures = [...document.querySelectorAll(`${entry} img`)], image = pictures[0]
+          await image.decode()
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 96
+          const pen = canvas.getContext('2d', { willReadFrequently: true })
+          const layers = []; for (let node = image.parentElement; node; node = node.parentElement) layers.unshift(getComputedStyle(node).backgroundColor)
+          pen.fillStyle = '#fff'; pen.fillRect(0, 0, 1, 1)
+          for (const layer of layers) { pen.fillStyle = layer; pen.fillRect(0, 0, 1, 1) }
+          const under = [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)]
+          pen.clearRect(0, 0, 96, 96); pen.drawImage(image, 0, 0, 96, 96)
+          const pixels = pen.getImageData(0, 0, 96, 96).data, colours = new Map()
+          for (let at = 0; at < pixels.length; at += 4) if (pixels[at + 3] === 255) { const colour = `${pixels[at]},${pixels[at + 1]},${pixels[at + 2]}`; colours.set(colour, (colours.get(colour) || 0) + 1) }
+          return { count: pictures.length, sources: pictures.map(picture => picture.getAttribute('src')), under, ink: [...colours].sort((one, other) => other[1] - one[1])[0]?.[0].split(',').map(Number) ?? null, shades: colours.size }
+        }, entry)
+        const against = drawn.ink && (Math.max(light(drawn.ink), light(drawn.under)) + 0.05) / (Math.min(light(drawn.ink), light(drawn.under)) + 0.05)
+        assert.ok(drawn.count === 1 && !/triskle|\/assets\/art\//.test(drawn.sources.join(' ')), `Beside ${slug} stands its own mark alone, no triskle and no pet: ${colorScheme} ${drawn.sources}`)
+        assert.ok(against >= 7 && drawn.shades === 1, `The ${slug} mark is flat, one colour, clear against the menu's ground: ${colorScheme} ${JSON.stringify([drawn.ink, drawn.under, against, drawn.shades])}`)
+      }
+      assert.deepEqual(await seen('#menu-products .menu-item[href="/cloud/"] .menu-art'), ['triskle-three-colours-32.svg', true, 32, 32], `The Cloud entry's mark is the triskle drawn for 32 px: ${colorScheme}`)
+      const pets = await page.evaluate(() => [...document.querySelectorAll('.menu-panel .menu-icon img')].map(image => image.getAttribute('src')).filter(src => /\/assets\/art\/(?!app-icon)|omni-pleased|lamp\.webp/.test(src)))
+      assert.deepEqual(pets, [], `No character stands in a menu's picture: ${colorScheme}`)
+      await page.goto(origin + '/cloud/', { waitUntil: 'load' })
+      assert.deepEqual(await seen('.hero-mark'), ['triskle-three-colours.svg', true, 300, 300], `The Cloud hero's mark: ${colorScheme}`)
+      for (const route of ['/mykes/', '/genie/', '/omni/']) {
         await page.goto(origin + route, { waitUntil: 'load' })
-        assert.deepEqual(await seen(selector), ['triskle-three-colours.svg', true, size, size], `The hero's mark: ${route} ${colorScheme}`)
+        const triskles = await page.evaluate(() => [...document.querySelectorAll('main img, #menu-products .menu-item:is([href="/omni/"], [href="/genie/"], [href="/mykes/"]) img')].map(image => image.getAttribute('src')).filter(src => /triskle|lockup-three-colours/.test(src)))
+        assert.deepEqual(triskles, [], `No triskle stands on a product's own page or beside its name: ${route} ${colorScheme}`)
       }
       assert.deepEqual(outside, [], `No outside request: marks ${colorScheme}`)
-      console.log(`PASS marks ${colorScheme}: the kit's triskle for the size shown, in the menu and the two heroes`)
+      console.log(`PASS marks ${colorScheme}: Omni's, Genie's and Mykes's own flat marks in the Products menu, clear against its ground; the triskle only for Automagik's Cloud; no character in a menu's picture`)
+    } finally { await context.close() }
+  }
+  // The drawer's lockup on a narrow phone. The brand's floor for a lockup is 28 px, with one
+  // exception: 24 px in the family drawer's phone layout. Here Automagik is the host, so its
+  // lockup stands alone in the top block and nothing squeezes it: it is 24 px high or more at
+  // 375 and 360 px wide, at its own proportions (396 by 64).
+  for (const width of [375, 360]) {
+    const context = await browser.newContext({ viewport: { width, height: 800 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context), page = await context.newPage()
+      await page.goto(origin + '/', { waitUntil: 'load' })
+      await page.locator('[data-family-open]').click()
+      await page.waitForFunction(() => document.documentElement.classList.contains('is-family-open'))
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-family-drawer] .fam-logo img')].some(image => image.getClientRects().length && image.complete && image.naturalWidth > 0))
+      const lockups = await page.evaluate(() => [...document.querySelectorAll('[data-family-drawer] .fam-logo img')].filter(image => image.getClientRects().length).map(image => { const box = image.getBoundingClientRect(); return [image.currentSrc.split('/').pop(), box.width, box.height] }))
+      assert.equal(lockups.length, 1, `The drawer shows Automagik's lockup once: ${width}px ${JSON.stringify(lockups)}`)
+      const [file, wide, high] = lockups[0]
+      assert.ok(/^automagik-lockup-three-colours-ink-(?:48|64|128)\.png$/.test(file) && high >= 24 - 0.05 && Math.abs(wide - high * 396 / 64) <= 0.6, `The drawer's lockup is 24 px high or more on a narrow phone, unstretched: ${width}px ${JSON.stringify(lockups[0])}`)
+      assert.deepEqual(outside, [], `No outside request from the drawer: ${width}px`)
+      console.log(`PASS drawer lockup ${width}px: 24 px high or more, at its own proportions`)
     } finally { await context.close() }
   }
   // The download hook, with real clicks and keys. A live platform opens its sheet: in the
