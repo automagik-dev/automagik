@@ -92,9 +92,17 @@ if (import.meta.main) {
     regularPath(join(ROOT, 'server'), true);
     const target = join(ROOT, 'server/checkout-input');
     mkdirSync(target); // An existing/stale input directory is never reused or overwritten.
-    cpSync(packed.dir, target, { recursive: true, errorOnExist: true, force: false });
-    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `manifest=${packed.manifest}\nchild=${packed.child}\nrevision=${packed.revision}\n`);
-    console.log(`checkout inputs: ${packed.revision} manifest=${packed.manifest} child=${packed.child}`);
+    try {
+      // The directory is exclusively ours; copy its verified assets, not the directory onto itself.
+      for (const file of readdirSync(packed.dir)) {
+        cpSync(join(packed.dir, file), join(target, file), { errorOnExist: true, force: false });
+      }
+      if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `manifest=${packed.manifest}\nchild=${packed.child}\nrevision=${packed.revision}\n`);
+      console.log(`checkout inputs: ${packed.revision} manifest=${packed.manifest} child=${packed.child}`);
+    } catch (error) {
+      rmSync(target, { recursive: true, force: true });
+      throw error;
+    }
   } finally {
     if (packed) rmSync(packed.staging, { recursive: true, force: true });
   }
