@@ -240,6 +240,8 @@ function sqliteLedger(DatabaseSync, path) {
     db.exec('PRAGMA journal_mode = WAL')
     // Schema upgrades are additive. In particular, old live auxiliary rows cannot
     // be reconstructed from Session history and must never be rebuilt or erased.
+    // Both prior products used version 3 with different columns. Upgrade by shape,
+    // under one write lock, preserving live rows and Automagik's usage_details.
     db.exec('BEGIN IMMEDIATE')
     try {
       const version = db.prepare('PRAGMA user_version').get().user_version
@@ -387,7 +389,7 @@ export function install(rt) {
         early.shift()
       } catch (error) {
         writeFailed = true
-        rt.warn('omni-ui: usage could not record a call: %s', error)
+        rt.warn('ds-bot: usage could not record a call: %s', error)
         return book
       }
     }
@@ -410,7 +412,7 @@ export function install(rt) {
       } catch (error) {
         // Even damage may leave irreplaceable auxiliary history recoverable.
         // Never delete a ledger as a side effect of opening a statistics view.
-        rt.warn('omni-ui: usage is kept in memory only: %s', error)
+        rt.warn('ds-bot: usage is kept in memory only: %s', error)
         return memoryLedger()
       }
     })().then((opened) => {
@@ -439,7 +441,7 @@ export function install(rt) {
       for (const sessionId of [bot.id, rt.chatOf(bot.id), ...(bot.segments ?? []).map(segment => segment.sessionId)]) owners.set(sessionId, botOwner(bot))
     }
     for (const room of Object.values(state.rooms ?? {})) {
-      owners.set(room.id, { owner: `room:${room.id}`, name: room.name })
+      for (const sessionId of [rt.sessionOfRoom(room), ...(room.parts ?? []).map(segment => segment.sessionId)].filter(Boolean)) owners.set(sessionId, { owner: `room:${room.id}`, name: room.name })
       const memberOwner = botId => ({ owner: botId, name: rt.botOf(botId)?.name ?? '' })
       for (const [botId, sessionId] of Object.entries(room.sessions ?? {})) owners.set(sessionId, memberOwner(botId))
       for (const [botId, segments] of Object.entries(room.segments ?? {})) {
@@ -492,8 +494,8 @@ export function install(rt) {
   async function scanSession(ledger, address, asOfSeq, seal, signal) {
     const sessionId = address.kind === 'session' ? address.sessionId : address.childSessionId
     const mark = ledger.mark(sessionId)
-    // A seal is valid only while the listing still carries the watermark it was
-    // sealed at. A cold Session whose log grew since is read again.
+    // A seal stands only while the listing shows the watermark it was sealed at, so a
+    // cold Session whose log grew since is read again.
     if (mark?.sealed && seal !== undefined && mark.listed === seal.listed) return true
     let through = asOfSeq
     if (through === undefined) {
@@ -502,10 +504,10 @@ export function install(rt) {
       through = projections.asOfSeq
     }
     const from = mark?.through ?? -1
-    if (!Number.isSafeInteger(through) || through <= from) {
-      if (mark !== undefined && (seal !== undefined || mark.sealed)) {
-        ledger.commit(sessionId, { rows: [], reset: false, mark: { ...mark, ...sealFields(seal) } })
-      }
+    if (!Number.isSafeInteger(through) || through < from) return false
+    if (through === from) {
+      // Nothing new to read: a warm Session's seal is cleared, and a cold one is sealed again at its watermark.
+      if (mark !== undefined && (seal !== undefined || mark.sealed)) ledger.commit(sessionId, { rows: [], reset: false, mark: { ...mark, ...sealFields(seal) } })
       return true
     }
     const events = []
@@ -559,7 +561,7 @@ export function install(rt) {
         listingFailed = false
       } catch (error) {
         listingFailed = true
-        rt.warn('omni-ui: usage could not list the Sessions: %s', error)
+        rt.warn('ds-bot: usage could not list the Sessions: %s', error)
       }
       const stored = ledger.owners()
       const owners = liveOwners(listed, stored)
@@ -627,6 +629,13 @@ export function install(rt) {
           failed.push([sessionId, error])
         }
       })
+      // One line for the whole scan, not one per Session it could not read.
+      const missed = failed.length + cut
+      if (missed > 0) {
+        rt.warn('omni-ui: usage could not read %d Session%s%s%s', missed, missed === 1 ? '' : 's',
+          cut > 0 ? ' before the scan ran out of time' : '',
+          failed.length > 0 ? `: ${failed.map(([sessionId]) => sessionId).join(', ')} (first error: ${failed[0][1]})` : '')
+      }
       scanFailed = false
     })().catch(error => {
       scanFailed = true
@@ -731,7 +740,7 @@ export function install(rt) {
     if (sessionId !== undefined && (typeof sessionId !== 'string' || sessionId === '')) refuse('bot/invalid', 'Invalid Session id')
     await rt.load()
     if (!rt.botOf(botId)) refuse('bot/not-found', 'Bot not found')
-    const job = scan().catch(error => rt.warn('omni-ui: usage scan failed: %s', error))
+    const job = scan().catch(error => rt.warn('ds-bot: usage scan failed: %s', error))
     let timer
     try {
       await Promise.race([job, new Promise(resolve => { timer = setTimeout(resolve, VIEW_WAIT_MS) })])
@@ -758,7 +767,7 @@ export function install(rt) {
     }, AbortSignal.timeout(VIEW_WAIT_MS))
   }
 
-  // Omni tags the requests it makes outside a Session with the Session they serve.
+  // DS Bot tags the requests it makes outside a Session with the Session they serve.
   const tags = new WeakMap()
   const tagUsage = (messages, tag) => {
     if (messages !== null && typeof messages === 'object') tags.set(messages, tag)
@@ -800,7 +809,7 @@ export function install(rt) {
       if (captured.owner === undefined) await rt.load()
       const book = ledger ?? await openLedger().catch(() => undefined)
       if (book === undefined) return
-      try { journal(book, sessionId, captured) } catch (error) { rt.warn('omni-ui: usage could not journal %s: %s', sessionId, error) }
+      try { journal(book, sessionId, captured) } catch (error) { rt.warn('ds-bot: usage could not journal %s: %s', sessionId, error) }
     })()
   }
   function record({ sessionId, kind, provider, model, usage, response, tag, invocation, outcome }) {
@@ -817,7 +826,7 @@ export function install(rt) {
       try { ledger.add(row) } catch (error) {
         writeFailed = true
         early.push(row)
-        rt.warn('omni-ui: usage could not record a call: %s', error)
+        rt.warn('ds-bot: usage could not record a call: %s', error)
       }
       return
     }

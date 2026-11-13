@@ -26,6 +26,14 @@ export const detailOfArgs = raw => {
 // so its reply stays in the chat (issue #62).
 export const opensByItself = source => source?.kind === 'goal'
 
+// Failures only the user can fix: a key, a sign-in, a balance. They block the Bot
+// until it is fixed (`bot.blocked`, for the repair card).
+export const BLOCKING_CODES = new Set(['MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'AUTH', 'QUOTA', 'ACCOUNT_QUOTA', 'ACCOUNT_SIGN_IN_REQUIRED', 'ACCOUNT_SIGNED_OUT', 'ACCOUNT_TOKEN_INVALID', 'LOCAL_AGENT_MISSING', 'LOCAL_AGENT_SIGNIN', 'LOCAL_AGENT_QUOTA', 'LOCAL_AGENT_EXIT'])
+// The ones a key set outside a turn can fix, and the ones a sign-in can (unblockBots).
+// A balance only a turn that completes shows fixed, as Retry runs one.
+const KEY_CODES = new Set(['MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'AUTH'])
+const SIGN_IN_CODES = new Set(['ACCOUNT_SIGN_IN_REQUIRED', 'ACCOUNT_SIGNED_OUT', 'ACCOUNT_TOKEN_INVALID'])
+
 // A failed turn's `LlmFailure`, kept to what can be shown and logged. Like DSH's own
 // error row, an AUTH failure loses its message: providers may echo part of the key.
 export function turnFailure(error) {
@@ -1004,13 +1012,16 @@ export function install(rt) {
         const joined = entry.joined ?? []
         // What the group already saw of the turn is not posted again.
         const texts = entry.texts.slice(entry.shown)
+        // Whether the turn wrote any text, also text the group already saw.
         const wroteText = entry.texts.length > 0
-        const shown = entry.shown > 0
+        const shown = entry.shown > 0 || (info?.retried === true && promisedOpenings.delete(info.exchangeId))
         const { lastText, lastCalled } = entry
         const toolCount = entry.toolCount ?? 0
         const suppressedSubagent = entry.suppressedSubagent === true
         // A turn stopped for a switch goes on in the next part, which answers instead.
         const switched = entry.switched === true
+        // A turn the plugin watched start. A turn/end replayed after a restart, whose
+        // turn is settled from the Session's log, is not one (resume.js does that).
         const watched = entry.turn !== undefined
         entry.turn = undefined
         entry.info = undefined
@@ -1047,12 +1058,31 @@ export function install(rt) {
         const failure = reason?.kind === 'error' && !switched ? turnFailure(reason.error) : undefined
         if (failure !== undefined) noteTurnFailure(id, failure)
         if (failure !== undefined) setFailed(id, failure)
+        // A route that is not a model endpoint refuses every generation; the failed
+        // Session's own request names it, so it is refused everywhere from now on.
+        if (failure?.code === 'HOSTED_ENGINE_ROUTE') {
+          const config = session.requestHeader?.()?.config
+          const ref = config?.provider && config?.model ? `${config.provider}/${config.model}` : undefined
+          if (ref !== undefined) void rt.routeRefused(ref, rt.botOf(rt.selfOf(id))).catch(error => rt.warn('omni-ui: %s still failing: %s', ref, error))
+        }
         const held = rt.groupOwners.has(id) ? rt.takeRoomSteps?.(id) ?? '' : ''
         if (switched) break
+        const owner = rt.chatOwners.get(id)
+        // A turn cut off at the output limit is not a finish: whoever reads its answer
+        // is told, and the diagnostics record it. Nothing written at all, twice in a
+        // row, is what a route over the window it really has leaves behind, and the
+        // context check then moves the part on instead of sending the same size again.
         const cutOff = watched && failure === undefined && reason?.kind === 'max-tokens'
         const wroteNothing = cutOff && !wroteText
         rt.noteCutOffTurn?.(id, { withoutText: wroteNothing })
         if (cutOff) noteCutOffTurn(id, { session, wroteNothing })
+        if (failure !== undefined) {
+          if (blockBot(id, session, failure) && owner !== undefined && info?.role === 'kickoff') rt.holdKickoffAgain(owner)
+        } else if (reason?.kind === 'completed') {
+          unblockBot(rt.selfOf(id))
+          // A turn the user opened, or the Retry that answers the user.
+          if (owner !== undefined && (info === undefined || info.role === 'continue')) rt.userAnswered(owner)
+        }
         // A model that writes its tool call as text ends the turn as if it were done,
         // though nothing ran. It gets one more turn on the same trigger, so a waiting
         // round or sender gets the real answer; a second time, the text goes on without
@@ -1162,5 +1192,78 @@ export function install(rt) {
     }
   })
 
-  Object.assign(rt, { live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, failedView, workView, roomWorkView, turnsView, steeredView, callDetail, doingOf, stopRoomTurn, releaseBot })
+  // A subagent a Bot's turn delegates to is work handed on, like message_bot: each
+  // run of the child hangs under the work the turn answers until its settlement
+  // notice comes back, and its closing message joins that work's results. A child
+  // can be sent more to do once it settled, and that is a fresh run on the same
+  // child id, so the run — not the child — is the sub-work. These are Cordis
+  // events, not Session events: the dispatch keys `this` by the delegating parent
+  // Agent, which `carrierKeyOf` hands back.
+  ctx.on('subagent/start', function (info) {
+    const id = carrierKeyOf(this)?.session?.id
+    const entry = id === undefined ? undefined : live.get(id)
+    const work = rt.workOf?.(entry?.info)
+    const self = id === undefined ? undefined : rt.selfOf(id)
+    if (work === undefined || self === undefined || !rt.chatOwners.has(id) || typeof info?.id !== 'string' || typeof info?.runId !== 'string' || !rt.ownsWork?.(self, work)) return
+    rt.openWork?.(info.runId, { from: self, parent: work, name: 'subagent', child: info.id })
+  })
+  // A settled run closes its sub-work: its closing text joins the results of
+  // the work it hung under.
+  ctx.on('subagent/end', (info) => {
+    if (typeof info?.id !== 'string') return
+    rt.settleSubWork?.(typeof info.runId === 'string' ? info.runId : info.id, subEndText(info), info.id)
+  })
+  ctx.on('tools/result', (exec, result) => {
+    if (!SUBAGENT_TOOLS.has(exec?.name) || result?.isError || typeof result?.value?.subagentId !== 'string') return
+    const description = exec.arguments?.description
+    rt.nameSubWork?.(result.value.subagentId, `subagent${typeof description === 'string' && description.trim() !== '' ? ` ${description.trim()}` : ''}`)
+  })
+
+  const markSteerCut = (id) => {
+    const entry = live.get(id)
+    if (entry?.turn !== undefined) entry.cut = { texts: entry.texts.length }
+  }
+
+  // DSH's prompt admission wraps any unexpected failure as 'session/agent-busy' and
+  // keeps the real cause in details.reason, which the window never shows and the log
+  // never saw (#424). For a Session this team owns, the reason is written to the
+  // diagnostics and put into the error the user reads.
+  const prompt = ctx.sessionController?.prompt
+  if (typeof prompt === 'function') {
+    const controller = ctx.sessionController
+    const admitted = async function (request, ...rest) {
+      try {
+        return await prompt.call(this, request, ...rest)
+      } catch (error) {
+        const id = request?.sessionId
+        if (id === undefined || (rt.roomOf(id) === undefined && !rt.isBotSession(id))) throw error
+        // The reason can name local paths or carry tokens, so the same cleaning the
+        // diagnostics get applies before it reaches the client.
+        const reason = typeof error?.details?.reason === 'string' && error.details.reason !== ''
+          ? cleanText(error.details.reason, { redact: rt.redactSecrets })
+          : undefined
+        rt.noteFailure({
+          source: 'prompt',
+          text: `prompt rejected for ${placeOf(id)}${reason === undefined ? '' : `: ${reason}`}`,
+          code: error?.code,
+          where: placeOf(id),
+          sessionId: id,
+        })
+        // The gateway passes a RemoteError's code and details on as they are, but
+        // wraps a fresh plain Error as 'gateway/internal': the reason is written on
+        // the rejection itself, keeping its identity.
+        if (reason !== undefined) {
+          error.message = `${error?.message ?? 'prompt rejected'} — ${reason}`
+          error.details = { ...error.details, reason }
+        }
+        throw error
+      }
+    }
+    ctx.effect(() => {
+      controller.prompt = admitted
+      return () => { if (controller.prompt === admitted) controller.prompt = prompt }
+    }, 'omni-ui: prompt rejection reasons')
+  }
+
+  Object.assign(rt, { live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, failedView, workView, roomWorkView, turnsView, steeredView, callDetail, doingOf, stopRoomTurn, stopChat, releaseBot, unblockBots, resumeBot, markSteerCut, hasSubagents, stopSubagents, adoptLiveWork })
 }

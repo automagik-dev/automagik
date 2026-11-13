@@ -12,8 +12,7 @@ import { createPets } from './pets.js'
 import { CODE_REFUSED } from './cli-login.js'
 import { install as installSide } from './side.js'
 import { handoffReply, questionReply, viewReply } from './parts.js'
-import { defaultRelayLimit } from './groups.js'
-import { validateViewAnswer } from '../shared/views.js'
+import { validateViewAnswer } from 'deep-view/core'
 import { previewText } from '../shared/plain-text.js'
 import { normalizeAddressList } from './browser/address-policy.js'
 import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
@@ -66,7 +65,11 @@ export function install(rt) {
 
   // The DSH interface language of the last browser that asked for the team.
   let uiLocale
-  rt.uiLanguage = () => (uiLocale === undefined ? undefined : LANGUAGES[uiLocale.split('-')[0].toLowerCase()] ?? uiLocale)
+  rt.uiLanguage = () => {
+    if (uiLocale === undefined) return undefined
+    const lower = uiLocale.toLowerCase()
+    return LANGUAGES[lower] ?? LANGUAGES[lower.split('-')[0]] ?? uiLocale
+  }
   // Where the user allows an MCP server, in that browser's words (places.js builds it from the
   // interface's own strings, "Configurações > Recursos > Permitir" in pt-BR), so the Bot names
   // the place as the user sees it. Until a browser says, the English interface's words.
@@ -108,30 +111,29 @@ export function install(rt) {
     // Tasks a Bot started (agents.js), for their live cards in the chat.
     tasks: state.tasks ?? {},
     // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
-    // `waiting`: the Bot holds its greeting until the user picks its model.
+    // `waiting`: the Bot holds its greeting until the user picks its model or fixes
+    // what failed it. `blocked`: the facts of a failure only the user can fix (turns.js).
     // `adoptionHistoryMatches` (adopted originals only): rollback's history guard
     // (agents.js rollbackAdoption) would pass, so the menu offers rollback only then.
-    bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => ({
-      ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
-      ...(bot.dshAgentId === undefined ? {} : { adoptionHistoryMatches: rt.adoptionHistoryMatches(bot.id) }),
-      ...rt.permissionFallbackOf('bot', bot),
-      ...rt.autoViewOf?.(bot),
-    })),
-    // `parts`: the members' hidden group Sessions and their earlier segments, for usage.
-    rooms: Object.values(state.rooms).map(({ log, seen, lateRounds, relays, sessions, segments, ...room }) => {
-      const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
-      const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
-      // The row's one line: the start of the last message, without its markdown marks (#1155).
-      const said = last ? previewText(last.text) : ''
-      return { ...room, relayLimitDefault: defaultRelayLimit(room), parts, ...rt.permissionFallbackOf('room', room), ...(said ? { preview: last.who === 'User' ? said : `${last.who}：${said}` } : {}) }
+    bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => {
+      const tail = rt.chatTail(rt.chatOf(bot.id))
+      return {
+        ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
+        ...(bot.dshAgentId === undefined ? {} : { adoptionHistoryMatches: rt.adoptionHistoryMatches(bot.id) }),
+        ...rt.permissionFallbackOf('bot', bot),
+        ...rt.autoViewOf?.(bot),
+        ...(tail ? { lastAt: tail.lastAt, preview: tail.preview } : {}),
+      }
     }),
     // `sessionId` is the group's own Session's current part, `ownParts` its earlier
     // ones; `parts` the members' hidden group Sessions and their earlier segments,
-    // for usage.
-    rooms: Object.values(state.rooms).map(({ log, seen, paused, sessions, segments, parts: ownParts, ...room }) => {
+    // for usage. `lateRounds` and `relays` are what an older team's rooms may still hold.
+    rooms: Object.values(state.rooms).map(({ log, seen, lateRounds, relays, paused, sessions, segments, parts: ownParts, ...room }) => {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId), ...(ownParts ?? []).map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
-      return { ...room, sessionId: rt.sessionOfRoom(room), ownParts: (ownParts ?? []).map(segment => segment.sessionId), parts, ...(last ? { lastAt: last.time, preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
+      // The row's one line: the start of the last message, without its markdown marks (#1155).
+      const said = last ? previewText(last.text) : ''
+      return { ...room, sessionId: rt.sessionOfRoom(room), ownParts: (ownParts ?? []).map(segment => segment.sessionId), parts, ...rt.permissionFallbackOf('room', room), ...(last ? { lastAt: last.time } : {}), ...(said ? { preview: last.who === 'User' ? said : `${last.who}：${said}` } : {}) }
     }),
     // Deleted private Bots whose folder, memory and chats stay closed to the others.
     privateArchives: rt.archivesView(),
@@ -151,6 +153,8 @@ export function install(rt) {
     // The DSH bots (`kind: 'dsh'`) and the tasks record (`kind: 'tasks'`): plain dsh
     // Sessions, not Bots.
     agents: Object.values(state.agents).filter(agent => agent.adoptedBotId === undefined && agent.pendingCreation !== true),
+    // Sidebar sections that group Bots, group chats and the DSH Agent by workflow.
+    sections: state.sections ?? [],
     // Key names and who may use them; values never leave the host.
     secrets: rt.secretsView(),
     capabilities: rt.capabilityLibraryView(),
@@ -176,6 +180,10 @@ export function install(rt) {
     readOnly: rt.readOnly() ?? null,
     // Which selector routes each bot type may use (shared/routes.js); absent: all three.
     ...(rt.routePolicy === undefined ? {} : { routePolicy: rt.routePolicy }),
+    // IM connections (settings → IM): one per chat-app bot the user added.
+    im: rt.imView?.() ?? { connections: [], platforms: [] },
+    // The computer-use switch, the provider it mounts, and each Bot's level and app grants.
+    computer: rt.computerView?.() ?? { enabled: false },
   })
   // What changes without a new revision, sent with every state answer. `learning`:
   // each Bot's pending skill proposals; `learningSettled`: the answered ones of its
@@ -207,6 +215,12 @@ export function install(rt) {
     // takes DSH's shell and file tools from its Sessions (omni-channels-dsh grants.js
     // operatesHere). Its runtime is its own child of this one, so it is read from the service.
     omniLinked: omniLinked(),
+    imStatus: rt.imStatusView?.() ?? {},
+    imVia: rt.imViaView?.() ?? {},
+    // Computer use live state: per-Bot control, leases, pending app cards and holds.
+    // Named apart from the state view's `computer`: the live answer merges into the
+    // same object and would wipe its `enabled` and `provider` fields.
+    computerLive: rt.computerLive?.() ?? {},
   })
   const omniLinked = () => {
     const channels = ctx.get?.('omniChannels')
@@ -217,11 +231,25 @@ export function install(rt) {
       return false
     }
   }
+  // The live fields' sources are spread across the host with no single change
+  // counter, so the serialized answer itself is the detector: a poll whose `live`
+  // still names it gets only the key back, not the fields again. The key carries
+  // a per-run prefix: a window can outlive the host, and a counter that restarts
+  // at 1 would let its stale key name a different answer.
+  const liveRun = randomUUID()
+  let liveSeq = 0
+  let liveCache = null
+  const liveAnswer = () => {
+    const value = live()
+    const json = JSON.stringify(value)
+    if (liveCache?.json === json) return liveCache
+    return liveCache = { key: `${liveRun}:${++liveSeq}`, value, json }
+  }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
-  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'diagnostics-permissions', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library', 'model-state', 'cli-login-current', 'cli-login-status', 'cli-login-connections', 'cli-login-accounts', 'cli-login-noticed'])
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'diagnostics-permissions', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library', 'model-state', 'cli-login-current', 'cli-login-status', 'cli-login-connections', 'cli-login-accounts', 'cli-login-noticed', 'group-rows', 'computer-system-status', 'computer-shot', 'browser-frame'])
   // Sign-in (cli-login.js): its replies are never cached by the browser.
   const CLI_LOGIN = new Set([
     'cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer',
@@ -327,6 +355,19 @@ export function install(rt) {
         state.prefs.backgroundModel = ref
       }
     }
+    if (body.enterToSend !== undefined) {
+      if (body.enterToSend === false) state.prefs.enterToSend = false
+      else if (body.enterToSend === true || body.enterToSend === null) delete state.prefs.enterToSend
+    }
+    if (body.memoryAutoRecall !== undefined) {
+      if (body.memoryAutoRecall === false) state.prefs.memoryAutoRecall = false
+      else delete state.prefs.memoryAutoRecall
+    }
+    if (body.memoryLimits !== undefined) {
+      const sizes = Object.entries(body.memoryLimits ?? {}).filter(([scope, size]) => MEMORY_LIMIT_SCOPES.has(scope) && Number.isInteger(size) && size >= MEMORY_LIMIT_MIN && size <= MEMORY_LIMIT_MAX)
+      if (sizes.length === 0) delete state.prefs.memoryLimits
+      else state.prefs.memoryLimits = { ...state.prefs.memoryLimits, ...Object.fromEntries(sizes) }
+    }
     return rt.save()
   }
 
@@ -423,9 +464,7 @@ export function install(rt) {
             if (body.live === answer.key) return ok({ revision: state.revision, unchanged: true, liveKey: answer.key })
             return ok({ revision: state.revision, unchanged: true, liveKey: answer.key, ...answer.value })
           }
-          // A phone asks for photos by reference and fetches each once (`avatar`).
-          const out = { ...view(), liveKey: answer.key, ...answer.value }
-          return ok(body.avatars === 'ref' ? rt.slimAvatars(out) : out)
+          return ok({ ...view(), liveKey: answer.key, ...answer.value })
         }
         case 'models':
           await rt.refreshHostModels?.()
@@ -492,7 +531,7 @@ export function install(rt) {
           return ok(await rt.earlierPage(String(body.sessionId ?? ''), body.cursor ?? undefined))
         case 'chat':
           await rt.load()
-          return ok(await rt.chatPage(String(body.botId ?? ''), body.cursor ?? undefined))
+          return ok(await rt.chatPage(String(body.botId ?? ''), body.cursor ?? undefined, body.steps === true))
         // Advanced queries never activate a Session or run a model. The usage query
         // may refresh its own derived ledger; checkpoint is deliberately NOT a read.
         case 'context-status':
@@ -556,6 +595,20 @@ export function install(rt) {
         case 'switch-route':
           await rt.load()
           return ok(await rt.switchRoute(String(body?.id ?? ''), String(body?.model ?? ''), body?.effort))
+        // Give up one wait for a hand-off that will not come back: only that sub-work
+        // closes, with an explicit result for the work above it.
+        case 'abandon-work':
+          await rt.load()
+          if (rt.abandonWork?.(String(body.id ?? '')) !== true) return fail('That wait is no longer open', 'bot/stale')
+          return ok(true)
+        // The repair card's Retry, once the user fixed what failed the Bot's turn.
+        case 'resume': {
+          await rt.load()
+          const bot = rt.botOf(String(body.botId ?? ''))
+          if (bot === undefined) return fail('Unknown Bot', 'bot/not-found')
+          await rt.resumeBot(bot)
+          return ok(true)
+        }
         // The avatar library: photos the user imported once, kept beside the team.
         case 'avatar-library':
           await rt.load()
@@ -764,17 +817,6 @@ export function install(rt) {
         case 'learning-answer':
           await rt.load()
           return ok(await rt.learningEndpoint(endpoint, body))
-        // The mobile API (mobile.js).
-        case 'hello':
-        case 'notices':
-        case 'avatar':
-        case 'room-chat':
-        case 'image':
-        case 'usage-summary':
-        case 'memory-edit':
-        case 'memory-add':
-          await rt.load()
-          return ok(await rt.mobileEndpoint(endpoint, body))
         case 'answer-question': {
           if (typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
           await rt.load()
@@ -978,6 +1020,8 @@ export function install(rt) {
         case 'im-retry':
         case 'im-login-start':
         case 'im-login-wait':
+          // Upstream's chat-app layer is not installed here (index.js): channels are Omni's.
+          if (rt.imEndpoint === undefined) return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
           await rt.load()
           return ok(await rt.imEndpoint(endpoint, body))
         case 'local-agents':
@@ -986,6 +1030,8 @@ export function install(rt) {
         case 'local-agent-add':
         case 'local-agent-update':
         case 'local-agent-remove':
+          // Upstream's local agents are not installed here (index.js): a local CLI runs over ACP.
+          if (rt.localAgentsEndpoint === undefined) return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
           await rt.load()
           return ok(await rt.localAgentsEndpoint(endpoint, body))
         // "New session" and "open an earlier session" on an abot's chat: ordinary
@@ -1012,6 +1058,10 @@ export function install(rt) {
           return ok(true)
         default:
           if (added !== undefined) return ok(await added.fn(body, signal))
+          if (endpoint.startsWith('computer-')) {
+            await rt.load()
+            return ok(await rt.computerEndpoint(endpoint.slice('computer-'.length), body))
+          }
           return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
       }
     } catch (error) {
@@ -1032,7 +1082,7 @@ export function install(rt) {
   ctx.effect(() => {
     void agentAccess.resume().catch(() => rt.warn('Agent access could not start'))
     return () => agentAccess.close()
-  }, 'omni-ui: agent access')
+  }, 'ds-bot: agent access')
 
   // A pet's sheet for the marks that wear it, and a character's baked sheet written into
   // Codex's own pets folder, as bytes rather than JSON. The write streams its body, which a
@@ -1058,7 +1108,7 @@ export function install(rt) {
         return petFailure('pet route', error)
       }
     },
-  }), 'omni-ui: pet route')
+  }), 'ds-bot: pet route')
   // A generated image (imagegen.js) for its card, by its id.
   ctx.effect(() => ctx.connection.fetch.register({
     path: IMAGE_ROUTE,
@@ -1069,7 +1119,7 @@ export function install(rt) {
       if (!bytes) return new Response('Not found', { status: 404 })
       return new Response(bytes, { status: 200, headers: { 'content-type': 'image/png', 'cache-control': 'private, max-age=86400' } })
     },
-  }), 'omni-ui: image route')
+  }), 'ds-bot: image route')
   ctx.effect(() => ctx.connection.fetch.register({
     path: PET_CODEX_ROUTE,
     methods: ['PUT'],
@@ -1084,14 +1134,59 @@ export function install(rt) {
         return petFailure('pet to Codex route', error)
       }
     },
-  }), 'omni-ui: pet to Codex route')
+  }), 'ds-bot: pet to Codex route')
 
   ctx.effect(() => ctx.connection.fetch.register({
     path: MCP_PATH,
     methods: ['POST', 'GET', 'DELETE', 'OPTIONS'],
     requestBody: 'streaming',
     fetch: request => agentAccess.fetch(request),
-  }), 'omni-ui: MCP route')
+  }), 'ds-bot: MCP route')
+
+  // How a user message reaches a Session: a Bot id, a group chat's id, or an earlier
+  // part of either resolves to its current part. `content` is the prompt blocks DSH
+  // takes (text, image, file receipts); `requestId` lands on the message's source.
+  async function sendUser({ sessionId: ref, content, requestId = randomUUID() }) {
+    const past = rt.pastOwners.get(ref)
+    const room = rt.roomOf(ref)
+    const sessionId = rt.botOf(ref) ? rt.chatOf(ref)
+      : room !== undefined ? rt.sessionOfRoom(room)
+        : past?.roomId === undefined && past !== undefined ? rt.chatOf(past.botId)
+          : past !== undefined ? rt.sessionOfRoom(rt.roomOf(past.roomId)) : ref
+    await rt.ensureCapabilities(sessionId)
+    await ctx.sessionController.prompt({
+      requestId,
+      sessionId,
+      mode: 'queue',
+      content,
+    }, AbortSignal.timeout(30_000))
+  }
+
+  // The user's answer to an ask_user card, from the web or an IM chat. A Bot id or an
+  // earlier part of its own chat means the current one.
+  async function answerQuestion(sessionRef, questionId, answer) {
+    const past = rt.pastOwners.get(sessionRef)
+    const sessionId = rt.botOf(sessionRef) ? rt.chatOf(sessionRef) : past && past.roomId === undefined ? rt.chatOf(past.botId) : sessionRef
+    const question = rt.own(state.questions, sessionId)
+    if (question === undefined || question.id !== questionId) throw Object.assign(new Error('This question is no longer open'), { code: 'bot/stale' })
+    const reply = questionReply(question, answer)
+    if (reply === undefined) throw Object.assign(new Error('Nothing to send'), { code: 'bot/invalid' })
+    // Claim the question before queueing so a second answer is refused.
+    delete state.questions[sessionId]
+    try {
+      await rt.ensureCapabilities(sessionId)
+      const agent = await rt.resolveAgent(sessionId)
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: reply.text }], source: reply.source }))
+      await ctx.sessions.flush(agent.session)
+    } catch (error) {
+      state.questions[sessionId] ??= question
+      throw error
+    }
+    await rt.save()
+    return true
+  }
+
+  Object.assign(rt, { sendUser, answerQuestion })
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({

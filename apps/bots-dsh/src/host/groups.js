@@ -17,9 +17,8 @@
 // turn keeps running in its group Session, and what it ends with is posted to the group,
 // where the member that asked for it answers.
 import { randomUUID } from 'node:crypto'
-import { refusal } from './refusal.js'
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
-import { readFile, rm } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -36,10 +35,6 @@ const ROOM_LOG_MAX = 60
 const ROOM_FIRST_LOOK = 12
 const ROOM_DELTA_MAX = 24
 const ROOM_EARLIER_MAX = 8
-
-// The group limit follows the upstream member-count rule unless a room overrides it.
-export const defaultRelayLimit = room => 3 * (room?.members?.length ?? 0)
-const relayLimit = room => room.relayLimit ?? defaultRelayLimit(room)
 
 // Short ack/thanks/closing phrases with no new content, used by the 0-tool idle loop guard.
 const IDLE_ACK_WORDS = "收到|好的|好|明白|明白了|了解|了解了|没问题|谢谢|多谢|感谢|辛苦了|辛苦|不客气|不用谢|完毕|完成|好嘞|行|ok|okay|got\\s+it|understood|noted|thanks|thank\\s+you|you\\s+are\\s+welcome|you're\\s+welcome|welcome|np|no\\s+problem|roger|ack|done|all\\s+good|sounds\\s+good"
@@ -74,7 +69,7 @@ export const isIdleRelayText = (text, everyone, priorBodies) => {
 }
 
 // Rows only the group chat draws: members read who is at work from the round itself.
-const SHOWN_ONLY = new Set(['working', 'approval'])
+const SHOWN_ONLY = new Set(['working', 'approval', 'permission-stop'])
 const memberLine = record => record !== undefined && !SHOWN_ONLY.has(record.kind)
 
 // A member's own lines are already in its Session, so only the others' are news.
@@ -309,6 +304,7 @@ export function install(rt) {
       return { ...who, text: record.text, time, ...(record.duration === undefined ? {} : { duration: record.duration }) }
     }
     if (record.kind === 'lookup') return { kind: 'lookup', ...who, text: record.text, time }
+    if (record.kind === 'permission-stop') return { kind: 'permission-stop', ...who, why: record.why, count: record.count, time }
     if (record.kind !== 'notice') return { kind: record.kind, ...who, time }
     switch (record.reason) {
       case 'failed': return { kind: 'failed', ...who, code: record.code, ...(record.status ? { status: record.status } : {}), text: record.message ?? record.detail, time }
@@ -354,13 +350,7 @@ export function install(rt) {
       return () => roomLineListeners.delete(listener)
     },
     // The group's own log, for the memory review and read_group_chat: every line, whole.
-    // Reconcile the room's trimmed state log before taking the append-only ledger
-    // snapshot. Memory review can therefore recover evidence older than room.log.
-    groupLinesAfter: async (roomId, since) => {
-      const room = rt.roomOf(roomId)
-      if (room !== undefined) ensureRoomLog(room)
-      return [...rt.ledger.after(bookOf(roomId), since).filter(memberLine)]
-    },
+    groupLinesAfter: async (roomId, since) => rt.ledger.after(bookOf(roomId), since).filter(memberLine),
     groupLine: async (roomId, seq) => {
       const record = rt.ledger.record(bookOf(roomId), seq)
       return memberLine(record) ? record : undefined
@@ -408,7 +398,7 @@ export function install(rt) {
       await rt.applyPermission(member, id, room, undefined, { start: true })
     } catch (error) {
       void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
-        .catch(failure => rt.warn('omni-ui: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
+        .catch(failure => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
       throw error
     }
     // While the Session was made the member may have left or been deleted, the group been
@@ -432,20 +422,21 @@ export function install(rt) {
       if (room.sessions[member.id] === id) delete room.sessions[member.id]
       rt.groupOwners.delete(id)
       void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
-        .catch(failure => rt.warn('omni-ui: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
+        .catch(failure => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
       throw error
     }
     // The Session is mapped to its member now, so its Bot is known: the deny list lands
     // before the first turn here, not on the next resolve.
     await rt.applyToolDeny(member, [id])
-      .catch(error => rt.warn('omni-ui: tool deny for %s in %s not applied: %s', member.name, room.name, error?.message ?? error))
+      .catch(error => rt.warn('ds-bot: tool deny for %s in %s not applied: %s', member.name, room.name, error?.message ?? error))
     delete room.seen[member.id]
     const ref = await rt.desiredModel(member, { sessionId: id })
     if (ref !== undefined) {
+      const effort = await rt.desiredEffort(member, ref)
       try {
-        await rt.selectSessionModel(id, splitRef(ref))
+        await rt.selectSessionModel(id, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
       } catch (error) {
-        rt.warn('omni-ui: model for %s in %s not applied: %s', member.name, room.name, error)
+        rt.warn('ds-bot: model for %s in %s not applied: %s', member.name, room.name, error)
         // The Session is still on the model DSH made it with. At Full access with the member
         // on a coding CLI it is not kept, as one whose level did not hold is not (above).
         try {
@@ -454,7 +445,7 @@ export function install(rt) {
           if (room.sessions[member.id] === id) delete room.sessions[member.id]
           rt.groupOwners.delete(id)
           void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
-            .catch(failure => rt.warn('omni-ui: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
+            .catch(failure => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
           throw refused
         }
       }
@@ -929,7 +920,7 @@ export function install(rt) {
       const content = Array.isArray(message.content) ? message.content : []
       const text = textOf(content)
       if (text === '' || content.some(block => block?.type !== 'text') || text.includes('dsh-session:')) break
-      lines.push({ id: message.id, text, exchangeId: message.source?.exchangeId })
+      lines.push({ id: message.id, text, exchangeId: message.source?.exchangeId, ...(viaOf(message.source) ? { via: viaOf(message.source) } : {}) })
     }
     return lines
   })
@@ -950,7 +941,7 @@ export function install(rt) {
       if (typeof line.exchangeId === 'string' && line.exchangeId !== '') {
         try { rt.forgetDelivery?.(line.exchangeId) } catch {}
       }
-      rt.warn('omni-ui: a message in %s carried a sign-in code and was not sent', agent.id)
+      rt.warn('ds-bot: a message in %s carried a sign-in code and was not sent', agent.id)
       return false
     })
     if (lines.length === 0) return
@@ -1086,17 +1077,7 @@ export function install(rt) {
     // An answer that came, or is still coming, means the round is not left silent.
     const answered = round.slots.some(slot => ['posted', 'working', 'waiting-approval'].includes(slot.status))
     if (alone && !answered) {
-      appendRoom(room, { who: 'Omni', kind: 'notice', reason: 'admin-passed', names: [round.soleAdmin.name] })
-      // The round the user watched shows the same notice as one line of its replies.
-      round.replies.push({ kind: 'admin-passed', botId: round.soleAdmin.id, name: round.soleAdmin.name, color: round.soleAdmin.color, time: Date.now() })
-      await rt.save()
-    }
-    // A round that ended with parked calls says so once, to the group and to the
-    // user: the log's "@Name" lines are real calls that wait, not drops in silence.
-    if (round.parked !== undefined) {
-      const limit = relayLimit(room)
-      appendRoom(room, { who: 'Omni', kind: 'notice', reason: 'paused', names: round.parked, limit })
-      round.replies.push({ kind: 'paused', names: round.parked, count: limit, time: Date.now() })
+      say(room, { who: 'Omni', kind: 'notice', reason: 'admin-passed', names: [round.soleAdmin.name], about: round.soleAdmin.id })
       await rt.save()
     }
   }
@@ -1121,7 +1102,7 @@ export function install(rt) {
       const own = batchOfSlot(room.id, slot)
       if (own !== undefined) leaveBatch(room, own, member.id)
       round.failed.push(member.name)
-      noteFailure(room, member, { code: 'SESSION', message: String(error?.message ?? error).slice(0, 300) })
+      noteFailure(room, member, { code: error?.levelNotSet === true ? 'PERMISSION' : 'SESSION', message: String(error?.message ?? error).slice(0, 300) })
       return
     }
     if (session === undefined) {
@@ -1155,6 +1136,10 @@ export function install(rt) {
       },
       onWork,
     )
+    // What stopped the turn on a permission (stops.js), each as a row of the round.
+    for (const stop of rt.stopsIn?.(session.id, startedAt) ?? []) {
+      say(room, { who: member.name, botId: member.id, kind: 'permission-stop', why: stop.why, count: stop.count, time: stop.last })
+    }
     const final = typeof reply === 'string' && !isPass(reply) ? reply : undefined
     const subRunning = rt.hasSubagents?.(session.id) === true
     if (reply?.failure !== undefined) {
@@ -1948,23 +1933,6 @@ export function install(rt) {
     await ctx.sessions.flush(agent.session)
   }
   rt.greetRoom = greetRoom
-
-  // The Continue of a group paused at its relay limit: the parked calls run in a
-  // round of their own, opened by the same relay a user message opens.
-  async function continueRoom(roomId) {
-    const room = rt.roomOf(roomId)
-    if (room === undefined) throw refusal('Unknown group chat')
-    if ((room.paused ?? []).length === 0) return
-    room.relays = 0
-    await rt.save()
-    const agent = await rt.resolveAgent(room.id)
-    agent.followup(createUserMessage({
-      content: [{ type: 'text', text: '[Continue]' }],
-      source: { kind: SOURCE_KIND, form: 'relay', role: 'resume', exchangeId: randomUUID(), senderName: 'You', roomId: room.id },
-    }))
-    await ctx.sessions.flush(agent.session)
-  }
-  rt.continueRoom = continueRoom
 
   async function reportRound(room, post, round) {
     const lines = round.rows.filter(row => row.kind === undefined).map(row => `${row.name}: ${row.text}`)

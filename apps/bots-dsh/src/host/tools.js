@@ -16,8 +16,18 @@ export const GROUP_REF = { type: 'string', required: true, description: 'Exact g
 const BLOCKING_QUESTION_TOOL = 'ask_user_question'
 // Omni has its own group goals; DSH's session goal still does not survive conversation parts.
 const GOAL_TOOLS = ['create_goal', 'update_goal', 'get_goal']
-const HIDDEN_TOOLS = [BLOCKING_QUESTION_TOOL, ...GOAL_TOOLS]
-const GOAL_REFUSAL = 'Omni does not run goals. Ask the Bot in a message instead.'
+// Bots keep DSH's subagents and teammates here, so upstream's delegation group is not hidden.
+// restrict() refuses a whole list when one name is registered in the Agent's own
+// scope, so each group is masked on its own.
+const HIDDEN_TOOL_GROUPS = [[BLOCKING_QUESTION_TOOL, ...GOAL_TOOLS]]
+const HIDDEN_TOOLS = HIDDEN_TOOL_GROUPS.flat()
+// The guidance DSH writes into the prompt for the hidden tools.
+const HIDDEN_SECTIONS = new Set([...HIDDEN_TOOLS.map(name => `tool:${name}`), 'tool:goal'])
+const GOAL_REFUSAL = 'Bot chats do not run /goal. To give a group a goal, use Set a goal in its + menu.'
+// DSH 0.2.2's schedule tools can deliver to a new Session, which is outside the team and
+// has no Bot; a Bot's tasks deliver to its own chat, which Omni moves on with each part.
+const SCHEDULE_TARGET_TOOLS = ['schedule_create', 'schedule_edit']
+const SCHEDULE_TARGET_REFUSAL = 'A Bot’s scheduled tasks run in its own chat. Use target "this_session".'
 const MODE_PARAM = {
   type: 'string',
   enum: ROOM_MODES,
@@ -85,12 +95,15 @@ export function install(rt) {
       await rt.load()
       const self = rt.selfOf(exec.agent?.id)
       const lines = Object.values(state.bots).map(bot => {
+        // A private Bot is only named to the others: not what it does, where, or what now.
+        if (bot.private === true && bot.id !== self) return `- ${bot.name} (${[bot.role, 'private Bot, closed to other Bots'].filter(Boolean).join(', ')})`
         // A Bot whose model its plugin owns answers with what that plugin says, not a DSH model.
         const hosted = rt.hostOwned?.(bot) === true
         const model = hosted ? undefined : bot.appliedModel ?? bot.model
         const answering = hosted ? rt.hostAnsweringOf?.(bot) : undefined
         const denied = Array.isArray(bot.denyTools) && bot.denyTools.length > 0 ? `denies ${bot.denyTools.join(', ')}` : ''
-        const tags = [bot.role, model ? `model ${model}` : '', answering ? `answers with ${answering}` : '', bot.workDir ? `works in ${bot.workDir}` : '', denied, rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
+        const section = sectionNameOf(bot.sectionId)
+        const tags = [bot.role, section ? `section "${section}"` : '', model ? `model ${model}` : '', answering ? `answers with ${answering}` : '', bot.workDir ? `works in ${bot.workDir}` : '', denied, rt.isMain(bot.id) ? 'Main Bot' : '', bot.private === true ? 'private' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
         const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
         const now = bot.id === self ? '' : `\n  now: ${rt.statusOf(bot.id)}`
         return `- ${bot.name}${tags ? ` (${tags})` : ''}${job}${now}`
@@ -351,8 +364,9 @@ export function install(rt) {
         // takes its creator's: the DSH default may be a provider that has no key, and
         // then the new Bot fails on its first reply.
         const creator = callerBot(exec)
-        const served = creator?.model && (await rt.catalog()).some(entry => entry.ref === creator.model)
-        const model = args.model || (served ? creator.model : undefined)
+        const served = new Set((await rt.catalog()).filter(entry => entry.needsKey !== true && rt.isLocalAgentRef?.(entry.ref) !== true).map(entry => entry.ref))
+        const fallback = [state.prefs.defaultBotModel, creator?.model].find(ref => ref && served.has(ref))
+        const model = args.model || fallback
         const denyTools = args.deny_tools ?? args.denyTools
         const inheritAuto = rt.autoOpener?.()
         // Only the parameters declared above reach createBot. Its other options (an
@@ -366,6 +380,7 @@ export function install(rt) {
           model,
           effort: args.effort,
           workDir,
+          section: args.section,
           avatar: avatar === undefined ? undefined : { image: avatar },
           createdBy: creator?.id,
           ...(inheritAuto === undefined ? {} : { inheritAuto }),
@@ -399,6 +414,7 @@ export function install(rt) {
       work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description}; an empty string returns it to the team workspace` },
       deny_tools: DENY_TOOLS_PARAM,
       denyTools: DENY_TOOLS_PARAM,
+      section: { ...SECTION_PARAM, description: `${SECTION_PARAM.description}; an empty string removes the Bot from its section (Main Bot only)` },
     },
     output,
     async execute(args, exec) {
@@ -425,7 +441,7 @@ export function install(rt) {
         const avatar = image === undefined ? undefined : { ...rt.botOf(bot.id)?.avatar, image }
         // `denyTools` needs no other field, so a list-only change is a patch of its own.
         const denyTools = args.deny_tools ?? args.denyTools
-        const next = await rt.updateBot(bot.id, { name: newName, role, instructions, color, ...(avatar !== undefined ? { avatar } : {}), ...(model ? { model } : {}), ...(effort === undefined ? {} : { effort }), ...(moving ? { workDir: workDir ?? '' } : {}), ...(denyTools === undefined ? {} : { denyTools }) }, self, exec.agent?.id)
+        const next = await rt.updateBot(bot.id, { name: newName, role, instructions, color, ...(avatar !== undefined ? { avatar } : {}), ...(model ? { model } : {}), ...(effort === undefined ? {} : { effort }), ...(section === undefined ? {} : { section }), ...(moving ? { workDir: workDir ?? '' } : {}), ...(denyTools === undefined ? {} : { denyTools }) }, self, exec.agent?.id)
         if (!moving) return `Updated ${next.name}.`
         const folder = workDir ?? 'the team workspace'
         return bot.id === caller.id ? `Updated ${next.name}. From your next step on, you work in ${folder}.` : `Updated ${next.name}. It now works in ${folder}.`
@@ -485,6 +501,18 @@ export function install(rt) {
     if (readOnly !== undefined) throw new Error(`Your working folder cannot change now: ${readOnly}`)
     // Saved folders are trimmed like typed ones, so such a name would save another folder.
     if (unquote(target) !== target) throw new Error(`${JSON.stringify(target)} cannot be a working folder: its name starts or ends with a space or a quote mark.`)
+    if (room !== undefined) {
+      // The folder holds only for this group conversation, so only this Session's
+      // writes widen; the private-Bot check is the one updateBot would run.
+      await rt.checkPrivacyChange(bot, { moving: true, workDir })
+      await rt.approveFolder(exec, { path: workDir, sessions: [exec.agent.id], who: { en: bot.name, zh: ` ${bot.name} ` } })
+      const result = await next()
+      if (result?.isError !== true) {
+        ;(room.memberDirs ??= {})[bot.id] = workDir ?? null
+        await rt.save()
+      }
+      return result
+    }
     await rt.approveFolder(exec, { path: workDir, sessions: rt.sessionsOfBot(bot.id), who: { en: bot.name, zh: ` ${bot.name} ` } })
     const result = await next()
     if (result?.isError !== true) await rt.updateBot(bot.id, { workDir: workDir ?? '' }, rt.selfOf(exec.agent?.id))
@@ -799,11 +827,33 @@ export function install(rt) {
     },
   }))
 
-  // dsh's own question tool holds the turn open until the user answers, and every
-  // message from another Bot or a group round queues behind it. Bot Sessions ask
-  // through ask_user instead, so the tool is taken out of their tool list, as are the
-  // goal tools.
-  const nativeDshSession = id => rt.botOf(rt.selfOf(id))?.kind === 'dsh'
+  // The team tools live in each Session's own scope, never in the global layer:
+  // a Bot's chat and a member's group Session get all of them, a group's own
+  // Session gets only its relay, and a Session ds-bot does not own gets none —
+  // so they never appear in a plain dsh conversation, and another plugin's
+  // same-named global tool can neither collide with them at boot nor shadow
+  // them inside these Sessions. What is scoped onto a Session is kept by its
+  // disposers and goes with the ownership: indexSessions (store.js) runs
+  // syncScopedTools on every save and adopt, so a deleted Bot's adopted
+  // Session, a member who left, or a deleted group shows the plain dsh surface
+  // again — and the unload effect lifts whatever is left. The same sync scopes
+  // the live Agents back: a reload lifts their scope while they are still
+  // live, and agent/created does not fire for them again, so without the walk
+  // their next request would come without the team tools.
+  /** @type {Map<string, {agent: any, relay: boolean, tools: boolean, restricted: boolean, filtered: boolean, disposers: Array<() => void>, unlisted: Set<string>}>} */
+  const scoped = new Map()
+  const unscope = (id) => {
+    const held = scoped.get(id)
+    if (held === undefined) return
+    scoped.delete(id)
+    for (const dispose of held.disposers) {
+      try {
+        dispose()
+      } catch (error) {
+        rt.warn('omni-ui: a scoped tool of %s was not removed: %s', id, error)
+      }
+    }
+  }
   const syncScopedTools = () => {
     // unscope() deletes as it goes, which a Map keys iterator takes in stride.
     for (const id of scoped.keys()) {
@@ -1017,8 +1067,9 @@ export function install(rt) {
   // dsh's own question tool holds the turn open until the user answers, and every
   // message from another Bot or a group round queues behind it. Bot Sessions ask
   // through ask_user instead, so it is taken out of their tool list, as are the goal
-  // and delegation tools. The restricts are kept with the Session's scope, so they
-  // lift with it.
+  // tools. The restricts are kept with the Session's scope, so they lift with it.
+  // A native DSH Bot keeps DSH's own question and goal tools.
+  const nativeDshSession = id => rt.botOf(rt.selfOf(id))?.kind === 'dsh'
   const hideBotUnusedTools = (agent) => {
     shareBotTools(agent)
     const id = agent?.session?.id
@@ -1035,19 +1086,23 @@ export function install(rt) {
     const held = scoped.get(id) ?? { relay: false, tools: false, restricted: false, filtered: false, disposers: [], unlisted: new Set() }
     held.agent = agent
     scoped.set(id, held)
-    filterBotAssembly(agent, held)
-    if (held.restricted !== true && typeof agent.ctx?.tools?.restrict === 'function') {
+    if (!nativeDshSession(id)) filterBotAssembly(agent, held)
+    if (!nativeDshSession(id) && held.restricted !== true && typeof agent.ctx?.tools?.restrict === 'function') {
       maskHiddenTools(agent, held, new Set(ctx.tools.schemas(agent).map(schema => schema.name)))
     }
     maskConnectorTools(agent, held)
   }
   ctx.on('tools/change', () => reapplyToolMasks())
   // A new Bot, part, or group Session gets its Agent before ds-bot records it, so the
-  // list is only trimmed once ds-bot resolves that Agent again; meanwhile the guard
-  // refuses the question tool in any Bot Session, and a goal made there is blocked.
-  ctx.tools.guard(exec => (exec.name === BLOCKING_QUESTION_TOOL && !nativeDshSession(exec.agent?.id) && rt.isBotSession(exec.agent?.id)
-    ? `Bots cannot use ${BLOCKING_QUESTION_TOOL}. Ask with ask_user in your own chat, or ask in your reply.`
-    : undefined))
+  // recording path resolves it again once the session is known as a Bot's; meanwhile
+  // the guard refuses the question tool in any Bot Session, and a goal made there is
+  // blocked. A native DSH Bot's Session keeps DSH's own tools as they are.
+  ctx.tools.guard((exec) => {
+    if (!rt.isBotSession(exec.agent?.id) || nativeDshSession(exec.agent?.id)) return undefined
+    if (exec.name === BLOCKING_QUESTION_TOOL) return `Bots cannot use ${BLOCKING_QUESTION_TOOL}. Ask with ask_user in your own chat, or ask in your reply.`
+    const target = exec.arguments?.target
+    return SCHEDULE_TARGET_TOOLS.includes(exec.name) && target !== undefined && target !== 'this_session' ? SCHEDULE_TARGET_REFUSAL : undefined
+  })
   // Creation waits for this listener, so the Agent's first step already lacks the tool.
   ctx.on('agent/created', async ({ agent }) => {
     try {
