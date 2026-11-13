@@ -44,6 +44,16 @@ export function normalizeName(raw) {
 // URL sent out would hold a form the redactor does not know. Encoding these characters
 // too keeps the sent URL equal to the text the redactor looks for.
 export const encodeUrlComponent = value => encodeURIComponent(value).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+// Percent escapes written with lower-case hex digits are the same characters; URL
+// encoders elsewhere write them that way, so both spellings of a value are covered.
+const lowerHex = value => value.replace(/%[0-9A-F]{2}/g, match => match.toLowerCase())
+
+// DSH keeps the last 64,000 bytes of a long tool output. A saved value that straddles
+// that cut leaves only its tail at the start of the kept text, so a string long enough
+// to be such a tail (64,000 bytes hold at least 16,000 UTF-16 units) has its leading
+// partial matched too. An ordinary short string is never a cut tail and stays untouched.
+const TAIL_BYTES = 64_000
+const TAIL_FLOOR = TAIL_BYTES / 4
 
 // One function that replaces every known value in a string, longest first so a value
 // that contains another is replaced whole. JSON-escaped and URL-encoded forms are covered too.
@@ -56,12 +66,14 @@ export function redactor(entries, { wholeWords = true } = {}) {
     if (typeof value !== 'string' || value.length < MIN_VALUE) continue
     const label = `[secret:${name}]`
     const short = value.length < WHOLE_VALUE
-    pairs.push([value, label, short])
-    const escaped = JSON.stringify(value).slice(1, -1)
-    if (escaped !== value) pairs.push([escaped, label, short])
+    const forms = [value, JSON.stringify(value).slice(1, -1)]
     // encodeURIComponent throws on a lone surrogate; such a value cannot sit in a URL anyway.
-    const encoded = value.isWellFormed() ? encodeUrlComponent(value) : value
-    if (encoded !== value && encoded !== escaped) pairs.push([encoded, label, short])
+    if (value.isWellFormed()) {
+      const encoded = encodeUrlComponent(value)
+      const plain = encodeURIComponent(value)
+      forms.push(encoded, plain, lowerHex(encoded), lowerHex(plain))
+    }
+    for (const form of new Set(forms)) pairs.push([form, label, short])
   }
   pairs.sort((a, b) => b[0].length - a[0].length)
   if (pairs.length === 0) return text => text
@@ -72,13 +84,48 @@ export function redactor(entries, { wholeWords = true } = {}) {
   const word = value => `(?<![\\p{L}\\p{N}])${quote(value)}(?![\\p{L}\\p{N}])`
   const parts = pairs.map(([value, , short]) => (short && wholeWords ? word(value) : quote(value)))
   const pattern = new RegExp(parts.join('|'), 'gu')
+  // The longest prefix of `text` that is a proper suffix of `form`, at least `MIN_VALUE`
+  // characters. The form's suffix starts with the text's first character, so the caller
+  // drops a form that does not hold it.
+  const overlap = (text, form, short) => {
+    for (let size = Math.min(text.length, form.length - 1); size >= MIN_VALUE; size--) {
+      // A short value is replaced only where it stands alone; a leading piece is
+      // followed by the rest of the output, so a letter or digit there is part of a word.
+      if (short && wholeWords && /[\p{L}\p{N}]/u.test(text.charAt(size))) continue
+      const offset = form.length - size
+      let at = 0
+      while (at < size && text.charCodeAt(at) === form.charCodeAt(offset + at)) at++
+      if (at === size) return size
+    }
+    return 0
+  }
   return (text) => {
-    if (typeof text !== 'string' || !pairs.some(([value]) => text.includes(value))) return text
-    return text.replace(pattern, match => labels.get(match) ?? match)
+    if (typeof text !== 'string') return text
+    const contains = pairs.some(([value]) => text.includes(value))
+    let lead
+    if (text.length >= TAIL_FLOOR) {
+      // A full value at the start is replaced whole by the pattern; only a longer piece
+      // (a suffix of another value) may swallow it, or the rest of it would leak.
+      let whole = 0
+      for (const [form] of pairs) if (form.length > whole && text.startsWith(form)) whole = form.length
+      const first = text.charAt(0)
+      for (const [form, label, short] of pairs) {
+        if (!form.includes(first)) continue
+        const size = overlap(text, form, short)
+        if (size > whole && (lead === undefined || size > lead.size)) lead = { size, label }
+      }
+    }
+    if (!contains && lead === undefined) return text
+    const body = text.slice(lead?.size ?? 0).replace(pattern, match => labels.get(match) ?? match)
+    return lead === undefined ? body : lead.label + body
   }
 }
 
 // Returns the same reference when nothing changed, so callers can tell cheaply.
+// Own enumerable keys are redacted with their values. An Error keeps its message and
+// stack (plus its cause) out of a JSON walk, so those are read directly. Other class
+// instances keep their prototype and own properties, so a JSON round-trip still sees
+// the same shape; a value that is not walked (a Date, a Map) is returned intact.
 export function redactDeep(value, redact) {
   if (typeof value === 'string') return redact(value)
   if (Array.isArray(value)) {
@@ -90,17 +137,44 @@ export function redactDeep(value, redact) {
     })
     return changed ? next : value
   }
-  if (value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
-    let changed = false
-    const next = {}
-    for (const [key, item] of Object.entries(value)) {
-      const replaced = redactDeep(item, redact)
-      if (replaced !== item) changed = true
-      next[key] = replaced
-    }
-    return changed ? next : value
+  if (value === null || typeof value !== 'object') return value
+  // A URL has no own enumerable property, only its href; a redacted href is rebuilt as
+  // a URL where it still parses, and its JSON form (the href string) is redacted either way.
+  if (value instanceof URL) {
+    const href = value.href
+    const replaced = redact(href)
+    if (replaced === href) return value
+    try { return new URL(replaced) } catch { return replaced }
   }
-  return value
+  let changed = false
+  const entries = Object.keys(value).map((key) => {
+    const name = redact(key)
+    const item = redactDeep(value[key], redact)
+    if (name !== key || item !== value[key]) changed = true
+    return [key, name, item]
+  })
+  if (value instanceof Error) {
+    const message = typeof value.message === 'string' ? redact(value.message) : value.message
+    const stack = typeof value.stack === 'string' ? redact(value.stack) : value.stack
+    const cause = Object.hasOwn(value, 'cause') ? redactDeep(value.cause, redact) : value.cause
+    if (message === value.message && stack === value.stack && cause === value.cause && !changed) return value
+    const next = Object.create(Object.getPrototypeOf(value), Object.getOwnPropertyDescriptors(value))
+    for (const [key, name, item] of entries) {
+      if (name !== key) delete next[key]
+      Object.defineProperty(next, name, { value: item, enumerable: true, writable: true, configurable: true })
+    }
+    Object.defineProperty(next, 'message', { value: message })
+    if (stack !== undefined) Object.defineProperty(next, 'stack', { value: stack })
+    if (Object.hasOwn(value, 'cause')) Object.defineProperty(next, 'cause', { value: cause })
+    return next
+  }
+  if (!changed) return value
+  const next = Object.create(Object.getPrototypeOf(value), Object.getOwnPropertyDescriptors(value))
+  for (const [key, name, item] of entries) {
+    if (name !== key) delete next[key]
+    Object.defineProperty(next, name, { value: item, enumerable: true, writable: true, configurable: true })
+  }
+  return next
 }
 
 export function install(rt) {

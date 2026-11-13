@@ -53,6 +53,115 @@ test('redaction replaces URL-encoded values', () => {
   assert.equal(redactor([{ name: 'BROKEN', value: broken }])(`x ${broken}`), 'x [secret:BROKEN]')
 })
 
+test('redaction replaces the lower-case hex and apostrophe-sparing URL forms of a value', () => {
+  const unicode = `${fresh()} é/ `
+  const upper = encodeUrlComponent(unicode)
+  const lower = upper.replace(/%[0-9A-F]{2}/g, match => match.toLowerCase())
+  assert.notEqual(lower, upper)
+  const redact = redactor([{ name: 'UNICODE', value: unicode }])
+  for (const form of [unicode, upper, encodeURIComponent(unicode), lower]) {
+    assert.equal(redact(`x ${form} y`), 'x [secret:UNICODE] y', form)
+  }
+
+  // encodeURIComponent leaves ' as is; new URL() writes it as %27. Both map to the label.
+  const apostrophe = `${fresh()} it's é`
+  const sparing = encodeURIComponent(apostrophe)
+  const escaped = encodeUrlComponent(apostrophe)
+  const sparesLower = sparing.replace(/%[0-9A-F]{2}/g, match => match.toLowerCase())
+  assert.ok(sparing.includes("'"))
+  assert.ok(!escaped.includes("'"))
+  assert.notEqual(sparesLower, sparing)
+  const redactApostrophe = redactor([{ name: 'APOSTROPHE', value: apostrophe }])
+  for (const form of [apostrophe, sparing, escaped, sparesLower]) {
+    assert.equal(redactApostrophe(`x ${form} y`), 'x [secret:APOSTROPHE] y', form)
+  }
+})
+
+test('redactDeep walks errors, null-prototype objects, class instances and object keys', () => {
+  const value = fresh()
+  const label = '[secret:TOKEN]'
+  const redact = redactor([{ name: 'TOKEN', value }])
+
+  // A value used as an object key is replaced there too, in a plain and a bare object.
+  const plain = { [value]: `nested ${value}` }
+  const plainOut = redactDeep(plain, redact)
+  assert.deepEqual(plainOut, { [label]: `nested ${label}` })
+  assert.deepEqual(Object.keys(plain), [value])
+  const bare = Object.create(null)
+  bare[value] = value
+  const bareOut = redactDeep(bare, redact)
+  assert.equal(Object.getPrototypeOf(bareOut), null)
+  assert.deepEqual(Object.keys(bareOut), [label])
+  assert.equal(JSON.stringify(bareOut), JSON.stringify({ [label]: label }))
+  assert.deepEqual(Object.keys(bare), [value])
+
+  // An Error's message, stack and cause are not in its JSON walk, so they are read directly.
+  const cause = new Error(`cause ${value}`)
+  const error = new Error(`failed ${value}`, { cause })
+  error.stack = `Error: failed ${value}\n    at run`
+  error[value] = 'key'
+  error.detail = `see ${value}`
+  const errorOut = redactDeep(error, redact)
+  assert.ok(errorOut instanceof Error)
+  assert.equal(errorOut.message, `failed ${label}`)
+  assert.equal(errorOut.stack, `Error: failed ${label}\n    at run`)
+  assert.equal(errorOut.cause.message, `cause ${label}`)
+  assert.equal(errorOut[label], 'key')
+  assert.equal(errorOut.detail, `see ${label}`)
+  assert.equal(error.message, `failed ${value}`)
+  assert.equal(error.cause.message, `cause ${value}`)
+  assert.deepEqual(Object.keys(error), [value, 'detail'])
+
+  // A class instance keeps its class and its JSON shape while its fields are walked.
+  class Box { constructor(text) { this.text = text } }
+  const box = new Box(`see ${value}`)
+  const boxOut = redactDeep(box, redact)
+  assert.ok(boxOut instanceof Box)
+  assert.equal(boxOut.text, `see ${label}`)
+  assert.equal(JSON.stringify(boxOut), JSON.stringify({ text: `see ${label}` }))
+  assert.equal(box.text, `see ${value}`)
+
+  // A URL has no own enumerable field; its href is walked and its JSON form stays a URL's.
+  const href = `https://example.test/mcp?key=${encodeUrlComponent(value)}`
+  const url = new URL(href)
+  const urlOut = redactDeep(url, redact)
+  assert.ok(urlOut instanceof URL)
+  assert.equal(urlOut.href, 'https://example.test/mcp?key=[secret:TOKEN]')
+  assert.equal(JSON.stringify(urlOut), JSON.stringify('https://example.test/mcp?key=[secret:TOKEN]'))
+  assert.equal(JSON.parse(JSON.stringify(urlOut)), 'https://example.test/mcp?key=[secret:TOKEN]')
+  assert.equal(JSON.stringify(url), JSON.stringify(href))
+  // A value in the host cannot be rebuilt as a URL; its JSON form is the redacted string.
+  const inHost = new URL(`https://${value}.example.test/`)
+  assert.equal(JSON.stringify(redactDeep(inHost, redact)), JSON.stringify(`https://[secret:TOKEN].example.test/`))
+
+  // Other non-plain values stay as they are, and a clean tree keeps its reference.
+  const when = new Date(1700000000000)
+  assert.equal(redactDeep(when, redact), when)
+  const clean = new Box('clean')
+  assert.equal(redactDeep(clean, redact), clean)
+  const cleanError = new Error('nothing secret')
+  assert.equal(redactDeep(cleanError, redact), cleanError)
+})
+
+// DSH spills a long tool output and keeps the last 64,000 bytes. When a saved value
+// straddles that cut, the kept text starts with the value's tail and its full form is gone.
+test('a value straddling the 64,000-byte tail cut is redacted at the start of the kept text', () => {
+  const value = fresh()
+  const redact = redactor([{ name: 'TOKEN', value }])
+  const KEPT = 64_000
+  // Keeping the last 64,000 bytes starts seven characters before the value ends.
+  const kept = (value + 'z'.repeat(KEPT - 7)).slice(-KEPT)
+  assert.equal(kept.length, KEPT)
+  assert.equal(kept.slice(0, 7), value.slice(-7))
+  assert.ok(!kept.includes(value))
+  assert.equal(redact(kept), `[secret:TOKEN]${'z'.repeat(KEPT - 7)}`)
+  // Just inside the boundary the whole value is still replaced.
+  const before = 'x'.repeat(74)
+  const inside = ('x'.repeat(1_000) + value + 'z'.repeat(63_900)).slice(-KEPT)
+  assert.equal(inside.slice(0, before.length), before)
+  assert.equal(redact(inside), `${before}[secret:TOKEN]${'z'.repeat(63_900)}`)
+})
+
 test('a short key (4 to 7 characters) is replaced only where it stands alone', () => {
   const redact = redactor([{ name: 'PIN', value: '4821' }, { name: 'PW', value: 'cat$1' }, { name: 'SECRET_WORD', value: 'secret' }])
   assert.equal(redact('pin 4821, again "4821"'), 'pin [secret:PIN], again "[secret:PIN]"')
