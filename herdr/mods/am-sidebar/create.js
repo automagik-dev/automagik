@@ -550,7 +550,7 @@ export class BotForm {
         console.error(e?.stack ?? e);
         result = { code: 1, err: String(e?.message ?? e) };
       }
-      if (result.code !== 0) console.error(`automagik-herdr restart: ${result.err}`);
+      if (result.code !== 0) console.error(`am restart: ${result.err}`);
       const r = restartAnswer(result);
       this.busy = false;
       if (r.refused) {

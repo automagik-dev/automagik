@@ -2,7 +2,7 @@
 // Pure, shared by the CLI and sidebar. Apache-2.0.
 export function actionError(error, action = "Start") {
   const text = String(error?.message ?? error ?? "").replace(/\x1b\[[0-9;]*m/g, "");
-  if (/^Herdr ended automagik-herdr /.test(text)) {
+  if (/^Herdr ended am /.test(text)) {
     return `Herdr stopped the ${action.toLowerCase()} command before it finished; check the panes for a partial start before retrying from a terminal.`;
   }
   if (/^This Herdr ends the sidebar's programs at 30 s/.test(text)) {
@@ -11,11 +11,11 @@ export function actionError(error, action = "Start") {
       : "This Herdr cannot wait long enough for a linked-machine restart; restart it from a terminal.";
   }
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const diagnostic = lines.findLast((line) => /^automagik-herdr: /.test(line))
+  const diagnostic = lines.findLast((line) => /^am: /.test(line))
     ?? lines.find((line) => /^(?:\w*Error): /.test(line))
     ?? lines.filter((line) => !/^(?:at\s|\^|Node\.js\b)/.test(line)).at(-1);
   if (!diagnostic) return `${action} failed; check the log and try again.`;
-  const reason = diagnostic.replace(/^(?:automagik-herdr: )?(?:\w*Error: )?/, "")
+  const reason = diagnostic.replace(/^(?:am: )?(?:\w*Error: )?/, "")
     .split(/(?<=[.!?])\s+(?=[A-Z])/)[0].replace(/[.!?;]+$/, "");
   if (/; (?:match|unpair|check|wait|choose|install)\b/.test(reason)) return `${reason}.`;
   const next = /different Hermes profile/.test(text) ? "match --profile to the bot's pairing"
