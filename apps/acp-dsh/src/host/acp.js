@@ -16,6 +16,9 @@ const STDERR_KEEP = 4000
 // How long a closed connection waits for the agent's exit, which says why (start()).
 const EXIT_GRACE_MS = 500
 const TERMINAL = new Set(['completed', 'failed'])
+const isToolId = id => typeof id === 'string' && id !== ''
+// Keep recent call identities without retaining every turn's payloads for the session.
+export const RETIRED_MAX = 1024
 // SDK 2.x refuses an incoming message over 32 MiB by default and closes the connection on it.
 // An image call carries its picture twice (content and rawOutput), base64: one a little over the
 // 12 MiB this plugin keeps (image.js) would end the turn as a dead agent instead of the "too
@@ -56,6 +59,29 @@ export function contentImages(content) {
   return content.type === 'image' ? [content] : []
 }
 
+// Saved image paths still scrub later replies; the image bytes and other output can go.
+function retiredTool(tool) {
+  const record = { id: tool.id, retired: true, unanswerable: true }
+  for (const key of ['title', 'kind', 'status', 'structuredName', 'mcp', 'bridge', 'drift', 'refused', 'mirrored']) {
+    if (tool[key] !== undefined) record[key] = tool[key]
+  }
+  record.listeners = new Set()
+  record.content = []
+  for (const item of Array.isArray(tool.content) ? tool.content : []) {
+    const block = item?.type === 'content' ? item.content : item
+    if (block?.type !== 'image' || typeof block.uri !== 'string') continue
+    const image = { type: 'image', uri: block.uri }
+    record.content.push(item.type === 'content' ? { type: 'content', content: image } : image)
+  }
+  for (const key of ['savedPath', 'saved_path']) {
+    if (typeof tool.rawOutput?.[key] === 'string') {
+      record.rawOutput ??= {}
+      record.rawOutput[key] = tool.rawOutput[key]
+    }
+  }
+  return record
+}
+
 // How long the agent has to answer. A CLI that waits on a first-run question, a keychain dialog
 // or an update starts and then never answers, and the chat must not wait with it: the whole
 // start (initialize, session/new, the bridge's first list) has START_MS, and every request sent
@@ -88,7 +114,7 @@ function stopped(what) {
 
 export class AgentRun {
   /**
-   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string, startMs?: number, requestMs?: number, timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout } }} spec
+   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string, onIgnored?: (message: string) => void, onRejected?: (what: string) => void, startMs?: number, requestMs?: number, timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout } }} spec
    *   startMs, requestMs: the deadlines, START_MS and REQUEST_MS unless a test sets shorter ones.
    *   timers: the clock the deadlines run on, for a test that moves it by hand.
    */
@@ -100,6 +126,9 @@ export class AgentRun {
     this.queue = []
     this.waiters = []
     this.tools = new Map()
+    this.turn = new Set()
+    this.retired = new Set()
+    this.didIgnore = false
     this.stderr = ''
     this.prompting = undefined
     this.exited = undefined
@@ -213,7 +242,10 @@ export class AgentRun {
     this.sessionId = answer.sessionId
     if (answer.modes !== undefined && answer.modes !== null) this.modes = answer.modes
     if (Array.isArray(answer.configOptions)) this.options = withModels(answer.configOptions, answer.models ?? modelStateOf(this.options))
+    for (const tool of this.tools.values()) tool.permission?.answer(CANCELLED)
     this.tools.clear()
+    this.turn.clear()
+    this.retired.clear()
     // The fork's source is closed by us: the spike did not show the fork closing it, and a
     // Session must never hold two bridges.
     try {
@@ -314,9 +346,21 @@ export class AgentRun {
     // The calls of the prompts before this one are over for DSH too: their cards ran in turns
     // that have ended, and a call already known never gets a second card. A question for one
     // has nobody left to answer it (onPermission); one still stored is withdrawn here.
-    for (const tool of this.tools.values()) {
+    for (const id of this.turn) {
+      const tool = this.tools.get(id)
+      if (tool === undefined) continue
       tool.unanswerable = true
       tool.permission?.answer(CANCELLED)
+      // A mirror body may still hold the old object while it saves its result.
+      this.tools.set(id, retiredTool(tool))
+      this.retired.add(id)
+    }
+    this.turn = new Set()
+    // An update for a call more than 1024 calls old is treated as new; no session restart.
+    while (this.retired.size > RETIRED_MAX) {
+      const id = this.retired.values().next().value
+      this.retired.delete(id)
+      this.tools.delete(id)
     }
     this.holdOn()
     const run = this.conn.prompt({ sessionId: this.sessionId, prompt })
@@ -333,7 +377,9 @@ export class AgentRun {
     this.promptEnded = true
     this.letGo()
     // A call the agent never closed is over with its turn; a question it never got an answer to is withdrawn.
-    for (const tool of this.tools.values()) {
+    for (const id of this.turn) {
+      const tool = this.tools.get(id)
+      if (tool === undefined) continue
       tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
       if (!TERMINAL.has(tool.status)) this.changeTool(tool, { status: tool.status === 'pending' ? 'failed' : 'completed', ended: true })
     }
@@ -493,7 +539,41 @@ export class AgentRun {
 
   // --- the agent's side of the conversation ---------------------------------------------
 
-  async onUpdate(update) {
+  ignored(what, payload) {
+    // Rejected traffic still needs safety checks, without retaining it or making a card.
+    try {
+      if (payload !== undefined && this.tools.get(payload?.toolCallId)?.retired !== true) {
+        this.markCall({ title: payload?.title ?? 'Tool', listeners: new Set() }, payload)
+      }
+    } catch {}
+    try { this.spec.onRejected?.(what) } catch {}
+    if (this.didIgnore) return
+    this.didIgnore = true
+    try { this.spec.onIgnored?.(`${this.spec.name} sent ${what} with no usable call id or for another session; such updates are ignored`) } catch {}
+  }
+
+  acceptsPermission(params) {
+    if (!isToolId(params?.toolCall?.toolCallId)
+      || (params.sessionId !== undefined && this.sessionId !== undefined && params.sessionId !== this.sessionId)) {
+      this.ignored('a permission request', params?.toolCall)
+      return false
+    }
+    return true
+  }
+
+  async onUpdate(update, sessionId) {
+    const isTool = update?.sessionUpdate === 'tool_call' || update?.sessionUpdate === 'tool_call_update'
+    if (sessionId !== undefined && this.sessionId !== undefined && sessionId !== this.sessionId) {
+      this.ignored('an update', isTool ? update : undefined)
+      return
+    }
+    if (isTool) {
+      if (!isToolId(update.toolCallId)) {
+        this.ignored('a tool update', update)
+        return
+      }
+      if (this.tools.get(update.toolCallId)?.retired === true) return
+    }
     switch (update?.sessionUpdate) {
       case 'agent_message_chunk': {
         const text = contentText(update.content)
@@ -512,7 +592,7 @@ export class AgentRun {
         break
       case 'tool_call_update': {
         const tool = this.tools.get(update.toolCallId) ?? this.seeTool(update)
-        this.changeTool(tool, update)
+        if (tool !== undefined) this.changeTool(tool, update)
         break
       }
       case 'config_option_update':
@@ -527,9 +607,13 @@ export class AgentRun {
   }
 
   seeTool(update) {
+    if (!isToolId(update?.toolCallId)) {
+      this.ignored('a tool update', update)
+      return undefined
+    }
     const known = this.tools.get(update.toolCallId)
     if (known) {
-      this.changeTool(known, update)
+      if (known.retired !== true) this.changeTool(known, update)
       return known
     }
     if (this.reviews?.last) this.reviews.after = true
@@ -543,6 +627,7 @@ export class AgentRun {
     // if the event is still queued; an existing card keeps its question for its body to ask.
     if (tool.drift === true) tool.unanswerable = true
     this.tools.set(tool.id, tool)
+    this.turn.add(tool.id)
     this.push({ type: 'tool', id: tool.id })
     return tool
   }
@@ -605,12 +690,16 @@ export class AgentRun {
    * @param {AbortSignal} [signal] aborts when the agent withdraws the request (`$/cancel_request`)
    */
   onPermission(params, signal) {
+    if (!this.acceptsPermission(params)) return Promise.resolve(CANCELLED)
     const known = this.tools.get(params.toolCall?.toolCallId)
     const tool = known ?? this.seeTool({ status: 'pending', ...params.toolCall })
+    if (tool === undefined) return Promise.resolve(CANCELLED)
     // The question's own title ("Run command?") names the question, not the call the card shows.
     const { title, ...details } = params.toolCall ?? {}
-    this.changeTool(tool, { ...details, status: undefined })
-    try { this.spec.onAsked?.(tool) } catch {}
+    if (tool.retired !== true) {
+      this.changeTool(tool, { ...details, status: undefined })
+      try { this.spec.onAsked?.(tool) } catch {}
+    }
     // The bridge's call is not the mirror's: acp-dsh answers this ACP request itself with
     // `allow-once` and raises no DSH dialog from it. The bridge's own `approval/request` is the
     // one dialog the person sees (RFC 0003, amendment, "One dialog per call").
@@ -671,7 +760,7 @@ export class AgentRun {
  */
 function connect(run, stream) {
   const connection = client({ name: 'automagik-acp-dsh' })
-    .onNotification(methods.client.session.update, ({ params }) => run.onUpdate(params.update))
+    .onNotification(methods.client.session.update, ({ params }) => run.onUpdate(params.update, params.sessionId))
     .onRequest(methods.client.session.requestPermission, ({ params, signal }) => run.onPermission(params, signal))
     .connect(stream)
   const agent = connection.agent

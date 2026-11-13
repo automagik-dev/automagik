@@ -183,7 +183,7 @@ export function mirrorTool(host) {
       entered.add(exec)
       const live = host.runOf(exec.agent?.session?.id)
       const tool = live?.run.tools.get(args.id)
-      if (!tool) return { title: args.title, kind: args.kind, status: 'failed', text: 'The agent is no longer running this call.' }
+      if (!tool || tool.retired === true) return { title: args.title, kind: args.kind, status: 'failed', text: 'The agent is no longer running this call.' }
       // The card follows an image being made from its start (the keeper's progress).
       if (isImageCall(tool)) {
         try { host.images?.()?.start?.({ callId: exec.callId, sessionId: exec.agent?.session?.id, via: live.name }) } catch {}
