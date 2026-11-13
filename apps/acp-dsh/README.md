@@ -122,7 +122,8 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   A Workspace Session on unbridged Codex can instead take `agent` when the Bot team's
   `ownMode` answerer returns exactly `true` twice, before the prompt. After that agent session
   has attempted the own mode, any Workspace prompt that does not take it re-sends and confirms
-  strict `workspace-write`, even if cached; refusal ends the agent session and fails the turn.
+  strict `workspace-write` (or its chat profile below), even if cached; refusal ends the agent
+  session and fails the turn.
   Sessions that never attempt the own mode keep the usual mode cache and failure handling.
   Auto never requests `bypassPermissions` or
   `agent-full-access`. Codex's own reviewer decides those steps, based on the
@@ -396,14 +397,31 @@ links. Checking reported output paths after a tool runs would not prevent its in
 A future path-input API must check realpath containment within the per-draw scratch and reject
 symlink components before reading. That API does not exist here. **#870 remains open.**
 
-**Security warning (#870): the fallback and ordinary chat image tool retain the accepted
-file disclosure risk.** In the fallback, codex-acp's `read-only` mode can read the whole disk
-wherever the OS user has read access. An injected drawing request could use a local image as
-input and return its contents in a picture. Anyone who sees the picture could see that content.
-The per-draw profile does not cover a Codex Bot's own image tool in ordinary chat
-(`src/host/agent-image.js`), which runs under that chat's permissions. Tool checks and permission
-refusals alone do not prevent these reads. Prompt text itself is outside the file boundary and
-still reaches the model.
+**Chat images.** On Linux and macOS, a Codex Bot at Read only or Workspace now prefers the
+app-owned `automagik-read-<hex>` or `automagik-workspace-<hex>` permission profile in its
+isolated home; the chat spawn writes them and keeps the person's other lines in that file.
+- **What they allow.** The chat workspace, project roots, Codex's runtime read grants, that
+  home's skills and the layout of Codex's own executable (Linux's sandbox re-runs it for every
+  command, and its `codex-path` holds Codex's `rg`; for npm's launcher, the native package it
+  starts). Workspace also writes in the workspace, `/tmp` and `$TMPDIR`. Reads outside those
+  grants ask through DSH's approval, like writes do. This covers Codex's own `view_image` and
+  `image_gen` local inputs in chat, through the step's sandbox in Codex 0.167.
+- **When they are used.** Only after `codex sandbox -P <profile> -- true` passed with the chat's
+  environment (once per executable); otherwise, and for an executable that does not resolve,
+  the chat keeps the legacy modes. The home's `default_permissions` stays Codex's own
+  `:read-only`: a legacy read-only turn takes its reads from the default profile.
+- **Ids.** Per-home random ids keep a project's config from extending the profiles while the id
+  stays unknown. An Auto or Full access chat in the same home can read that home's
+  `config.toml`, and so could plant a matching project config for later chats.
+
+**Security warning (#870): full-disk reads remain in the legacy fallback.** Auto keeps `agent`:
+codex-acp 2.6.0 gives profile modes one reviewer per session. Full access is unrestricted by
+design. Windows keeps legacy modes, as do older adapters or a config that cannot offer the
+profiles. Those modes and the one-off drawing fallback can read wherever the OS user can;
+an injected request could put a local file's contents into a picture shown in chat. Files in
+`/tmp` and `$TMPDIR` remain readable at Workspace, and no native macOS run is recorded.
+Tool checks and permission refusals alone do not prevent these reads. Prompt text itself is
+outside the file boundary and still reaches the model.
 
 To avoid `generate_image`'s one-off Codex session, configure an OpenAI API key for the Images
 API, or turn Codex off in the agent settings. Keep secrets out of the prompt. A Bot running
@@ -473,8 +491,9 @@ of time leaves Codex ready. A draw always makes its own check.
   on every turn. Codex's image accessor uses a sandboxed helper, whose runtime grants widen
   the profile's requested read boundary. The owner chose to keep the fallback enabled when
   that mode is unavailable or rejected; that decision does not establish scratch-only reads.
-  Ordinary chat images (`agent-image.js`) are outside this profile too. Signed-in enforcement
-  on the actual per-turn path still needs verification in the app.
+  Ordinary chat images (`agent-image.js`) use the chat profiles above at Read only and
+  Workspace when offered. Signed-in enforcement on the actual per-turn path still needs
+  verification in the app.
 - **A tool that is offered and not reported.** Codex 0.167 keeps some tools on whatever the
   switches say: its `exec` JavaScript isolate, `wait`, its questions to the person, sub-agents,
   patches (which ask first, and are cancelled) and MCP resource listing (no server is on). Not

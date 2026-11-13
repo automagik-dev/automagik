@@ -114,7 +114,7 @@ export const AGENTS = Object.freeze({
     bin: 'dist/index.js',
     // CODEX_PATH wins over the Codex the adapter depends on (codex-acp startCodexConnection).
     env: cli => ({ CODEX_PATH: cli }),
-    // DSH's sandbox, as Codex's own: it asks (through DSH's dialog) for anything beyond it.
+    // index.js supplies the chat profile modes after writing the isolated home's profiles.
     // DSH's Auto is Codex's auto review. Most wanted first, the strict mode last (see above).
     modeFor: level => (level.full ? ['agent-full-access', 'workspace-write'] : level.auto ? ['agent', 'workspace-write'] : level.sandbox === 'read-only' ? ['read-only'] : ['workspace-write']),
     // codex-acp has no switch for its built-in tools, so they stay and are named in the turn;

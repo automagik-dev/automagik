@@ -24,6 +24,7 @@ import { batchSafe } from './src/host/batch-spawn.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { CliHomes, HOME_ENV, stopRuns } from './src/host/cli-homes.js'
+import { canRunProfile, ensureChatProfiles } from './src/host/codex-chat-profiles.js'
 import { CONSENT_FILE, ConsentStore } from './src/host/consent.js'
 import { adaptersHome, AdapterStore, CHECK_TICK_MS } from './src/host/install.js'
 import { handshake } from './src/host/handshake.js'
@@ -139,7 +140,7 @@ export function apply(ctx, config = {}, {
   consentFile = cliHome ? join(cliHome, CONSENT_FILE)
     : typeof store.home === 'string' && store.home === adaptersHome()
       ? join(dirname(store.home), CONSENT_FILE) : undefined,
-  logoutRun = execFile, checkTimers = globalThis,
+  logoutRun = execFile, checkTimers = globalThis, profileCheck = canRunProfile,
 } = {}) {
   const homes = cliHome === undefined ? undefined : new CliHomes(cliHome)
   if (homes) for (const vendor of ['claude', 'codex']) {
@@ -426,6 +427,15 @@ export function apply(ctx, config = {}, {
         throw new Error(failed
           ? `its ACP adapter (${spec.adapter}) is still being installed; the last install failed: ${failed}`
           : `its ACP adapter (${spec.adapter}) is still being installed; send this again in a minute`)
+      }
+      // The chat profiles of the Bot's isolated Codex home, for the session this process starts
+      // (adapter.js keeps them with that session).
+      if (homes && !isNative(spec) && spec.key === 'codex' && typeof env.CODEX_HOME === 'string' && typeof env.CODEX_PATH === 'string') {
+        const profileModes = ensureChatProfiles(env.CODEX_HOME, {
+          codexPath: env.CODEX_PATH, log: line => warn(ctx, line),
+          verify: profile => profileCheck(env.CODEX_PATH, profile, { cwd: env.CODEX_HOME, env }),
+        })
+        if (profileModes !== undefined) return { command, args, env, profileModes }
       }
       return { command, args, env }
     },
