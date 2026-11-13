@@ -674,6 +674,59 @@ test('mail account add verifies before saving; a bad code fails cleanly; send ne
   assert.equal((rt.state.mailRequests.m1 ?? []).length, before)
 })
 
+// The allow rule and the send read the recipients once, by the mail library's own grammar:
+// a send with no card goes only to addresses on the allow list.
+test('a send without a card goes only to allowed addresses, read as the mail library reads them', async (t) => {
+  const session = fakeSession()
+  const home = teamHome()
+  const ctx = fakeContext()
+  const rt = createRuntime(ctx, { home, github: false, mail: { connect: async () => session } })
+  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true }) })
+  await rt.load()
+  await rt.connectorEndpoint('mail-account-add', { address: addressAt('163.com'), password: 'RIGHT' })
+  await rt.connectorEndpoint('mail-rule-set', { addRecipient: 'known@allowed.example, second@allowed.example' })
+  assert.deepEqual(rt.mailView().allowedRecipients, ['known@allowed.example', 'second@allowed.example'])
+  const send = rt.teamTools.find(d => d.name === 'mail_send')
+  const sends = () => session.calls.filter(call => call[0] === 'send')
+  let call = 0
+  const run = async (fields) => {
+    let card = false
+    const before = sends().length
+    const answer = String(await send.execute({ subject: 'S', body: 'B', ...fields }, { agent: { id: 'm1' }, callId: `call-${call += 1}`, concludeTurn: () => { card = true } }))
+    return { card, sent: sends().length - before, answer, last: sends().at(-1)?.[1] }
+  }
+  // Another address anywhere in a field draws the card, however the field is written.
+  for (const fields of [
+    { to: 'other@elsewhere.example' },
+    { to: '"<known@allowed.example>" other@elsewhere.example' },
+    { to: '(<known@allowed.example>) other@elsewhere.example' },
+    { to: '"<known@allowed.example>" <other@elsewhere.example>' },
+    { to: '<known@allowed.example>:other@elsewhere.example' },
+    { to: '"A \\"<known@allowed.example>\\" name" <other@elsewhere.example>' },
+    { to: 'team: known@allowed.example, other@elsewhere.example;' },
+    { to: 'known@allowed.example', bcc: 'other@elsewhere.example' },
+    { to: 'known@allowed.example, not an address' },
+  ]) {
+    const row = await run(fields)
+    assert.deepEqual([row.card, row.sent], [true, 0], JSON.stringify(fields))
+    assert.match(row.answer, /send card/)
+  }
+  // Every recipient is allowed: sent with no card, to the addresses the rule read.
+  for (const [fields, to, cc] of [
+    [{ to: 'known@allowed.example' }, ['known@allowed.example'], undefined],
+    [{ to: 'Known Person <KNOWN@allowed.example>', cc: 'second@allowed.example' }, ['known@allowed.example'], ['second@allowed.example']],
+    [{ to: '"A \\"quoted\\" name" <known@allowed.example>; second@allowed.example' }, ['known@allowed.example', 'second@allowed.example'], undefined],
+    [{ to: 'team: known@allowed.example, second@allowed.example;' }, ['known@allowed.example', 'second@allowed.example'], undefined],
+  ]) {
+    const row = await run(fields)
+    assert.deepEqual([row.card, row.sent, row.last.to, row.last.cc, row.last.bcc], [false, 1, to, cc, undefined], JSON.stringify(fields))
+    assert.match(row.answer, /^Sent "S" to known@allowed\.example/)
+  }
+  // "Allow recipient" on a card adds the addresses the mail goes to, not text inside a name.
+  await rt.connectorEndpoint('mail-rule-set', { addRecipient: '"<inside@name.example>" real@added.example' })
+  assert.deepEqual(rt.mailView().allowedRecipients, ['known@allowed.example', 'second@allowed.example', 'real@added.example'])
+})
+
 test('mail add explains refused and unsafe logins in plain words', async (t) => {
   let mode = 'ok'
   const factory = async () => {

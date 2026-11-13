@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { basename, join, resolve, sep } from 'node:path'
 import { realpathSync, statSync } from 'node:fs'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import addressparser from 'nodemailer/lib/addressparser'
 import { PRESETS, presetOf, mailSecretName } from './presets.js'
 import { connectImap, connectGmail } from './transport.js'
 import { output } from '../../tools.js'
@@ -15,29 +16,32 @@ import { refreshTokens, invalidGrant, discover, beginBrowser, exchange } from '.
 const GOOGLE_SCOPES = 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.modify'
 const MAX_REQUESTS = 20
 
-function parseAddresses(raw) {
-  const out = []
-  for (const part of String(raw ?? '').split(/[,;]+/)) {
-    const text = part.trim()
-    if (text === '') continue
-    const angle = text.match(/<([^<>\s@]+@[^<>\s@]+)>/i)
-    const addr = (angle ? angle[1] : text).trim().toLowerCase()
-    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr) && !out.includes(addr)) out.push(addr)
+// One reading of a recipient field, by the mail library's own address parser: the grammar the
+// library addresses a mail by. A quoted name or a comment is a name, never an address, and a
+// group is its members. `ok` is false when a part holds no address or one that is not a plain
+// mailbox. The allow rule and the send both use this list, so what is checked is what is sent to.
+const MAILBOX = /^[^\s@<>()[\],;:"\\]+@[^\s@<>()[\],;:"\\]+\.[^\s@<>()[\],;:"\\]+$/
+function readAddresses(raw) {
+  const list = []
+  let ok = true
+  for (const entry of addressparser(Array.isArray(raw) ? raw.join(', ') : String(raw ?? ''), { flatten: true })) {
+    const address = String(entry.address ?? '').trim().toLowerCase()
+    if (!MAILBOX.test(address)) ok = false
+    else if (!list.includes(address)) list.push(address)
   }
-  return out
+  return { list, ok }
 }
+const parseAddresses = raw => readAddresses(raw).list
 
-function allAddressesAllowed(to, cc, bcc, allowed) {
+// The recipients of a send that needs no card: every field reads whole and every address is
+// allowed. Undefined otherwise.
+function allowedRecipients(to, cc, bcc, allowed) {
   const set = new Set((Array.isArray(allowed) ? allowed : []).map(a => String(a).toLowerCase()))
-  if (set.size === 0) return false
-  const parts = [to, cc, bcc].flatMap(raw => String(raw ?? '').split(/[,;]+/)).map(s => s.trim()).filter(Boolean)
-  if (parts.length === 0) return false
-  for (const part of parts) {
-    const angle = part.match(/<([^<>\s@]+@[^<>\s@]+)>/i)
-    const addr = (angle ? angle[1] : part).trim().toLowerCase()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr) || !set.has(addr)) return false
-  }
-  return true
+  if (set.size === 0) return undefined
+  const fields = [to, cc, bcc].map(readAddresses)
+  const all = fields.flatMap(field => field.list)
+  if (fields.some(field => !field.ok) || all.length === 0 || all.some(address => !set.has(address))) return undefined
+  return { to: fields[0].list, cc: fields[1].list, bcc: fields[2].list }
 }
 
 export function install(rt, host) {
@@ -271,20 +275,23 @@ export function install(rt, host) {
           replyTo: args.reply_to ? String(args.reply_to) : undefined,
           status: 'pending', askedAt: Date.now(),
         }
-        const skipDraft = !bot.private && (
-          (state.connectors?.mail?.noDraftFor ?? []).includes(bot.id)
-          || allAddressesAllowed(request.to, request.cc, request.bcc, state.connectors?.mail?.allowedRecipients)
-        )
+        // A send the allow rule clears goes to the list the rule read, never to the Bot's text.
+        const cleared = bot.private ? undefined : allowedRecipients(request.to, request.cc, request.bcc, state.connectors?.mail?.allowedRecipients)
+        const skipDraft = !bot.private && ((state.connectors?.mail?.noDraftFor ?? []).includes(bot.id) || cleared !== undefined)
         if (skipDraft) {
           const session = await connect(account)
           const attachments = (request.attachments ?? []).map(name => ({ filename: name, path: realpathSync(resolve(dir ?? '', name)) }))
-          await session.send({ to: request.to, cc: request.cc || undefined, bcc: request.bcc || undefined, subject: request.subject, text: request.body, attachments, ...(request.replyTo ? { inReplyTo: request.replyTo } : {}) })
+          const some = list => (list.length > 0 ? list : undefined)
+          const rcpt = cleared === undefined
+            ? { to: request.to, cc: request.cc || undefined, bcc: request.bcc || undefined }
+            : { to: some(cleared.to), cc: some(cleared.cc), bcc: some(cleared.bcc) }
+          await session.send({ ...rcpt, subject: request.subject, text: request.body, attachments, ...(request.replyTo ? { inReplyTo: request.replyTo } : {}) })
           request.status = 'sent'
           request.settledAt = Date.now()
           list.push(request)
           while (list.length > MAX_REQUESTS) { const at = list.findIndex(entry => entry.status !== 'pending'); list.splice(at === -1 ? 0 : at, 1) }
           await rt.save()
-          return `Sent "${request.subject}" to ${request.to} from ${account.address}.`
+          return `Sent "${request.subject}" to ${cleared === undefined ? request.to : [...cleared.to, ...cleared.cc, ...cleared.bcc].join(', ')} from ${account.address}.`
         }
         for (const old of list) if (old.status === 'pending') { old.status = 'canceled'; old.settledAt = Date.now() }
         list.push(request)
