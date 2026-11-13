@@ -831,9 +831,9 @@ pub fn execute(o: &Opts) -> Result<Done, String> {
     })
 }
 
-/// A copy is accepted only when it is the file whose sha256 was given, passes `quick_check`,
-/// and holds as many rollup rows and tokens as the store does right now.
-fn verify_copy(store: &Connection, copy: &Copy, resuming: bool) -> Result<(), String> {
+/// A copy is accepted only when it is the file whose sha256 was given and passes `quick_check`;
+/// [`compare_counts`] then checks it against the store. Needs no lock: it reads the copy only.
+fn verify_copy(copy: &Copy) -> Result<Connection, String> {
     let sha = sha256_file(&copy.path).map_err(|e| format!("the copy: {e}"))?;
     if sha != copy.sha256 {
         return Err(format!(
@@ -851,13 +851,18 @@ fn verify_copy(store: &Connection, copy: &Copy, resuming: bool) -> Result<(), St
             "the copy fails quick_check ({qc}); nothing was written"
         ));
     }
+    Ok(c)
+}
+
+/// The copy holds as many rollup rows and tokens as the store does right now.
+fn compare_counts(store: &Connection, c: &Connection, resuming: bool) -> Result<(), String> {
     let sum = "SELECT count(*), coalesce(sum(input_uncached + cache_read + cache_write_5m + \
                cache_write_1h + output + reasoning + unsplit), 0) FROM usage";
     let q =
         |c: &Connection| c.query_row(sum, [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)));
     let (a, b) = (
         q(store).map_err(|e| e.to_string())?,
-        q(&c).map_err(|e| e.to_string())?,
+        q(c).map_err(|e| e.to_string())?,
     );
     // A copy is of the store before the first day was written: once a journal says some days
     // are done, the store may hold more than the copy, never less.
@@ -947,8 +952,6 @@ fn fingerprint(tx: &Transaction, lo: i64, hi: i64) -> rusqlite::Result<String> {
     Ok(crate::event::hex(&h.finalize()))
 }
 
-/// Writes the plan, one transaction per day, at most `limit` days (a test's stand-in for a kill
-/// between days). Returns the days committed.
 /// The copy must be a separate file: not the store by any spelling, not a symlink, and not the
 /// store's own inode (a hard link has the store's bytes and sha256 and would pass as a copy).
 fn check_separate(db: &Path, copy: &Path) -> Result<(), String> {
@@ -971,45 +974,52 @@ fn check_separate(db: &Path, copy: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn apply(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<String>, String> {
-    // A refused apply leaves nothing behind: the lock file is the one thing it may create, and
-    // when it was not there before, a failed apply removes it again (the lock itself is released
-    // when the inner call returns).
-    let lock_file = o.state_dir.join("meter.lock");
-    let existed = lock_file.symlink_metadata().is_ok();
-    let r = apply_inner(o, copy, rep, limit);
-    if r.is_err() && !existed {
-        let _ = std::fs::remove_file(&lock_file);
+fn check_schema(c: &Connection) -> Result<(), String> {
+    match schema_version(c).map_err(|e| e.to_string())? {
+        Some(v) if v > SCHEMA_VERSION => Err(format!(
+            "the store's schema_version is {v}, newer than this meter's {SCHEMA_VERSION}; \
+             nothing was written"
+        )),
+        Some(v) if v == SCHEMA_VERSION => Ok(()),
+        _ => Err(format!("the store is not at schema {SCHEMA_VERSION}")),
     }
-    r
 }
 
-fn apply_inner(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<String>, String> {
-    check_separate(&o.state_dir.join("meter.db"), &copy.path)?;
+fn journal(c: &Connection) -> Result<Option<String>, String> {
+    c.query_row("SELECT v FROM meta WHERE k = ?1", [JOURNAL], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())
+}
+
+/// Writes the plan, one transaction per day, at most `limit` days (a test's stand-in for a kill
+/// between days). Returns the days committed.
+///
+/// Every refusal that needs no lock comes first (the copy is a separate file, its sha256, its
+/// `quick_check`, its counts against the store, the schema), all by read-only opens, so a refused
+/// apply creates nothing in the store's folder. The lock file is never removed afterwards: it may
+/// be one a sync has opened or locked in the meantime, and the sync lock belongs to the sync.
+pub fn apply(o: &Opts, copy: &Copy, rep: &Report, limit: usize) -> Result<Vec<String>, String> {
+    let db = o.state_dir.join("meter.db");
+    check_separate(&db, &copy.path)?;
+    let copy_conn = {
+        let ro = crate::query::open_read_only(&db, std::time::Duration::from_secs(5))
+            .map_err(|e| format!("the store: {e}"))?;
+        check_schema(&ro)?;
+        let c = verify_copy(copy)?;
+        compare_counts(&ro, &c, journal(&ro)?.is_some())?;
+        c
+    };
     let _lock = match crate::paths::try_lock(&o.state_dir) {
         Ok(Some(l)) => l,
         Ok(None) => return Err("another sync holds the lock; nothing was written".into()),
         Err(e) => return Err(format!("the lock: {e}")),
     };
-    let db = o.state_dir.join("meter.db");
     let mut conn = Connection::open(&db).map_err(|e| e.to_string())?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| e.to_string())?;
-    match schema_version(&conn).map_err(|e| e.to_string())? {
-        Some(v) if v > SCHEMA_VERSION => {
-            return Err(format!(
-                "the store's schema_version is {v}, newer than this meter's {SCHEMA_VERSION}; \
-                 nothing was written"
-            ));
-        }
-        Some(v) if v == SCHEMA_VERSION => {}
-        _ => return Err(format!("the store is not at schema {SCHEMA_VERSION}")),
-    }
-    let done: Option<String> = conn
-        .query_row("SELECT v FROM meta WHERE k = ?1", [JOURNAL], |r| r.get(0))
-        .optional()
-        .map_err(|e| e.to_string())?;
-    verify_copy(&conn, copy, done.is_some())?;
+    // Under the lock: the store may have changed since the checks above.
+    check_schema(&conn)?;
+    compare_counts(&conn, &copy_conn, journal(&conn)?.is_some())?;
     let mut by_day: BTreeMap<&str, Vec<&Change>> = BTreeMap::new();
     for c in &rep.changes {
         by_day.entry(c.day.as_str()).or_default().push(c);

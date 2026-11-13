@@ -935,3 +935,27 @@ fn a_refused_apply_leaves_nothing_behind_in_the_store_folder() {
         assert_eq!(Fx::db_hash(&fx.store), h);
     }
 }
+
+#[test]
+fn a_failed_apply_never_removes_the_lock_file() {
+    let _g = common_serial();
+    // A store folder with no lock file (one no sync has run in), and an apply that fails after it
+    // took the lock: the file stays. A sync may have opened or locked it meanwhile, and unlinking
+    // it would leave that sync holding a lock on a file no one else can see.
+    let fx = Fx::new();
+    fx.s("a", "dsh-tui", H8, cols(CR, 10), 1);
+    fx.o("a", "dsh-tui", H8, cols(CR, 25), 1);
+    let c = fx.copy("c.db");
+    let o = fx.apply_opts(&[], &c);
+    let mut rep = repair::execute(&fx.opts(&[])).unwrap().report;
+    rep.changes[0].id = "no-such-row".into();
+    let lock = fx.store.join("meter.lock");
+    fs::remove_file(&lock).unwrap();
+    let h = Fx::db_hash(&fx.store);
+    let e = repair::apply(&o, &c, &rep, usize::MAX).unwrap_err();
+    assert!(e.contains("rolled back"), "{e}");
+    assert!(lock.exists(), "the lock file was unlinked");
+    assert_eq!(Fx::db_hash(&fx.store), h);
+    // And it is still a lock file a sync can take: not held after the failed apply.
+    assert!(meter::paths::try_lock(&fx.store).unwrap().is_some());
+}

@@ -756,8 +756,9 @@ usagemeter repair --store STORE_DIR --against ORACLE_DIR --apply --copy FILE --c
 - `--apply` is refused without a copy. Take the sync lock's quiet moment, make the copy with
   `sqlite3 meter.db "VACUUM INTO 'copy.db'"` (or any consistent copy), `sha256sum` it, and pass
   `--copy copy.db --confirm-copy <that sha256>`. The copy must be a separate file: a symbolic
-  link, a hard link or any spelling of the store itself is refused. A refused apply leaves
-  the store's folder as it was (no lock file left behind that was not there before). The command checks the file's sha256, its
+  link, a hard link or any spelling of the store itself is refused. Every refusal that needs no
+  lock (the copy, its sha256, its counts, the schema) comes before the lock is taken and creates
+  nothing in the store's folder; the lock file, once created, is never removed. The command checks the file's sha256, its
   `quick_check`, and that it holds as many rollup rows and tokens as the store (after a partly
   done run, the store may hold more). It then takes the sync lock, refuses a newer schema, and
   writes one transaction per day. Each day checks its own conservation inside the transaction and
