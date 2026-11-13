@@ -133,6 +133,9 @@ async function switchPart({ replies, info = {}, fallback, route = {}, oldNote, r
     selectSessionModel: async (id, picked) => { selected.push([id, picked]) },
     applyModel: async () => {},
     applyPermission: async () => {},
+    // Ours: the note's request is tagged for the usage meter, and the fresh part gets the Bot's tool deny list.
+    applyToolDeny: async () => {},
+    tagUsage: messages => messages,
     ensureCapabilities: async () => {},
     renewMemory: () => {},
     moveSchedules: async () => {},

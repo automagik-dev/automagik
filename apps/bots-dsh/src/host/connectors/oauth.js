@@ -12,6 +12,7 @@ import {
   registerClient,
   IssuerMismatchError,
 } from '@modelcontextprotocol/client'
+import { refusal } from '../refusal.js'
 
 const TIMEOUT_MS = 20_000
 // The loopback port the client-metadata document at this address may name.
@@ -161,7 +162,7 @@ const post = async (send, url, params) => {
 }
 
 export async function deviceBegin(clientId, scope, { fetch: request = fetch, endpoints } = {}) {
-  if (!clientId) throw new Error('NOT SET UP: configure an Automagik GitHub sign-in app')
+  if (!clientId) throw refusal('NOT SET UP: configure an Automagik GitHub sign-in app')
   const send = timed(request)
   const codeUrl = endpoints?.deviceCode ?? 'https://github.com/login/device/code'
   const { status, body } = await post(send, codeUrl, { client_id: clientId, ...(scope ? { scope } : {}) })

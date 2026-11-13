@@ -178,32 +178,21 @@ const until = async (check, ms = 3000) => {
 const hasShowView = (host, id) => host.scoped.some(entry => entry.sessionId === id && entry.name === 'show_view')
 const denied = (host, id) => host.restricted.some(entry => entry.sessionId === id && entry.deny.includes('ask_user_question'))
 const scopedNames = (host, id) => host.scoped.filter(entry => entry.sessionId === id).map(entry => entry.name)
+// TEAM_TOOLS is the list of names kept for the team, which here also holds the names Omni's other plugins
+// add through rt.hooks (its channels, automations and canvases). What a Bot Session is given is what the team
+// itself registers: rt.teamTools.
+const ownTeamTools = () => rt.teamTools.map(tool => tool.name).filter(name => name !== 'read_browser').sort()
 
 test('a Bot Session gets every team tool in its own scope', async (t) => {
   const host = start()
   t.after(host.stop)
   await host.call('state', {})
   await host.agentCreated('a')
-  assert.deepEqual(scopedNames(host, 'a').sort(), [...TEAM_TOOLS].filter(name => name !== 'read_browser').sort())
+  assert.deepEqual(scopedNames(host, 'a').sort(), ownTeamTools())
 })
 
-test('a Bot moved onto a local agent route gets the approval bridge, and loses it moving off', async (t) => {
-  const host = start()
-  t.after(host.stop)
-  await host.call('state', {})
-  await host.agentCreated('b')
-  assert.equal(scopedNames(host, 'b').includes('approve_agent_action'), false)
-  rt.isLocalAgentRef = ref => typeof ref === 'string' && ref.startsWith('local-acp-')
-  const bot = rt.botOf('b')
-  bot.model = 'local-acp-fake/default'
-  rt.hideBotUnusedTools(host.agentOf('b'))
-  assert.equal(scopedNames(host, 'b').includes('approve_agent_action'), true)
-  assert.equal(scopedNames(host, 'b').filter(name => name === 'message_bot').length, 1)
-  bot.model = 'deepseek-official/deepseek-flash'
-  rt.hideBotUnusedTools(host.agentOf('b'))
-  assert.equal(scopedNames(host, 'b').includes('approve_agent_action'), false)
-  assert.equal(scopedNames(host, 'b').includes('message_bot'), true)
-})
+// Upstream's test of the approval bridge a local agent route adds is left out: local agents are carried but
+// not installed, and a local CLI runs a Bot through the ACP plugin's routes only.
 
 test('a Session ds-bot does not own sees none of the team tools', async (t) => {
   const host = start()
@@ -211,10 +200,10 @@ test('a Session ds-bot does not own sees none of the team tools', async (t) => {
   await host.call('state', {})
   await host.agentCreated('plain1')
   assert.deepEqual(scopedNames(host, 'plain1'), [])
-  // Nothing of the team's reaches the global layer a plain session reads; the
-  // only team-named global is another plugin's show_view.
+  // Nothing of the team's reaches the global layer a plain session reads, but for two names: another plugin's
+  // show_view, and start_task, which the team registers for every Session and refuses outside a Main Bot.
   const leaked = [...host.ctx.registeredTools.keys()].filter(name => TEAM_TOOLS.includes(name))
-  assert.deepEqual(leaked, ['show_view'])
+  assert.deepEqual(leaked.sort(), ['show_view', 'start_task'])
   assert.equal(host.ctx.registeredTools.get('show_view').description, 'global')
 })
 
@@ -277,11 +266,11 @@ test('a fresh part Session has the scoped tools before its first step', async (t
   const moved = await host.tool('update_bot', { work_dir: project }, 'b')
   assert.equal(String(moved).includes('From your next step on'), true)
   // The next step sees the folder change and switches to a fresh part.
-  const preStep = host.ctx.listeners.get('agent/pre-step').at(-1)
-  const answer = await preStep(
-    { agent: host.agentOf('b'), messages: [{ role: 'user', content: [{ type: 'text', text: 'go on' }], source: { kind: 'user' } }], step: 2, signal: AbortSignal.timeout(60_000) },
-    async () => 'next',
-  )
+  // Every agent/pre-step listener in the order the Host runs them: the part switch is one of several.
+  const chain = host.ctx.listeners.get('agent/pre-step')
+  const payload = { agent: host.agentOf('b'), messages: [{ role: 'user', content: [{ type: 'text', text: 'go on' }], source: { kind: 'user' } }], step: 2, signal: AbortSignal.timeout(60_000) }
+  const run = async at => (at === chain.length ? 'next' : chain[at](payload, () => run(at + 1)))
+  const answer = await run(0)
   assert.deepEqual(answer, { kind: 'reject' })
   await until(() => hasShowView(host, 's1'), 5000)
   assert.ok(denied(host, 's1'), 'the blocking question tool is denied in the fresh part')
@@ -308,10 +297,13 @@ test("a deleted Bot's Session keeps none of the scope when it is adopted as a pl
   assert.equal(host.restricted.some(entry => entry.sessionId === 'b'), false)
   // The Session lives on unowned: adopting it into the DSH Agent must not bring
   // the team tools back.
-  const agent = (await host.call('add-agent', {})).value
+  const agent = (await host.call('add-agent', { name: 'Plain' })).value
   assert.equal((await host.call('agent-adopt', { agentId: agent.id, sessionId: 'b' })).ok, true)
   assert.deepEqual(scopedNames(host, 'b'), [])
-  assert.equal(host.restricted.some(entry => entry.sessionId === 'b'), false)
+  // A DSH bot's Session is denied the team-named globals it could otherwise call (agents.js), here another
+  // plugin's show_view; the restrict a Bot Session carries (the hidden DSH tools) does not come back.
+  assert.deepEqual(host.restricted.filter(entry => entry.sessionId === 'b').map(entry => entry.deny), [['show_view']])
+  assert.equal(denied(host, 'b'), false)
 })
 
 test('a member who leaves the group loses the scoped tools', async (t) => {
@@ -388,7 +380,7 @@ test("a Bot's own Session the creation path missed gets the whole scope at the a
   await host.call('state', {})
   const agent = host.agentOf('a')
   const assembled = await assemble(host, agent, { tools: [{ name: 'read' }], sections: [] })
-  const expected = [...TEAM_TOOLS].filter(name => name !== 'read_browser').sort()
+  const expected = ownTeamTools()
   assert.deepEqual(scopedNames(host, 'a').sort(), expected)
   assert.deepEqual(assembled.tools.map(tool => tool.name).sort(), ['read', ...expected].sort())
   // The hidden DSH tools are masked and filtered as on the creation path: none

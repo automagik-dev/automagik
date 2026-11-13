@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path'
 import { replaceFile } from './files.js'
 import { looksLikeKey, looksSecret, writtenIn } from './memory.js'
 import { validateCapabilityName } from './capabilities.js'
+import { refusal } from './refusal.js'
 
 export const LEARNING = {
   minTurnMs: 3 * 60_000,
@@ -299,7 +300,7 @@ export function install(rt) {
   const on = config.learning !== false && config.memory !== false
   const view = () => ({})
   if (!on) {
-    Object.assign(rt, { learningView: view, learningSettledView: view, learningEndpoint: async () => { throw new Error('Learning is turned off on this host') }, learningRun: async () => 0 })
+    Object.assign(rt, { learningView: view, learningSettledView: view, learningEndpoint: async () => { throw refusal('Learning is turned off on this host') }, learningRun: async () => 0 })
     return
   }
 
@@ -697,7 +698,7 @@ export function install(rt) {
     try {
       const folder = await rt.real(proposal.folder)
       await rt.workFolder(folder)
-      if (join(folder, 'AGENTS.md') !== path) throw new Error('AGENTS.md changed since this was proposed')
+      if (join(folder, 'AGENTS.md') !== path) throw refusal('AGENTS.md changed since this was proposed')
       const readCurrent = async () => {
         try { return await readFile(path, 'utf8') } catch (error) {
           if (error?.code !== 'ENOENT') throw error
@@ -707,7 +708,7 @@ export function install(rt) {
       const checkCurrent = current => {
         const existsNow = current !== undefined
         if (existsNow !== proposal.exists || hashOf(current ?? '') !== proposal.base) {
-          throw new Error('AGENTS.md changed since this was proposed')
+          throw refusal('AGENTS.md changed since this was proposed')
         }
       }
       checkCurrent(await readCurrent())
@@ -727,25 +728,25 @@ export function install(rt) {
 
   async function applySkill(proposal) {
     const bot = rt.botOf(proposal.botId)
-    if (bot === undefined) throw new Error('The Bot that learned this skill is gone')
+    if (bot === undefined) throw refusal('The Bot that learned this skill is gone')
     const current = skillsOf()[proposal.name]
     const store = data()
     if (proposal.action === 'create') {
       if (proposal.saved) {
         if (current === undefined || current.description !== proposal.description || current.content !== proposal.content) {
-          throw new Error(`${proposal.name} changed since this was proposed`)
+          throw refusal(`${proposal.name} changed since this was proposed`)
         }
         store.learned[bot.id] = [...new Set([...(store.learned[bot.id] ?? []), current.name])]
         await persist()
       } else {
-        if (current !== undefined) throw new Error(`A skill named ${proposal.name} exists now`)
+        if (current !== undefined) throw refusal(`A skill named ${proposal.name} exists now`)
         const item = await rt.capabilitySave({ name: proposal.name, kind: 'skill', description: proposal.description, content: proposal.content }, { botId: bot.id, ui: false })
         proposal.saved = true
         store.learned[bot.id] = [...new Set([...(store.learned[bot.id] ?? []), item.name])]
         await persist()
       }
     } else if (proposal.action === 'update') {
-      if (current === undefined || hashOf(`${current.description}\n${current.content}`) !== proposal.base) throw new Error(`${proposal.name} changed since this was proposed`)
+      if (current === undefined || hashOf(`${current.description}\n${current.content}`) !== proposal.base) throw refusal(`${proposal.name} changed since this was proposed`)
       const item = await rt.capabilitySave({ name: proposal.name, kind: 'skill', description: proposal.description, content: proposal.content }, { botId: bot.id, ui: false })
       store.learned[bot.id] = [...new Set([...(store.learned[bot.id] ?? []), item.name])]
       await persist()

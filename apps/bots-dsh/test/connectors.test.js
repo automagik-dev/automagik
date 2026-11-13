@@ -84,7 +84,9 @@ test('connecting saves the token, kept out of every Bot shell, and mounts GitHub
   const token = fresh()
 
   const before = await call(ctx, 'state', {})
-  assert.equal(before.value.connectors.connectors.find(r => r.id === 'github').state, 'off')
+  // No Automagik GitHub sign-in app is configured here and no token is held: the row says so (NOT SET UP)
+  // and never falls back to another service's app. A pasted token still connects it.
+  assert.equal(before.value.connectors.connectors.find(r => r.id === 'github').state, 'needs-client')
 
   const connected = await call(ctx, 'connector-connect', { id: 'github', token: ` ${token} ` })
   assert.equal(connected.ok, true, JSON.stringify(connected))
@@ -103,7 +105,7 @@ test('connecting saves the token, kept out of every Bot shell, and mounts GitHub
   assert.ok(!readFileSync(join(home, 'state.json'), 'utf8').includes(token))
 
   const off = await call(ctx, 'connector-disconnect', { id: 'github' })
-  assert.equal(off.value.connectors.find(r => r.id === 'github').state, 'off')
+  assert.equal(off.value.connectors.find(r => r.id === 'github').state, 'needs-client')
   assert.equal(mounts[0].disposed, true)
   assert.deepEqual((await call(ctx, 'state', {})).value.secrets, [])
 })
@@ -148,7 +150,7 @@ test('deleting GITHUB_TOKEN on the Secrets page unmounts GitHub', async (t) => {
   await call(ctx, 'secret-delete', { name: 'GITHUB_TOKEN' })
   const state = await call(ctx, 'state', {})
   assert.equal(mounts[0].disposed, true)
-  assert.equal(state.value.connectors.connectors.find(r => r.id === 'github').state, 'off')
+  assert.equal(state.value.connectors.connectors.find(r => r.id === 'github').state, 'needs-client')
 })
 
 test('github: false hides only the GitHub connector', async (t) => {
