@@ -509,3 +509,28 @@ test('the status shows the previous connector, and a rollback while the failed r
   })
   assert.deepEqual(byId(status, 'acp-codex').connector, { state: 'ready', version: '2.0.0' })
 })
+
+test('catalog changes publish only for the current catalog while the plugin is alive', async t => {
+  const h = harness({ clis: { codex: '/fake/codex' },
+    bins: { [CODEX.adapter]: { path: '/fake/adapter', version: '1' } } })
+  apply(h.ctx, { claude: false, codex: true }, h.deps)
+  t.after(() => h.ctx.emit('stop'))
+  const old = h.registered.adapter.agents.get('acp-codex').catalog
+  old.spec.spawn = () => ({ command: process.execPath,
+    args: [join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')] })
+  const before = h.log.length
+  await old.refresh()
+  assert.ok(h.log.length > before)
+  assert.equal(h.log.at(-1)[0], 'replace')
+  h.clis.codex = '/fake/next-codex'
+  await h.services[SERVICE].refresh()
+  assert.notEqual(h.registered.adapter.agents.get('acp-codex').catalog, old)
+  const replaced = h.log.length
+  old.spec.onChange(old)
+  assert.equal(h.log.length, replaced)
+  const current = h.registered.adapter.agents.get('acp-codex').catalog
+  h.ctx.emit('stop')
+  const stopped = h.log.length
+  current.spec.onChange(current)
+  assert.equal(h.log.length, stopped)
+})
