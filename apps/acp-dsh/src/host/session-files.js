@@ -140,14 +140,15 @@ export class SessionFiles {
   }
   async ask(live, tool, exec, permission) {
     const owner = live.fileOwner
-    const fail = 'The image was not approved for this chat session.'
+    const paths = requestedImages(permission.call)
+    const fail = paths ? 'The image was not approved for this chat session.'
+      : 'The requested file was not approved for this chat session.'
     const current = () => owner && this.valid(owner) && this.host.live(owner.session.id) === live && live.open && !live.own &&
       live.dshAgent === exec.agent && live.run.tools.get(tool.id) === tool && tool.permission === permission &&
       !permission.signal?.aborted && live.calls.has(exec.callId) && live.toolIds.get(exec.callId) === tool.id &&
       isDeepStrictEqual(permission.call?.rawInput, tool.rawInput) && isDeepStrictEqual(permission.call?.locations, tool.locations) &&
       permission.call?.id === tool.id && permission.call?.structuredName === tool.structuredName &&
       this.host.level(owner.session).sandbox === live.fileSandbox
-    const paths = requestedImages(permission.call)
     if (!paths || !current() || owner.pending) return fail
     const signal = AbortSignal.any([owner.lifetime.signal, permission.signal, ...(exec.signal ? [exec.signal] : [])])
     const record = { id: FILE_QUESTION + randomUUID(), permission, live, tool, callId: exec.callId, files: undefined }
