@@ -832,6 +832,7 @@ export function dshEnv({ base = process.env, home, electronAsNode = false, binDi
     // The welcome keeps in it whether any agent is at work (welcome-dsh src/host/busy.js), so
     // an update installs while the person is away only when none is (idle.js).
     AUTOMAGIK_BUSY_FILE: busyFileOf(home),
+    AUTOMAGIK_BUSY_PROTOCOL: '2',
     // The welcome reads it (welcome-dsh src/host/preload.js); none is no preference.
     ...(preload ? { AUTOMAGIK_PRELOAD: preload } : {}),
     // The pnpm acp-dsh installs its ACP adapters with: the app's own pnpm 10, never a newer one

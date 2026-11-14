@@ -387,6 +387,7 @@ const ZH = {
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.":
     "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
   "Reset Bot sign-in": "重置 Bot 登录",
+  "Sign in again": "重新登录",
   "This signs {vendor} out for Bots. Sign in again in the app.":
     "这会使 Bot 退出 {vendor}。请在应用内重新登录。",
   "Bot models and history stay.": "Bot 的模型和历史记录会保留。",

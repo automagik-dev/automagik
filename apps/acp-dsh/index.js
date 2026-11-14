@@ -146,7 +146,7 @@ export function apply(ctx, config = {}, {
 } = {}) {
   const homes = cliHome === undefined ? undefined : new CliHomes(cliHome)
   if (homes) for (const vendor of ['claude', 'codex']) {
-    try { homes.collect(vendor) } catch {} // Unproved abandoned homes remain untouched.
+    try { homes.startup(vendor) } catch {} // Unproved abandoned homes remain untouched.
   }
   if (cliStore === undefined && !config.fakeAgent
     && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM)) {
@@ -902,38 +902,53 @@ export function apply(ctx, config = {}, {
       if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
       reconcile({ kick: false })
       attemptVersions.set(id, cliDetails.get(id)?.version)
-      return { cli: clis.get(id), env: { ...process.env, ...cliEnvironment(AGENTS[id], cliDetails.get(id)) } }
+      const version = authVersions.get(id)
+      return { cli: clis.get(id), env: { ...process.env, ...cliEnvironment(AGENTS[id], cliDetails.get(id)) },
+        valid: () => !disposed && !restarting && !accountChanges.has(id) && authVersions.get(id) === version }
     },
     // `existing`: the CLI was signed in before the attempt, so nobody signed in through it. A
     // sign-in the person made here is their word for that account; an existing one waits for
     // `accountConfirm`, and until then nothing is announced, so no chosen model is applied.
-    async onReady(id, selected, { existing = false } = {}) {
-      if (disposed || restarting || accountChanges.has(id)) return
+    async onReady(id, selected, { existing = false, valid = () => false } = {}) {
       const version = authVersions.get(id)
-      const same = clis.get(id) === selected.cli && (!homes
-        || selected.env[HOME_ENV] === homes.home(AGENTS[id].key))
-      if (!same) return
-      if (same) signIns.set(id, true)
+      const current = () => {
+        if (!valid() || disposed || restarting || accountChanges.has(id)
+          || authVersions.get(id) !== version || clis.get(id) !== selected.cli) return false
+        try {
+          return !homes || (selected.env[HOME_ENV] === homes.home(AGENTS[id].key)
+            && homes.matches(selected.env))
+        } catch { return false }
+      }
+      if (!current()) return
+      const who = consents === undefined ? undefined
+        : await Promise.resolve().then(() => current() ? account(AGENTS[id], selected.cli, { env: selected.env }) : undefined).catch(() => undefined)
+      if (!current()) return
+      signIns.set(id, true)
       inspections.delete(id)
       nextEpoch(id)
-      if (same && consents !== undefined) {
-        const who = await Promise.resolve().then(() => account(AGENTS[id], selected.cli, { env: selected.env })).catch(() => undefined)
-        if (disposed || restarting || accountChanges.has(id) || authVersions.get(id) !== version) return
+      if (consents !== undefined) {
+        if (!current()) return
         if (!existing) consents.confirm(id, who)
+        if (!current()) return
         noteAccount(id, true, who)
       }
+      if (!current()) return
       if (loginLocks.delete(id)) {
         homes.resume(AGENTS[id].key)
         homes.end(AGENTS[id].key)
       }
       agents.get(id)?.catalog.refresh()
+      if (!current()) return
       publish()
-      if (consentStates.get(id) === 'needed') return
+      if (!current() || consentStates.get(id) === 'needed') return
       try {
         ctx.emit?.('acp-dsh/login-ready', { id })
       } catch (error) {
         warn(ctx, `the sign-in of ${id} was not announced: ${error?.message ?? error}`)
       }
+    },
+    onActivity(activity) {
+      try { ctx.emit?.('acp-dsh/login-activity', activity) } catch {}
     },
     onChange(active) {
       for (const id of restarting ? [] : loginLocks) {
@@ -1248,6 +1263,7 @@ export function apply(ctx, config = {}, {
     loginTextMatches: text => logins.textMatches(text),
     /** How many sign-in attempts are starting or waiting (the busy signal). */
     loginActive: () => logins.activeAttempts(),
+    loginActivity: () => logins.activity(),
     prepareRestart,
     /**
      * Which account an agent's CLI is signed in to, for the DSH owner's views only (#869): never

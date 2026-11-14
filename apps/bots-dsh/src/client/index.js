@@ -665,7 +665,8 @@ export function apply(ctx) {
   }
   // The sign-in rows of the Bots' chats (cli-login.js): this page's views of the attempts the
   // host holds. Disposing them never cancels an attempt.
-  cliLogin = createCliLogin({ actions, modelOf: botId => work.getSnapshot().models?.[botId]?.selected })
+  cliLogin = createCliLogin({ actions, modelOf: botId => work.getSnapshot().models?.[botId]?.selected,
+    botOf: botId => cliLoginBotOf(roster.getSnapshot(), botId) })
   actions.cliLogin = cliLogin
   // A sign-in row about a provider its Bot has left closes by itself (cli-login-state.js).
   ctx.effect(() => work.subscribe(() => cliLogin.followModels()), 'ds-bot: CLI sign-in rows follow the Bots\' models')
