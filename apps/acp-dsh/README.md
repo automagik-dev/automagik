@@ -397,7 +397,32 @@ links. Checking reported output paths after a tool runs would not prevent its in
 A future path-input API must check realpath containment within the per-draw scratch and reject
 symlink components before reading. That API does not exist here. **#870 remains open.**
 
-**Chat images.** On Linux and macOS, a Codex Bot at Read only or Workspace now prefers the
+**Uploaded chat files and images.** The ACP adapter copies this turn's genuine user uploads
+from DSH's verified attachment store into the chat working folder. Every ACP agent gets file
+handle text pointing to `.automagik/uploads/<sha256>/<leaf>`. The folder contains a `.gitignore`
+with `*` on its own line. New folders use mode 0700; completed copies use mode 0444. Matching
+copies are reused. Conflicting files, symlinks below the chat folder and invalid working
+folders are refused (the chat folder itself may be a link). Copies stay until the person
+deletes them. Chats sharing a working folder can see one another's copies. No filesystem read
+root is added.
+Node has no openat, so a directory or file swap between a check and its call (containment,
+publication, cleanup) remains a risk inside the private upload folder.
+
+Each attachment is limited to 64 MiB, including streamed bytes. Files whose copy fails retain
+DSH's "cannot access a readable path" wording. Image-capable agents receive native image blocks
+and a path line when the copy succeeds. Other agents receive the path line, or DSH's text-only
+image placeholder if the copy fails. A failed copy does not block native image input.
+PNG, JPEG, WebP and GIF use the existing store contract. Failed native reads or oversized
+prompts fail before dispatch. A prompt allows at most 20 image occurrences and 24 MiB of
+serialized params (images, text, replay and session id), with 1 KiB reserved separately for the
+JSON-RPC envelope below the SDK's 32 MiB receiver limit. Preparation shares a ten-second
+deadline and stops with the turn.
+
+History, retries, handoffs and replay confer no fresh upload authority. Offloaded images keep
+DSH's omission text and gain no copy. Native DSH routes keep DSH's own readable store path.
+Existing group OCR, remote tools and Pocket text-only input are unchanged.
+
+**Chat image tools.** On Linux and macOS, a Codex Bot at Read only or Workspace now prefers the
 app-owned `automagik-read-<hex>` or `automagik-workspace-<hex>` permission profile in its
 isolated home; the chat spawn writes them and keeps the person's other lines in that file.
 - **What they allow.** The chat workspace, project roots, Codex's runtime read grants, that

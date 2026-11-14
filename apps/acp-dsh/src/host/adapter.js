@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest, offloadedImageText } from '@deepseek-ai/dsh-llm'
 import { AgentRun, isStopped, isUnanswered, valuesOf, waited } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
@@ -20,6 +20,7 @@ import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missed
 import { ImageLinks, savedPathsOf } from './agent-image.js'
 import { callArguments, entered, levelOf, mirrorTool, reviewed, TOOL_NAME } from './tool.js'
 import { guardSession } from './write-guard.js'
+import { checkUploadSize, prepareUpload } from './upload-content.js'
 
 // How long a prompt has to end after it was asked to stop. `session/cancel` is a notification:
 // nothing says the agent took it, and one that ignores it would stay busy for good.
@@ -172,7 +173,7 @@ export function ownPermissionsNotice(name) {
 // and the new-session notice is for the person. A Bot part's handoff package is the record the
 // part carries on from, so it stays beside the person's words (in its place) rather than being
 // dropped for them; it is a crossing of earlier text, so it passes the redactor.
-export function promptOf(messages, redact = text => text) {
+function promptRows(messages) {
   let start = messages.length
   while (start > 0 && messages[start - 1].role === 'user') start--
   // A failed request may leave no assistant row. Retry starts a new continuation even
@@ -180,10 +181,60 @@ export function promptOf(messages, redact = text => text) {
   const retry = messages.findLastIndex(message => message.role === 'user' && message.source?.kind === 'retry')
   const turn = messages.slice(Math.max(start, retry)).filter(message => message.source?.kind !== NOTICE_KIND)
   const own = turn.filter(message => message.source?.kind === 'user' || message.source?.kind === 'retry' || isHandoff(message))
-  const text = (own.length > 0 ? own : turn)
+  // Offload is a durable DSH decision, not permission to recover an omitted image. Use
+  // DSH's existing no-path placeholder for a genuine user's marked occurrence.
+  const rows = (own.length > 0 ? own : turn).map(row => row.source?.kind === 'user' && !isHandoff(row) && Array.isArray(row.content)
+    ? { ...row, content: row.content.map(block => block?.type === 'image' && block.offloaded === true
+      ? { type: 'text', text: offloadedImageText(block.attachment) } : block) } : row)
+  return { own, rows }
+}
+
+export function promptOf(messages, redact = text => text) {
+  const { own, rows } = promptRows(messages)
+  const text = rows
     .map(message => (isHandoff(message) ? redact(textOf(message.content)) : textOf(message.content)))
     .filter(Boolean).join('\n\n')
   return [{ type: 'text', text: text || (own.some(message => message.source?.kind === 'retry') ? 'Continue.' : '') }]
+}
+
+// Legacy fallback rows still supply text, never fresh image authority. Retry and handoff
+// rows likewise cannot replay an earlier accepted image. Undefined keeps the text path exact.
+function uploadBlocks(messages, redact, session) {
+  const selected = promptRows(messages).rows
+  const durable = session?.deriveMessages?.() ?? []
+  const files = new Set()
+  const rows = selected.map(row => {
+    if (row.source?.kind !== 'user' || isHandoff(row) || !row.id ||
+        !Array.isArray(row.content)) return row
+    const saved = durable.find(message => message.id === row.id)
+    if (!saved || saved.source?.kind !== 'user' || isHandoff(saved) ||
+        !Array.isArray(saved.content) || saved.content.length !== row.content.length) return row
+    if (saved.content.some((block, index) =>
+      block?.type === 'file' && row.content[index]?.type !== 'text')) return row
+    return { ...row, content: row.content.map((block, index) => {
+      if (saved.content[index]?.type !== 'file') return block
+      const file = saved.content[index]
+      files.add(file)
+      return file
+    }) }
+  })
+  const genuine = row => row.source?.kind === 'user' && !isHandoff(row)
+  const upload = block => block?.type === 'image' || files.has(block)
+  if (!rows.some(row => genuine(row) && Array.isArray(row.content) &&
+      row.content.some(upload))) return undefined
+  const blocks = []
+  for (const row of rows) {
+    const parts = genuine(row) && Array.isArray(row.content)
+      ? row.content.filter(block => upload(block) || block?.type === 'text')
+      : [{ type: 'text', text: isHandoff(row) ? redact(textOf(row.content)) : textOf(row.content) }]
+    if (!parts.some(block => upload(block) || block.text)) continue
+    if (blocks.length) blocks.push({ type: 'text', text: '\n\n' })
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0 && parts[i - 1].type === 'text' && parts[i].type === 'text') blocks.push({ type: 'text', text: '\n' })
+      blocks.push({ ...parts[i] })
+    }
+  }
+  return blocks
 }
 
 /** Where a Session title on an agent's chat goes when DSH's default model is an agent too. */
@@ -573,6 +624,8 @@ export class AcpAdapter extends LlmAdapter {
    * replay carries the chat to it.
    */
   end(sessionId, live, { preserveFiles = false } = {}) {
+    const upload = this.starting.get(sessionId)?.upload
+    if (upload && upload.run === live.run) upload.controller.abort()
     if (!preserveFiles) this.sessionFiles.clear(sessionId, { retire: false })
     const bridge = live.bridge
     if (bridge !== undefined && bridge.calls > 0 && bridge.drained === undefined) {
@@ -719,6 +772,7 @@ export class AcpAdapter extends LlmAdapter {
     const text = typeof why === 'string' && why.trim() !== '' ? why : HELD_TEXT
     const starting = this.starting.get(sessionId)
     if (starting !== undefined) starting.held ??= text
+    starting?.upload?.controller.abort()
     const live = this.live.get(sessionId)
     if (live === undefined) return starting !== undefined
     live.held = text
@@ -923,7 +977,9 @@ export class AcpAdapter extends LlmAdapter {
       yield* this.step(options, entry)
     } finally {
       options.signal?.removeEventListener('abort', stopFiles)
-      if (entry.fileStartup && this.starting.get(options.sessionId) === entry && this.sessionFiles.owners.get(options.sessionId)?.grant) this.endSession(options.sessionId)
+      if (entry.fileStartup && this.starting.get(options.sessionId) === entry && this.sessionFiles.owners.get(options.sessionId)?.grant
+          && (entry.upload === undefined || (this.live.get(options.sessionId) === entry.upload.live
+            && entry.upload.live.run === entry.upload.run))) this.endSession(options.sessionId)
       if (this.starting.get(options.sessionId) === entry) this.starting.delete(options.sessionId)
     }
   }
@@ -1286,28 +1342,64 @@ export class AcpAdapter extends LlmAdapter {
         if (live.ownSent === true || live.fileOwner) this.end(sessionId, live)
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
+      const uploads = uploadBlocks(options.messages, this.redact, dshAgent?.session)
+      const uploadRun = live.run
+      const uploadSession = uploadRun.sessionId
+      // Only the asynchronous upload path uses this stricter ownership check. Never
+      // endSession on a failed check: the live map may already contain a replacement.
+      const uploadValid = () => uploads === undefined || (
+        !options.signal?.aborted && entry.held === undefined && live.held === undefined &&
+        this.starting.get(sessionId) === entry && this.live.get(sessionId) === live &&
+        live.run === uploadRun && uploadRun.alive && uploadRun.sessionId === uploadSession &&
+        live.dshAgent === dshAgent && this.ctx.agents?.get(sessionId) === dshAgent &&
+        this.agents.get(options.provider) === agent
+      )
+      const uploadStopped = () => options.signal?.aborted ? STOPPED()
+        : finish('error', entry.held ?? live.held ?? 'Uploaded image turn changed before the prompt. Send again.', 'acp_upload_content')
+      let prepared
+      if (uploads !== undefined) {
+        const controller = new AbortController()
+        entry.upload = { controller, run: uploadRun, live }
+        try {
+          prepared = await prepareUpload({
+            blocks: uploads, replay: live.replay, run: uploadRun,
+            attachments: this.ctx.get?.('attachments'), cwd: dshAgent?.session?.header?.cwd,
+            warn: message => this.warn(message),
+            signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
+            timers: this.timers,
+            valid: () => { if (!uploadValid()) throw new Error('Uploaded image turn changed before the prompt. Send again.') },
+          })
+        } catch (error) {
+          if (!uploadValid()) return yield uploadStopped()
+          return yield finish('error', `Uploaded image input failed: ${error?.message ?? error}`, 'acp_upload_content')
+        }
+      }
       // Asked again right before the prompt: a Session held since the first ask (while consent,
       // the start, a fork or the mode were awaited) gets no prompt. One that was ended since
       // the step's entry is refused whatever the gate says now: its mode above was read from a
       // level that has changed, and a gate that lets go here must not let this turn through.
       const late = entry.held ?? live.held ?? await this.heldBack(sessionId, dshAgent, options.provider) ?? entry.held
-      started()
+      if (!uploadValid()) return yield uploadStopped()
+      if (uploads === undefined) started()
       if (late !== undefined) {
         this.endSession(sessionId, late)
         return yield* stopped(late)
       }
       if (own === 'yes') {
         const again = await this.ownAnswer(sessionId, dshAgent, options.provider)
+        if (!uploadValid()) return yield uploadStopped()
         if (live.held !== undefined) return yield* stopped(live.held)
         if (again !== 'yes') {
           own = 'changed'
           try { await live.run.setMode(strict, { signal: options.signal, force: true }) } catch (error) {
+            if (!uploadValid()) return yield uploadStopped()
             if (live.held !== undefined) return yield* stopped(live.held)
             const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
             if (left !== undefined) return yield left
             this.end(sessionId, live)
             return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
           }
+          if (!uploadValid()) return yield uploadStopped()
           if (live.held !== undefined) return yield* stopped(live.held)
         }
       }
@@ -1332,16 +1424,25 @@ export class AcpAdapter extends LlmAdapter {
       if (live.fileOwner) {
         try {
           await this.sessionFiles.activate(live.fileOwner, last, options.signal)
+          if (!uploadValid()) return yield uploadStopped()
           if (!this.sessionFiles.valid(live.fileOwner) || this.live.get(sessionId) !== live ||
               (live.sessionFileMode && live.run.modes?.currentModeId !== live.sessionFileMode) || own === 'yes') throw new Error('Image permission changed before the prompt.')
         } catch (error) {
+          if (!uploadValid()) return yield uploadStopped()
           this.endSession(sessionId)
           return yield finish('error', error.message)
         }
       }
-      const prompt = live.replay !== undefined
+      if (!uploadValid()) return yield uploadStopped()
+      const prompt = prepared ?? (live.replay !== undefined
         ? [...live.replay, ...promptOf(options.messages, this.redact)]
-        : promptOf(options.messages, this.redact)
+        : promptOf(options.messages, this.redact))
+      if (prepared !== undefined) {
+        try { checkUploadSize(uploadRun.sessionId, prompt) } catch (error) {
+          return yield finish('error', error.message, 'acp_upload_content')
+        }
+      }
+      started()
       live.replay = undefined
       live.owed = undefined
       live.drifted = false
@@ -1470,6 +1571,7 @@ export class AcpAdapter extends LlmAdapter {
   dispose() {
     try { this.offResult?.() } catch {}
     try { this.offReviewed?.() } catch {}
+    for (const entry of this.starting.values()) entry.upload?.controller.abort()
     this.starting.clear()
     for (const id of this.sessionFiles.owners.keys()) this.sessionFiles.clear(id)
     for (const agent of this.agents.values()) agent.catalog?.dispose()
