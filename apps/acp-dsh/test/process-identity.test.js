@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { test } from 'node:test'
 import { processBirth, processState, validBirth } from '../src/host/process-identity.js'
 
@@ -91,9 +92,34 @@ test('only fresh ESRCH or a strictly comparable birth mismatch is dead; errors a
   assert.equal(processBirth(42, { platform: 'win32', systemRoot: 'C:\\Windows', exec: () => { throw new Error('script timeout') } }), null)
 })
 
-test('available platform smoke reads this test process birth twice without auth or process command lines', () => {
-  const first = processBirth(process.pid)
+test('available platform smoke reads this test process birth twice without auth or process command lines', t => {
+  const exec = (...receivedArgs) => {
+    const started = performance.now()
+    try {
+      return execFileSync(...receivedArgs)
+    } catch (error) {
+      try {
+        const code = error?.code
+        const signal = error?.signal
+        const killed = error?.killed
+        const elapsed = performance.now() - started
+        t.diagnostic('native birth exec failure: ' + JSON.stringify({
+          code: typeof code === 'string' &&
+            ['ETIMEDOUT', 'ENOENT', 'EACCES', 'EPERM', 'ENOBUFS', 'ENOMEM', 'EINVAL'].includes(code)
+            ? code : 'OTHER',
+          signal: signal === undefined || signal === null ? null
+            : typeof signal === 'string' && ['SIGTERM', 'SIGKILL', 'SIGINT'].includes(signal)
+              ? signal : 'OTHER',
+          killed: typeof killed === 'boolean' ? killed : null,
+          durationMs: Number.isFinite(elapsed) && elapsed >= 0 ? Math.round(elapsed) : null,
+        }))
+      } catch {}
+      throw error
+    }
+  }
+  const identity = pid => processBirth(pid, { exec })
+  const first = identity(process.pid)
   assert.ok(first, `birth provider works on ${process.platform}`)
-  assert.deepEqual(processBirth(process.pid), first)
-  assert.equal(processState(process.pid, first), 'live')
+  assert.deepEqual(identity(process.pid), first)
+  assert.equal(processState(process.pid, first, { identity }), 'live')
 })
