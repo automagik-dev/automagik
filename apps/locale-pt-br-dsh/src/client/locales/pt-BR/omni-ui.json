@@ -9,6 +9,7 @@
   "Absolute data folder on the remote computer. Leave empty for its default Hermes home.": "Caminho absoluto dos dados no computador remoto. Deixe vazio para usar o diretório padrão do Hermes.",
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "É preciso recuperar o login do Bot. Redefina o login do Bot para recomeçar.",
   "Reset Bot sign-in": "Redefinir login do Bot",
+  "Sign in again": "Entrar de novo",
   "This signs {vendor} out for Bots. Sign in again in the app.": "Isso desconecta {vendor} dos Bots. Entre de novo no app.",
   "Bot models and history stay.": "Os modelos e o histórico dos Bots são mantidos.",
   "Bot CLI user settings start empty.": "As configurações pessoais da CLI dos Bots começam vazias.",

@@ -1488,7 +1488,7 @@ jobs:
           node-version: 24.9
 
       - name: Test
-        run: node --test test/batch-spawn.test.js
+        run: node --test test/batch-spawn.test.js test/process-identity.test.js
 
   boot:
     # The plugins booted for real with Omni's channels and canvases (the release omni.json

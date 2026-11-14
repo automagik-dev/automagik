@@ -38,7 +38,7 @@ import { LOOK_EVERY_MS, readBusy } from './idle.js'
 import { appMenuTemplate } from './menu.js'
 import { sendPaneClose } from './pane-close.js'
 import { closeAfterFade, createQuitGuard, liveBusy, quitPrompt, requestQuit, surfaceWindow } from './quit-guard.js'
-import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
+import { applyNow, applyStaged, appStopped, causeOf, changesOf, confirmationBudget, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
 import { draftsFileOf, PAGE_DRAFTS, saveDrafts, takeDrafts } from './drafts.js'
 import { prepareRestart } from './prepare-restart.js'
@@ -346,6 +346,7 @@ function spawnDsh(port, steps) {
     run: dshProcess, portFile: portFileOf(home), node: process.execPath, bin: resources.bin, env,
     urlFile, port, onPort, onUnkept, cwd: home, log, privacy: overlay,
     onSpawn: (child) => {
+      laneConfirmation.reset()
       child.on('message', message => answerDsh(child, message))
       steps.mark('dsh spawned')
     },
@@ -470,6 +471,7 @@ async function teamDrawn() {
 // What the lane has waiting, and what it changes in the profile as it is now.
 function readStaged() {
   laneReady = stagedOf(home)
+  laneConfirmation.sync({ child: dshProcess.child, since: dshProcess.since, staged: laneReady })
   laneWaiting = laneReady && laneProfile ? changesOf(laneReady.plugins, installedVersions(laneProfile, laneReady.plugins.map(plugin => plugin.name))) : []
 }
 
@@ -547,6 +549,24 @@ const changeText = changes => changes.map(({ name, from, to }) => `${PLUGIN_NAME
 // Put the staged plugins in now, with DSH restarted alone (auto-apply.js): the window stays, the
 // frame says what is updating while DSH is down, and the page loads again into the new plugins.
 let applyingLane = null
+const laneConfirmation = confirmationBudget({ wake: () => lookForAutoApply() })
+function autoApplyReason({ recheck = false } = {}) {
+  if (quitting || !window || !page) return 'app stopping'
+  return applyNow({
+    staged: laneReady, auto: readAutoApply(settingsFileOf(home)),
+    busy: laneConfirmation.read(readBusy(busyFileOf(home)), {
+      child: dshProcess.child, since: dshProcess.since, staged: laneReady,
+    }),
+    trial: laneTrial, fetching: laneFetching,
+    appUpdate: Boolean(updates?.ready) || update?.state === 'restarting',
+    applying: (!recheck && Boolean(laneApplying)) || Boolean(forcing),
+    idleMs: powerMonitor.getSystemIdleTime() * 1000,
+    focused: window.isFocused() === true,
+  })
+}
+function lookForAutoApply() {
+  if (autoApplyReason() === 'apply') void applyLaneNow({ auto: true })
+}
 // `auto`: the minute's look found a safe moment, and the moment is checked again before DSH stops.
 const applyLaneNow = ({ auto = false } = {}) => (applyingLane ??= applyLane({ auto }).finally(() => { applyingLane = null }))
 async function applyLane({ auto }) {
@@ -561,10 +581,11 @@ async function applyLane({ auto }) {
     // The sidebar says it first.
     await new Promise(resolve => setTimeout(resolve, RESTART_NOTICE_MS))
     // An agent started meanwhile: the update waits for the next safe moment.
-    if (auto && !stillIdle(readBusy(busyFileOf(home)))) {
+    if (auto && autoApplyReason({ recheck: true }) !== 'apply') {
       laneLog('lane: an agent started meanwhile; the plugins wait for the next moment no agent is at work')
       outcome = 'waiting'
     } else {
+      laneConfirmation.reset()
       outcome = await applyStaged({
         cycle: prepare => cycleDsh(prepare, `Updating ${text}…`),
         beforeStart: () => {
@@ -656,20 +677,7 @@ function watchUpdates() {
   setInterval(() => void lookAtLanes(), CHECK_EVERY_MS).unref?.()
   // Plugins the lane staged go in by themselves once no agent is at work (auto-apply.js), with
   // DSH restarted alone; switched off, they wait for a Restart, a quit or the next start.
-  setInterval(() => {
-    const why = applyNow({
-      staged: laneReady,
-      auto: readAutoApply(settingsFileOf(home)),
-      busy: readBusy(busyFileOf(home)),
-      trial: laneTrial,
-      fetching: laneFetching,
-      appUpdate: Boolean(updates?.ready) || update?.state === 'restarting',
-      applying: Boolean(laneApplying) || Boolean(forcing),
-      idleMs: powerMonitor.getSystemIdleTime() * 1000,
-      focused: window?.isFocused() === true,
-    })
-    if (why === 'apply') void applyLaneNow({ auto: true })
-  }, LOOK_EVERY_MS).unref?.()
+  setInterval(lookForAutoApply, LOOK_EVERY_MS).unref?.()
   // A downloaded app update never goes in by itself (#859): the app keeps running the version it
   // has, the sidebar says "Restart to update", and it installs when the person presses that or
   // quits the app.
