@@ -2167,7 +2167,29 @@ const pack = createPack({
     "This step is hard to undo: {step}. Allow it once?": "Este passo é difícil de desfazer: {step}. Permitir uma vez?",
     "{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?": "{name} teve {count} passos recusados neste turno, o último em {tool}. Deixar continuar trabalhando?",
     "Let it keep working?": "Deixar continuar trabalhando?",
-    "Allow once lets it keep working: nothing that was refused runs. Reject stops it here.": "Permitir uma vez deixa continuar trabalhando: nenhum passo recusado é executado. Recusar faz parar aqui."
+    "Allow once lets it keep working: nothing that was refused runs. Reject stops it here.": "Permitir uma vez deixa continuar trabalhando: nenhum passo recusado é executado. Recusar faz parar aqui.",
+    "Force update": "Forçar atualização",
+    "Stop and update": "Parar e atualizar",
+    "Stops running conversations and sign-ins, installs every available update and restarts.": "Encerra as conversas e os logins em andamento, instala todas as atualizações disponíveis e reinicia.",
+    "Running conversations, tasks and Bot sign-ins stop now. Bots that were signing in ask you to sign in again.": "As conversas, tarefas e os logins dos Bots em andamento serão encerrados agora. Os Bots que estavam entrando vão pedir um novo login.",
+    "Stopping conversations…": "Encerrando conversas…",
+    "Downloading the Automagik update…": "Baixando a atualização do Automagik…",
+    "Installing…": "Instalando…",
+    "Restarting…": "Reiniciando…",
+    "Everything is up to date.": "Tudo está atualizado.",
+    "Updated.": "Atualização concluída.",
+    "The plugins did not start, so the previous ones are back.": "Os plugins não iniciaram, então as versões anteriores foram restauradas.",
+    "The Automagik update could not be downloaded. Try again.": "Não foi possível baixar a atualização do Automagik. Tente novamente.",
+    "This copy updates through your system's package manager.": "Esta cópia é atualizada pelo gerenciador de pacotes do sistema.",
+    "The restart did not finish. Try again.": "A reinicialização não foi concluída. Tente novamente.",
+    "Version {version} · {latest} available": "Versão {version} · {latest} disponível",
+    "Plugin updates": "Atualizações de plugins",
+    "Plugins {version} need Automagik {line}; this app is {app}. Update Automagik first.": "Os plugins {version} precisam do Automagik {line}; este app está na versão {app}. Atualize o Automagik primeiro.",
+    "Plugins {version} need Automagik {base} or newer; this app is {app}.": "Os plugins {version} precisam do Automagik {base} ou mais recente; este app está na versão {app}.",
+    "Plugins {version} did not start here before, so the current ones are kept.": "Os plugins {version} não iniciaram aqui antes, então as versões atuais serão mantidas.",
+    "Plugins {version} need a different DeepSeek Harness version.": "Os plugins {version} precisam de outra versão do DeepSeek Harness.",
+    "The published plugin update was not accepted.": "A atualização de plugins publicada não foi aceita.",
+    "Plugin updates could not be checked. Try again.": "Não foi possível buscar atualizações de plugins. Tente novamente."
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

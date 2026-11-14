@@ -43,6 +43,28 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "Force update": "强制更新",
+  "Stop and update": "停止并更新",
+  "Stops running conversations and sign-ins, installs every available update and restarts.": "停止正在进行的对话和登录，安装所有可用更新并重启。",
+  "Running conversations, tasks and Bot sign-ins stop now. Bots that were signing in ask you to sign in again.": "正在进行的对话、任务和 Bot 登录将立即停止。正在登录的 Bot 会请你重新登录。",
+  "Stopping conversations…": "正在停止对话…",
+  "Downloading the Automagik update…": "正在下载 Automagik 更新…",
+  "Installing…": "正在安装…",
+  "Restarting…": "正在重启…",
+  "Everything is up to date.": "全部已是最新版本。",
+  "Updated.": "已更新。",
+  "The plugins did not start, so the previous ones are back.": "插件未能启动，已恢复之前的版本。",
+  "The Automagik update could not be downloaded. Try again.": "未能下载 Automagik 更新。请重试。",
+  "This copy updates through your system's package manager.": "此副本通过系统的软件包管理器更新。",
+  "The restart did not finish. Try again.": "重启未完成。请重试。",
+  "Version {version} · {latest} available": "版本 {version} · {latest} 可用",
+  "Plugin updates": "插件更新",
+  "Plugins {version} need Automagik {line}; this app is {app}. Update Automagik first.": "插件 {version} 需要 Automagik {line}；此应用是 {app}。请先更新 Automagik。",
+  "Plugins {version} need Automagik {base} or newer; this app is {app}.": "插件 {version} 需要 Automagik {base} 或更新版本；此应用是 {app}。",
+  "Plugins {version} did not start here before, so the current ones are kept.": "插件 {version} 之前未能在此启动，因此保留当前版本。",
+  "Plugins {version} need a different DeepSeek Harness version.": "插件 {version} 需要不同的 DeepSeek Harness 版本。",
+  "The published plugin update was not accepted.": "发布的插件更新未被接受。",
+  "Plugin updates could not be checked. Try again.": "无法检查插件更新。请重试。",
   "1 approval waiting": "1 项批准请求待处理",
   "{count} approvals waiting": "{count} 项批准请求待处理",
   "{count} requests to use {tool}": "{count} 个使用 {tool} 的请求",
@@ -17144,7 +17166,7 @@ function useDesktopUpdate() {
   }, [bridge]);
   return { bridge, state };
 }
-function useDesktopVersions() {
+function useDesktopVersions(presentation) {
   const bridge = globalThis.omniDesktop?.updates;
   const [versions, setVersions] = (0, import_react39.useState)(null);
   (0, import_react39.useEffect)(() => {
@@ -17157,7 +17179,7 @@ function useDesktopVersions() {
     return () => {
       live = false;
     };
-  }, [bridge]);
+  }, [bridge, presentation]);
   return versions;
 }
 function Pill({ pill, busy, held, percent: percent3, onClick }) {
@@ -24049,7 +24071,7 @@ function pluginHint(change, plugins) {
 }
 function versionRows({ versions, update, Row: Row3 }) {
   const plugins = versions ? Array.isArray(versions.plugins) ? versions.plugins : [] : [{ name: update.name, version: update.current }];
-  return plugins.filter((plugin) => typeof plugin?.name === "string" && typeof plugin.version === "string").map((plugin) => (0, import_react66.createElement)(Row3, { key: `version:${plugin.name}`, label: pluginName(plugin.name), hint: t("Version {version}", { version: plugin.version }) }));
+  return plugins.filter((plugin) => typeof plugin?.name === "string" && typeof plugin.version === "string").map((plugin) => (0, import_react66.createElement)(Row3, { key: `version:${plugin.name}`, label: pluginName(plugin.name), hint: pluginVersionHint(plugin, versions?.latest?.[plugin.name]) }));
 }
 function pluginRows({ app, Row: Row3 }) {
   const plugins = splitsPlugins(app.state) ? app.state.plugins : null;
@@ -24076,11 +24098,81 @@ function pluginRows({ app, Row: Row3 }) {
   }
   return rows2;
 }
+function newerVersion(next, current) {
+  const parse2 = (value) => /^(\d+)\.(\d+)\.(\d+)(?:-([\w.]+))?(?:\+[\w.]+)?$/.exec(value ?? "");
+  const a = parse2(next), b = parse2(current);
+  if (!a || !b) return false;
+  for (let i = 1; i <= 3; i++) if (+a[i] !== +b[i]) return +a[i] > +b[i];
+  if (!a[4] || !b[4]) return !a[4] && Boolean(b[4]);
+  const x = a[4].split("."), y = b[4].split(".");
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if (x[i] === y[i]) continue;
+    if (x[i] === void 0 || y[i] === void 0) return y[i] === void 0;
+    const nx = /^\d+$/.test(x[i]), ny = /^\d+$/.test(y[i]);
+    if (nx && ny) return +x[i] > +y[i];
+    return nx !== ny ? !nx : x[i] > y[i];
+  }
+  return false;
+}
+function pluginVersionHint(plugin, latest) {
+  return newerVersion(latest, plugin.version) ? t("Version {version} · {latest} available", { version: plugin.version, latest }) : t("Version {version}", { version: plugin.version });
+}
+function forceHint(force) {
+  switch (force?.phase) {
+    case "stopping":
+      return t("Stopping conversations…");
+    case "checking":
+      return t("Checking for updates…");
+    case "downloading":
+      return t("Downloading the Automagik update…");
+    case "installing":
+      return t("Installing…");
+    case "restarting":
+      return t("Restarting…");
+  }
+  switch (force?.code) {
+    case "up-to-date":
+      return t("Everything is up to date.");
+    case "updated":
+      return t("Updated.");
+    case "plugins-rolled-back":
+      return t("The plugins did not start, so the previous ones are back.");
+    case "app-download-failed":
+      return t("The Automagik update could not be downloaded. Try again.");
+    case "app-manual":
+      return t("This copy updates through your system's package manager.");
+    case "restart-failed":
+      return t("The restart did not finish. Try again.");
+    default:
+      return pluginReason({ reason: force }) ?? t("Stops running conversations and sign-ins, installs every available update and restarts.");
+  }
+}
+function pluginReason(versions) {
+  const params = versions?.reason?.params ?? {};
+  switch (versions?.reason?.code) {
+    case "app-line":
+      return t("Plugins {version} need Automagik {line}; this app is {app}. Update Automagik first.", params);
+    case "app-minimum":
+      return t("Plugins {version} need Automagik {base} or newer; this app is {app}.", params);
+    case "trial-failed":
+      return t("Plugins {version} did not start here before, so the current ones are kept.", params);
+    case "dsh-range":
+      return t("Plugins {version} need a different DeepSeek Harness version.", params);
+    case "older-sequence":
+    case "invalid-lane":
+      return t("The published plugin update was not accepted.");
+    case "not-checked":
+    case "check-failed":
+      return t("Plugin updates could not be checked. Try again.");
+    default:
+      return null;
+  }
+}
 var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href, target: "_blank", rel: "noopener noreferrer" });
 function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3 }) {
   const update = useUpdate((value) => value) ?? {};
   const app = useDesktopUpdate();
-  const versions = useDesktopVersions();
+  const versions = useDesktopVersions(app.state);
   const [checking, setChecking] = (0, import_react66.useState)(false);
   const [stars, setStars] = (0, import_react66.useState)(null);
   (0, import_react66.useEffect)(() => {
@@ -24118,6 +24210,27 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
   const appPill = updatePill(appState(app.state));
   const appBusy = ["checking", "downloading", "installing"].includes(appState(app.state)?.phase);
   const ours = inApp(update, app);
+  const [confirmForce, setConfirmForce] = (0, import_react66.useState)(false);
+  const [pendingForce, setPendingForce] = (0, import_react66.useState)(null);
+  const forceSent = (0, import_react66.useRef)(false);
+  const force = pendingForce ?? app.state?.force;
+  const forceBusy = Boolean(force?.phase && !["done", "failed"].includes(force.phase));
+  const canForce = typeof app.bridge?.force === "function" && !updatesOff(versions);
+  const startForce = () => {
+    if (!canForce || forceBusy || forceSent.current) return;
+    forceSent.current = true;
+    setConfirmForce(false);
+    setPendingForce({ phase: "stopping" });
+    void Promise.resolve().then(() => app.bridge.force()).then(() => setPendingForce(null), () => {
+      setPendingForce({ phase: "failed", code: "restart-failed" });
+    }).finally(() => {
+      forceSent.current = false;
+    });
+  };
+  (0, import_react66.useEffect)(() => {
+    if (app.state?.force) setPendingForce(null);
+  }, [app.state?.force]);
+  const reason = pluginReason(versions);
   const held = opensIntoPlugins(app.bridge, app.state);
   const appCheck = () => {
     if (held) return;
@@ -24171,7 +24284,18 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
       { key: "updates", title: t("Updates") },
       (0, import_react66.createElement)(Row3, { label: ours ? "Automagik" : "Omni", hint: botHint(update, app, versions) }, botControl, update.available && update.notesUrl ? (0, import_react66.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
       dsh?.current ? (0, import_react66.createElement)(Row3, { label: "DeepSeek Harness", hint: dshHint(dsh, dshShown) }, dshControl) : ours && typeof versions?.dsh === "string" ? (0, import_react66.createElement)(Row3, { label: "DeepSeek Harness", hint: t("Version {version}", { version: versions.dsh }) }) : null,
-      ...pluginRows({ app, Row: Row3 })
+      ...pluginRows({ app, Row: Row3 }),
+      reason ? (0, import_react66.createElement)(Row3, { label: t("Plugin updates"), hint: reason }) : null,
+      canForce ? (0, import_react66.createElement)(
+        Row3,
+        { label: t("Force update"), hint: confirmForce && !forceBusy ? t("Running conversations, tasks and Bot sign-ins stop now. Bots that were signing in ask you to sign in again.") : forceHint(force) },
+        confirmForce && !forceBusy ? [
+          (0, import_react66.createElement)("button", { key: "stop", type: "button", className: "bt-fb-primary", onClick: startForce }, t("Stop and update")),
+          (0, import_react66.createElement)("button", { key: "cancel", type: "button", className: "bt-soft bt-soft-sm", onClick: () => setConfirmForce(false) }, t("Cancel"))
+        ] : (0, import_react66.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: forceBusy, onClick: () => {
+          if (!forceBusy) setConfirmForce(true);
+        } }, t("Force update"))
+      ) : null
     ),
     plugins.length > 0 ? (0, import_react66.createElement)(Section2, { key: "plugins", title: t("Plugins") }, ...plugins) : null,
     (0, import_react66.createElement)(
