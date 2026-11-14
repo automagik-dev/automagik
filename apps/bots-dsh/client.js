@@ -40,6 +40,28 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
+// src/client/session-file-approval.js
+var ALLOW = "Allow for this chat session";
+function selectSessionFileApproval(pending) {
+  if (pending?.kind !== "question" || pending.questions?.length !== 1) return null;
+  const item = pending.questions[0];
+  const intent = item.intent;
+  if (!/^acp-session-file:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(item.id) || intent?.kind !== "approval" || intent.approve !== ALLOW || intent.reject !== "Reject" || intent.always !== void 0 || item.multiSelect !== void 0 || typeof item.detail !== "string" || item.detail === "" || item.options?.length !== 2 || item.options[0]?.label !== ALLOW || item.options[1]?.label !== "Reject") return null;
+  return { pending, item };
+}
+function SessionFileApproval({ matched: { pending, item }, renderFactorySlot }) {
+  const answer = (label) => pending.answer({ answers: [{ id: item.id, selected: [label] }] });
+  return renderFactorySlot("conversation.approval.card", {
+    requestKey: pending.key,
+    title: item.question,
+    description: item.detail,
+    allowLabel: ALLOW,
+    canAnswer: () => pending.snapshot().channel !== "none" && !pending.snapshot().closed,
+    onAllow: () => answer(ALLOW),
+    onReject: () => answer("Reject")
+  });
+}
+
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
@@ -30426,6 +30448,12 @@ function apply(ctx) {
       inject: face,
       select: (owner) => isTeamApproval(owner.pendingInteraction) ? owner.pendingInteraction : null
     }, TeamApproval),
+    // shadow's freePriority places each later entry below the earlier ones. Keep this
+    // strict selector last so it runs before the generic question and team cards.
+    () => shadow("conversation.composer", {
+      priority: BOT_PRIORITY - 1,
+      select: (owner) => selectSessionFileApproval(owner.pendingInteraction)
+    }, SessionFileApproval),
     () => shadow("conversation.input.dock", { id: "bot-members", order: -120, inject: face }, MemberDock),
     () => shadow("conversation.input.dock", { id: "bot-model", order: -110, inject: face }, ModelChoiceDock),
     // The person's own choice of a Bot's level (permission-card.js): raised by this window alone.

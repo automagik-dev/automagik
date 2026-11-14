@@ -12,6 +12,7 @@
 // section) what each agent has: its CLI, its connector (the ACP adapter), its sign-in, and
 // whether its model is in the picker. Provisioning keeps its own CLI store; switches remain
 // this plugin's live settings, written through DSH's settings service.
+import { sessionFileConfig } from './src/host/session-files.js'
 import { execFile, spawn } from 'node:child_process'
 import { dirname, join, posix, sep } from 'node:path'
 import { homedir } from 'node:os'
@@ -408,6 +409,7 @@ export function apply(ctx, config = {}, {
   }
   const agentOf = (spec, cli, id = idOf(spec)) => ({
     name: spec.name,
+    sessionFiles: homes && !isNative(spec) && spec.key === 'codex',
     modeFor: spec.modeFor,
     ownMode: spec.ownMode,
     ...(typeof spec.hardAsk === 'function' ? { hardAsk: spec.hardAsk } : {}),
@@ -470,7 +472,7 @@ export function apply(ctx, config = {}, {
         return back
       },
     }),
-    spawn: () => {
+    spawn: (context) => {
       const { ready, command, args, env } = launch(spec, cli, id)
       if (!ready) {
         void install(spec)
@@ -487,7 +489,10 @@ export function apply(ctx, config = {}, {
           codexPath: env.CODEX_PATH, log: line => warn(ctx, line),
           verify: profile => profileCheck(env.CODEX_PATH, profile, { cwd: env.CODEX_HOME, env }),
         })
-        if (profileModes !== undefined) return { command, args, env, profileModes }
+        if (profileModes !== undefined) return { command, args, env, profileModes,
+          ...(context?.sessionFiles === undefined ? {} : sessionFileConfig(env, context.sessionFiles, profileModes)),
+        }
+        if (context?.sessionFiles?.files?.length) throw new Error('The restricted image profile is unavailable; no image prompt was sent.')
       }
       return { command, args, env }
     },
@@ -509,11 +514,13 @@ export function apply(ctx, config = {}, {
       const want = enabled(spec) && cli !== undefined
       const have = agents.get(id)
       if (want && have?.cli !== cli) {
+        if (have?.sessionFiles) adapter.endProvider(id, 'The Codex provider changed. Send a new message to continue.')
         have?.catalog?.dispose()
         agents.set(id, agentOf(spec, cli))
         changed = true
         if (have === undefined) added.push(spec)
       } else if (!want && have !== undefined) {
+        if (have.sessionFiles) adapter.endProvider(id, 'The Codex provider is no longer available.')
         have.catalog?.dispose()
         agents.delete(id)
         changed = true
